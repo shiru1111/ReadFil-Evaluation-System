@@ -1,0 +1,302 @@
+import React, { useState, useEffect } from 'react';
+import myImage from './assets/picture1.png';
+import { useNavigate } from 'react-router-dom';
+
+export default function App() {
+  const [imageOpacity, setImageOpacity] = useState(1);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedLevel, setSelectedLevel] = useState('');
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollPosition = window.scrollY;
+      const opacity = Math.max(1 - scrollPosition / 500, 0);
+      setImageOpacity(opacity);
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const handleOpenModal = (level) => {
+    setSelectedLevel(level);
+    setIsModalOpen(true);
+    // Prevent background scrolling when modal is open
+    document.body.style.overflow = 'hidden';
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedLevel('');
+    // Restore background scrolling
+    document.body.style.overflow = 'unset';
+  };
+
+  const handleProceed = (e) => {
+    e.preventDefault();
+    if (selectedLevel === 'Beginner') {
+      navigate('/beginner');
+    }
+
+    if (selectedLevel === 'Moderate') navigate('/moderate');
+
+    if (selectedLevel === 'Expert') navigate('/expert');
+  };
+
+  // Dynamic styling based on selected level
+  const getLevelStyles = () => {
+    switch (selectedLevel) {
+      case 'Beginner':
+        return { color: 'text-black', bg: 'bg-black', hover: 'hover:bg-gray-800', textBtn: 'text-white' };
+      case 'Moderate':
+        return { color: 'text-[#0096FF]', bg: 'bg-[#0096FF]', hover: 'hover:bg-blue-600', textBtn: 'text-white' };
+      case 'Expert':
+        return { color: 'text-[#005FA3]', bg: 'bg-[#005FA3]', hover: 'hover:bg-blue-800', textBtn: 'text-white' };
+      default:
+        return { color: 'text-[#0096FF]', bg: 'bg-[#0096FF]', hover: 'hover:bg-blue-600', textBtn: 'text-white' };
+    }
+  };
+
+  const theme = getLevelStyles();
+
+  return (
+    <div className="min-h-screen bg-white text-black font-sans relative">
+      
+      <nav className="fixed w-full top-0 bg-white/80 backdrop-blur-md shadow-sm z-50 px-10 lg:px-20 py-5 flex justify-between items-center">
+        <div className="text-2xl font-black tracking-tight text-[#0096FF]">
+          ReadFil
+        </div>
+        <ul className="flex space-x-8 font-semibold text-sm uppercase tracking-wide">
+          <li><a href="#home" className="hover:text-[#0096FF] transition-colors">Home</a></li>
+          <li><a href="#footer" className="hover:text-[#0096FF] transition-colors">About Us</a></li>
+          <li><a href="#contact" className="hover:text-[#0096FF] transition-colors">Contact</a></li>
+        </ul>
+      </nav>
+
+      <main className="relative flex flex-col lg:flex-row items-start justify-between min-h-screen">
+        <div className="lg:w-1/2 pl-10 lg:pl-20 pr-12 pt-32 lg:pt-48 z-20 relative">
+          <h1 className="text-5xl lg:text-7xl font-extrabold mb-8 leading-tight">
+            Lorem Ipsum Dolor Sit Amet
+          </h1>
+          <p className="text-lg mb-10 leading-relaxed opacity-80">
+            Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum.
+          </p>
+          <a href="#levels" className="inline-block bg-[#0096FF] hover:bg-[#8ACEFF] text-white hover:text-black font-bold py-4 px-10 rounded-full shadow-lg transform transition-all hover:-translate-y-1 text-lg">
+            Test your Tagalog now
+          </a>
+        </div>
+
+        <div className="lg:absolute lg:top-0 lg:right-0 lg:w-[55%] w-full h-[600px] lg:h-screen sticky top-0 z-10">
+          <div className="w-full h-full relative" style={{ opacity: imageOpacity, transition: 'opacity 0.1s ease-out' }}>
+            <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-white via-white/70 to-transparent z-20 w-1/2"></div>
+            <div className="absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-white to-transparent z-20"></div>
+            <img
+              src={myImage}
+              alt="Reading placeholder"
+              className="w-full h-full object-cover"
+            />
+          </div>
+        </div>
+      </main>
+
+      <section id="levels" className="relative z-30 px-10 lg:px-20 py-24 bg-white">
+        <div className="max-w-7xl mx-auto">
+          <h2 className="text-4xl font-extrabold mb-12 text-center text-black">Select Your Level</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="bg-white p-8 rounded-[2rem] shadow-lg border border-[#8ACEFF]/30 hover:-translate-y-2 transition-transform flex flex-col items-center text-center">
+              <h3 className="text-2xl font-bold text-black mb-3">Beginner</h3>
+              <p className="text-gray-600 mb-8 flex-grow">Lorem Ipsum Dolor Sit Amet Consectetur adipiscing elit.</p>
+              <button onClick={() => handleOpenModal('Beginner')} className="w-full bg-black text-white py-3 rounded-full hover:bg-gray-800 transition-colors font-bold">
+                Start Beginner
+              </button>
+            </div>
+
+            <div className="bg-white p-8 rounded-[2rem] shadow-lg border border-[#8ACEFF]/30 hover:-translate-y-2 transition-transform flex flex-col items-center text-center">
+              <h3 className="text-2xl font-bold text-[#0096FF] mb-3">Moderate</h3>
+              <p className="text-gray-600 mb-8 flex-grow">Lorem Ipsum Dolor Sit Amet Consectetur adipiscing elit.</p>
+              <button onClick={() => handleOpenModal('Moderate')} className="w-full bg-[#0096FF] text-white py-3 rounded-full hover:bg-blue-600 transition-colors font-bold">
+                Start Moderate
+              </button>
+            </div>
+
+            <div className="bg-white p-8 rounded-[2rem] shadow-lg border border-[#005FA3]/30 hover:-translate-y-2 transition-transform flex flex-col items-center text-center">
+              <h3 className="text-2xl font-bold text-[#005FA3] mb-3">Expert</h3>
+              <p className="text-gray-600 mb-8 flex-grow">Lorem Ipsum Dolor Sit Amet Consectetur adipiscing elit.</p>
+              <button onClick={() => handleOpenModal('Expert')} className="w-full bg-[#005FA3] text-white py-3 rounded-full hover:bg-blue-600 transition-colors font-bold">
+                Start Expert
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="relative z-30 py-24 px-10 bg-black text-white overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-full z-0 opacity-40">
+          <div className="absolute -top-32 -left-32 w-[30rem] h-[30rem] bg-[#0096FF] rounded-full mix-blend-screen filter blur-[100px]"></div>
+          <div className="absolute bottom-[-10rem] right-[-10rem] w-[30rem] h-[30rem] bg-[#8ACEFF] rounded-full mix-blend-screen filter blur-[100px]"></div>
+        </div>
+
+        <div className="relative z-10 max-w-5xl mx-auto text-center">
+          <h3 className="text-4xl md:text-5xl font-extrabold mb-6">How It Works</h3>
+          <p className="text-lg text-gray-300 mb-16 max-w-2xl mx-auto">
+            Lorem Ipsum Dolor Sit Amet
+Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+          </p>
+
+          <div className="flex flex-col md:flex-row justify-center items-center gap-6 md:gap-12">
+            <div className="flex flex-col items-center z-10">
+              <div className="w-20 h-20 rounded-full border-4 border-[#8ACEFF] bg-black text-[#8ACEFF] flex items-center justify-center text-3xl font-black mb-4 shadow-[0_0_30px_rgba(138,206,255,0.4)]">1</div>
+              <h4 className="font-bold text-xl mb-2">Connect Mic</h4>
+            </div>
+            
+            <div className="hidden md:block w-24 h-1 bg-gradient-to-r from-[#8ACEFF] to-[#0096FF] opacity-50"></div>
+            <div className="md:hidden w-1 h-12 bg-gradient-to-b from-[#8ACEFF] to-[#0096FF] opacity-50"></div>
+
+            <div className="flex flex-col items-center z-10">
+              <div className="w-20 h-20 rounded-full border-4 border-[#0096FF] bg-[#0096FF] text-white flex items-center justify-center text-3xl font-black mb-4 shadow-[0_0_30px_rgba(0,150,255,0.6)] transform scale-110">2</div>
+              <h4 className="font-bold text-xl mb-2">Read Aloud</h4>
+            </div>
+
+            <div className="hidden md:block w-24 h-1 bg-gradient-to-r from-[#0096FF] to-white opacity-50"></div>
+            <div className="md:hidden w-1 h-12 bg-gradient-to-b from-[#0096FF] to-white opacity-50"></div>
+
+            <div className="flex flex-col items-center z-10">
+              <div className="w-20 h-20 rounded-full border-4 border-white bg-white text-black flex items-center justify-center text-3xl font-black mb-4 shadow-[0_0_30px_rgba(255,255,255,0.4)]">3</div>
+              <h4 className="font-bold text-xl mb-2">Get Evaluated</h4>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="relative z-30 px-10 lg:px-20 py-24 bg-white text-black">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-12">
+          <div className="bg-gray-50 p-10 rounded-[2rem] shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+            <h3 className="text-3xl font-extrabold mb-4 text-[#0096FF]">Why ReadFil?</h3>
+            <p className="text-gray-600 leading-relaxed text-lg">
+              Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+            </p>
+          </div>
+
+          <div className="bg-gray-50 p-10 rounded-[2rem] shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+            <h3 className="text-3xl font-extrabold mb-4 text-[#0096FF]">What is the purpose?</h3>
+            <p className="text-gray-600 leading-relaxed text-lg">
+              Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <footer id="footer" className="relative z-30 bg-[#121212] text-gray-300 py-16 px-10 lg:px-20 border-t border-[#333]">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-12 mb-10">
+          <div>
+            <h4 className="text-2xl font-bold text-white mb-4">About the System</h4>
+            <p className="text-sm leading-relaxed text-gray-400">
+              Lorem Ipsum Dolor Sit Amet
+Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum.
+            </p>
+          </div>
+          <div>
+            <h4 className="text-2xl font-bold text-white mb-4">Project Details</h4>
+            <p className="text-sm leading-relaxed text-gray-400 mb-2">
+              Lorem Ipsum Dolor Sit Amet
+Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum.
+            </p>
+            <p className="text-sm leading-relaxed text-gray-400">
+              <strong>Developed by:</strong> CSB3
+            </p>
+          </div>
+        </div>
+        <div className="border-t border-gray-800 pt-8 text-center text-sm text-gray-500">
+          &copy; {new Date().getFullYear()} Automated Oral Reading System. All rights reserved.
+        </div>
+      </footer>
+
+      {/* Registration Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div 
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm" 
+            onClick={handleCloseModal}
+          ></div>
+          
+          <div className="relative bg-white w-full max-w-2xl rounded-[2rem] shadow-2xl overflow-hidden z-10 animate-in fade-in zoom-in duration-200">
+            {/* Modal Header */}
+            <div className={`p-8 pb-6 border-b border-gray-100`}>
+              <div className="flex justify-between items-center mb-2">
+                <h3 className={`text-3xl font-extrabold ${theme.color}`}>
+                  {selectedLevel} Registration
+                </h3>
+                <button 
+                  onClick={handleCloseModal}
+                  className="text-gray-400 hover:text-gray-800 transition-colors"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                  </svg>
+                </button>
+              </div>
+              <p className="text-gray-500">Please provide your details to begin the evaluation.</p>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleProceed} className="p-8 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">First Name</label>
+                  <input type="text" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" placeholder="Juan" required />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Last Name</label>
+                  <input type="text" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" placeholder="Dela Cruz" required />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Email Address</label>
+                  <input type="email" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" placeholder="juan@example.com" required />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2">Confirm Email</label>
+                  <input type="email" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" placeholder="juan@example.com" required />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">Phone Number <span className="text-gray-400 font-normal">(Optional)</span></label>
+                <input type="tel" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" placeholder="09XX XXX XXXX" />
+              </div>
+
+              <div className="flex items-start pt-2">
+                <div className="flex items-center h-5">
+                  <input id="terms" type="checkbox" className={`w-5 h-5 border border-gray-300 rounded focus:ring-2 focus:ring-[#8ACEFF]/20 cursor-pointer`} required />
+                </div>
+                <label htmlFor="terms" className="ml-3 text-sm text-gray-600 cursor-pointer">
+                  I agree to the <a href="#" className={`${theme.color} hover:underline font-bold`}>Terms and Conditions</a> and consent to the recording of my voice for academic thesis evaluation purposes.
+                </label>
+              </div>
+
+              <div className="pt-4 flex gap-4">
+                <button 
+                  type="button" 
+                  onClick={handleCloseModal}
+                  className="w-1/3 px-6 py-4 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className={`w-2/3 px-6 py-4 rounded-xl font-bold ${theme.textBtn} ${theme.bg} ${theme.hover} transition-all transform hover:-translate-y-1 shadow-lg`}
+                >
+                  Proceed to Test
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
