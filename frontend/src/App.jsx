@@ -22,29 +22,28 @@ export default function App() {
   const handleOpenModal = (level) => {
     setSelectedLevel(level);
     setIsModalOpen(true);
-    // Prevent background scrolling when modal is open
     document.body.style.overflow = 'hidden';
   };
 
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setSelectedLevel('');
-    // Restore background scrolling
     document.body.style.overflow = 'unset';
   };
 
-  const handleProceed = (e) => {
+ const handleProceed = (e) => {
     e.preventDefault();
-    if (selectedLevel === 'Beginner') {
-      navigate('/beginner');
+    
+    if (selectedLevel === 'Progressive Mode') {
+      navigate('/progressive'); // This correctly targets your new Progressive.jsx file
+      return;
     }
-
+    
+    if (selectedLevel === 'Beginner') navigate('/beginner');
     if (selectedLevel === 'Moderate') navigate('/moderate');
-
     if (selectedLevel === 'Expert') navigate('/expert');
   };
 
-  // Dynamic styling based on selected level
   const getLevelStyles = () => {
     switch (selectedLevel) {
       case 'Beginner':
@@ -53,6 +52,8 @@ export default function App() {
         return { color: 'text-[#0096FF]', bg: 'bg-[#0096FF]', hover: 'hover:bg-blue-600', textBtn: 'text-white' };
       case 'Expert':
         return { color: 'text-[#005FA3]', bg: 'bg-[#005FA3]', hover: 'hover:bg-blue-800', textBtn: 'text-white' };
+      case 'Progressive Mode':
+        return { color: 'text-transparent bg-clip-text bg-gradient-to-r from-black via-[#0096FF] to-[#005FA3]', bg: 'bg-gradient-to-r from-black via-[#0096FF] to-[#005FA3]', hover: 'hover:opacity-90', textBtn: 'text-white' };
       default:
         return { color: 'text-[#0096FF]', bg: 'bg-[#0096FF]', hover: 'hover:bg-blue-600', textBtn: 'text-white' };
     }
@@ -103,7 +104,8 @@ export default function App() {
       <section id="levels" className="relative z-30 px-10 lg:px-20 py-24 bg-white">
         <div className="max-w-7xl mx-auto">
           <h2 className="text-4xl font-extrabold mb-12 text-center text-black">Select Your Level</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
             <div className="bg-white p-8 rounded-[2rem] shadow-lg border border-[#8ACEFF]/30 hover:-translate-y-2 transition-transform flex flex-col items-center text-center">
               <h3 className="text-2xl font-bold text-black mb-3">Beginner</h3>
               <p className="text-gray-600 mb-8 flex-grow">Lorem Ipsum Dolor Sit Amet Consectetur adipiscing elit.</p>
@@ -128,6 +130,25 @@ export default function App() {
               </button>
             </div>
           </div>
+
+          {/* PROGRESSIVE MODE BANNER */}
+          <div className="bg-gradient-to-r from-black via-[#0096FF] to-[#005FA3] p-[2px] rounded-[2rem] shadow-xl hover:-translate-y-2 transition-transform">
+            <div className="bg-white p-8 lg:p-10 rounded-[2rem] flex flex-col md:flex-row items-center justify-between text-center md:text-left h-full w-full">
+              <div className="mb-6 md:mb-0 md:mr-8">
+                <h3 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-black via-[#0096FF] to-[#005FA3] mb-3">
+                  Progressive Assessment Mode
+                </h3>
+                <p className="text-gray-600 max-w-2xl text-lg">
+                  Lorem Ipsum Dolor Sit Amet
+Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+                </p>
+              </div>
+              <button onClick={() => handleOpenModal('Progressive Mode')} className="w-full md:w-auto px-10 py-4 bg-gradient-to-r from-black via-[#0096FF] to-[#005FA3] text-white rounded-full transition-opacity hover:opacity-90 font-bold text-lg whitespace-nowrap shadow-lg">
+                Take Full Test
+              </button>
+            </div>
+          </div>
+
         </div>
       </section>
 
@@ -273,7 +294,7 @@ Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolor
                   <input id="terms" type="checkbox" className={`w-5 h-5 border border-gray-300 rounded focus:ring-2 focus:ring-[#8ACEFF]/20 cursor-pointer`} required />
                 </div>
                 <label htmlFor="terms" className="ml-3 text-sm text-gray-600 cursor-pointer">
-                  I agree to the <a href="#" className={`${theme.color} hover:underline font-bold`}>Terms and Conditions</a> and consent to the recording of my voice for academic thesis evaluation purposes.
+                  I agree to the <a href="#" className={`font-bold hover:underline ${selectedLevel === 'Progressive Mode' ? 'text-[#0096FF]' : theme.color}`}>Terms and Conditions</a> and consent to the recording of my voice for academic thesis evaluation purposes.
                 </label>
               </div>
 

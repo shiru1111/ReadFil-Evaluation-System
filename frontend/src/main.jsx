@@ -5,6 +5,7 @@ import App from './App.jsx'
 import Beginner from './Beginner.jsx'
 import Moderate from './Moderate.jsx'
 import Expert from './Expert.jsx'
+import Progressive from './Progressive';
 import ScrollToTop from './ScrollToTop.jsx' // <-- 1. Imported here
 import Results from './Results.jsx'
 import './index.css'
@@ -18,6 +19,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/beginner" element={<Beginner />} />
         <Route path="/moderate" element={<Moderate />} />
         <Route path="/expert" element={<Expert />} />
+        <Route path="/progressive" element={<Progressive />} />
         <Route path="/results" element={<Results />} />
       </Routes>
     </BrowserRouter>
