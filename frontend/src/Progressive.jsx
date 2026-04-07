@@ -181,7 +181,7 @@ const sendAudioToServer = async () => {
     formData.append('target_text', targetText);
 
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/evaluate', {
+      const response = await fetch('https://indira-topflight-mindi.ngrok-free.dev/api/evaluate', {
         method: 'POST',
         body: formData,
       });
