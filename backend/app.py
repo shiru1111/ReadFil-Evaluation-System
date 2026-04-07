@@ -6,9 +6,17 @@ import librosa
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 from pydub import AudioSegment
 import re
+from pymongo import MongoClient  # <--- Imported MongoClient
 
 app = Flask(__name__)
 CORS(app)
+
+# <--- MongoDB Connection Setup --->
+# REPLACE "YOUR_MONGODB_ATLAS_URI_HERE" with your actual connection string from MongoDB Atlas
+client = MongoClient("YOUR_MONGODB_ATLAS_URI_HERE")
+db = client['readfil_database'] 
+evaluations_collection = db['evaluations'] 
+# <--------------------------------->
 
 UPLOAD_FOLDER = 'temp_audio'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -177,16 +185,24 @@ def evaluate_audio():
         wcpm = 0
         if duration_minutes > 0:
             wcpm = max(0, correct_words / duration_minutes)
-        
-        return jsonify({
-            "message": "Evaluation Complete",
+            
+        # <--- NEW: MongoDB Database Insertion --->
+        evaluation_record = {
             "target_text": target_text,
             "transcription": transcription,
             "accuracy_rate": round(accuracy_rate, 2),
             "wcpm": round(wcpm, 2),
             "errors_detected": errors,
             "status": "success"
-        }), 200
+        }
+        
+        # This securely inserts the data into your MongoDB cluster
+        evaluations_collection.insert_one(evaluation_record)
+        # <--------------------------------------->
+        
+        # Return the data to the React Frontend (Notice we removed _id to avoid JSON serialization errors)
+        evaluation_record.pop('_id', None)
+        return jsonify(evaluation_record), 200
         
     except Exception as e:
         print(f"Error during processing: {e}")
