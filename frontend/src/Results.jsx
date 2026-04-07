@@ -1,38 +1,60 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 export default function Results() {
   const navigate = useNavigate();
 
-  // MOCK DATA: These will be replaced by actual test results later
-  const mockResult = {
-    firstName: "Niel",
-    lastName: "Reyes",
-    level: "Expert",
-    accuracyRate: 92, // Percentage
-    wcpm: 115, // Words Correct Per Minute
+  // Dynamic State to hold the actual user data and server results
+  const [resultData, setResultData] = useState({
+    firstName: "Student",
+    lastName: "",
+    level: "Overall",
+    accuracyRate: 0,
+    wcpm: 0,
     date: new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
-  };
+  });
+
+  // Fetch the real data when the certificate loads
+  useEffect(() => {
+    // 1. Fetch User Registration Data
+    const storedFirstName = localStorage.getItem('user_firstName') || "Student";
+    const storedLastName = localStorage.getItem('user_lastName') || "";
+    
+    // 2. Fetch the Evaluation Metrics from the Python Server
+    const storedAccuracy = parseFloat(localStorage.getItem('final_accuracy')) || 0;
+    const storedWcpm = parseFloat(localStorage.getItem('final_wcpm')) || 0;
+    
+    // 3. Determine the evaluated level (You can customize this logic)
+    const storedLevel = localStorage.getItem('evaluated_level') || "Overall";
+
+    setResultData({
+      firstName: storedFirstName,
+      lastName: storedLastName,
+      level: storedLevel,
+      accuracyRate: storedAccuracy,
+      wcpm: storedWcpm,
+      date: new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
+    });
+  }, []);
 
   // FORMAL COMPUTATION (Max Score = 100)
   // 50% weight for Accuracy, 50% weight for WCPM.
-  // We set a target WCPM (e.g., 150) as the benchmark for a perfect fluency score.
   const targetWcpm = 150; 
   
-  const accuracyScore = mockResult.accuracyRate * 0.5; 
-  const fluencyScore = Math.min((mockResult.wcpm / targetWcpm) * 50, 50); 
+  const accuracyScore = resultData.accuracyRate * 0.5; 
+  const fluencyScore = Math.min((resultData.wcpm / targetWcpm) * 50, 50); 
   const finalScore = Math.round(accuracyScore + fluencyScore);
 
   // SVG Calculations for Progress Rings
   const rarRadius = 36;
   const rarCircumference = 2 * Math.PI * rarRadius;
-  const rarOffset = rarCircumference - (mockResult.accuracyRate / 100) * rarCircumference;
+  const rarOffset = rarCircumference - (resultData.accuracyRate / 100) * rarCircumference;
 
   const totalRadius = 64;
   const totalCircumference = 2 * Math.PI * totalRadius;
   const totalOffset = totalCircumference - (finalScore / 100) * totalCircumference;
   
-  const wcpmPercentage = Math.min((mockResult.wcpm / targetWcpm) * 100, 100);
+  const wcpmPercentage = Math.min((resultData.wcpm / targetWcpm) * 100, 100);
 
   const handleSaveAsImage = () => {
     alert("Functionality to save this report as an image will be implemented here.");
@@ -43,13 +65,18 @@ export default function Results() {
   };
 
   const handleReturnHome = () => {
+    // Clear the session data so the next student starts fresh
+    localStorage.removeItem('final_accuracy');
+    localStorage.removeItem('final_wcpm');
+    localStorage.removeItem('evaluated_level');
+    // Note: You can keep or clear user_firstName depending on your login flow
     navigate('/');
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#0096FF]/20 to-white font-sans text-gray-900 pb-20">
       
-      {/* Strictly White Navigation Header */}
+      {/* Navigation Header */}
       <nav className="w-full bg-white px-10 lg:px-20 py-5 flex justify-between items-center border-b border-gray-200">
         <div className="text-2xl font-black tracking-tight text-gray-900">ReadFil</div>
       </nav>
@@ -57,8 +84,8 @@ export default function Results() {
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-6 mt-12">
         
-        {/* Minimalist Results Card (Sharp corners, slight shadow, slight transparency) */}
-        <div className="bg-white/90 backdrop-blur-md rounded-sm shadow-sm border border-gray-200 p-10 lg:p-14">
+        {/* Minimalist Results Card */}
+        <div className="bg-white/90 backdrop-blur-md rounded-sm shadow-sm border border-gray-200 p-10 lg:p-14 animate-in fade-in zoom-in duration-700">
           
           {/* Document Header */}
           <div className="text-center border-b border-gray-300 pb-8 mb-10">
@@ -74,15 +101,15 @@ export default function Results() {
           <div className="text-center mb-14">
             <p className="text-gray-500 text-sm uppercase tracking-widest mb-4">This document certifies that</p>
             <h2 className="text-4xl font-black text-gray-900 mb-4 uppercase tracking-wide">
-              {mockResult.firstName} {mockResult.lastName}
+              {resultData.firstName} {resultData.lastName}
             </h2>
             <p className="text-lg text-gray-700 leading-relaxed max-w-2xl mx-auto">
-              has successfully finished the ReadFil Evaluation and demonstrated reading proficiency at the <span className="font-bold text-gray-900 border-b-2 border-[#0096FF] pb-1">{mockResult.level} Level</span>.
+              has successfully finished the ReadFil Evaluation and demonstrated reading proficiency at the <span className="font-bold text-gray-900 border-b-2 border-[#0096FF] pb-1">{resultData.level} Level</span>.
             </p>
-            <p className="text-xs text-gray-400 mt-6 font-medium uppercase tracking-widest">Date of Examination: {mockResult.date}</p>
+            <p className="text-xs text-gray-400 mt-6 font-medium uppercase tracking-widest">Date of Examination: {resultData.date}</p>
           </div>
 
-          {/* Creative Metrics Section */}
+          {/* Metrics Section */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12 mb-12">
             
             {/* Accuracy Rate - Circular Progress */}
@@ -93,7 +120,7 @@ export default function Results() {
                   <circle cx="48" cy="48" r={rarRadius} stroke="#0096FF" strokeWidth="6" fill="none" strokeDasharray={rarCircumference} strokeDashoffset={rarOffset} strokeLinecap="round" className="transition-all duration-1000 ease-out" />
                 </svg>
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <span className="text-xl font-bold text-gray-900">{mockResult.accuracyRate}%</span>
+                  <span className="text-xl font-bold text-gray-900">{resultData.accuracyRate}%</span>
                 </div>
               </div>
               <div>
@@ -110,7 +137,7 @@ export default function Results() {
                   <p className="text-xs text-gray-500 mt-1">Words Correct Per Minute</p>
                 </div>
                 <div className="text-right">
-                  <span className="text-3xl font-black text-gray-900">{mockResult.wcpm}</span>
+                  <span className="text-3xl font-black text-gray-900">{resultData.wcpm}</span>
                   <span className="text-xs text-gray-400 font-bold ml-1">/ {targetWcpm} TARGET</span>
                 </div>
               </div>
@@ -124,7 +151,7 @@ export default function Results() {
 
           </div>
 
-          {/* Final Total Score - Prominent Ring */}
+          {/* Final Total Score */}
           <div className="bg-gray-50 border border-gray-200 p-10 flex flex-col items-center justify-center mt-8">
             <h3 className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-6">Composite Final Score</h3>
             
@@ -152,21 +179,21 @@ export default function Results() {
         <div className="mt-8 flex flex-col md:flex-row justify-end items-center gap-4">
           <button 
             onClick={handleSaveAsImage}
-            className="w-full md:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm"
+            className="w-full md:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm hover:bg-gray-50 transition-colors"
           >
             Save as Image
           </button>
 
           <button 
             onClick={handleSendEmail}
-            className="w-full md:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm"
+            className="w-full md:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm hover:bg-gray-50 transition-colors"
           >
             Send to Email
           </button>
           
           <button 
             onClick={handleReturnHome}
-            className="w-full md:w-auto px-8 py-3 bg-gray-900 text-white font-bold text-xs uppercase tracking-widest shadow-sm"
+            className="w-full md:w-auto px-8 py-3 bg-gray-900 text-white font-bold text-xs uppercase tracking-widest shadow-sm hover:bg-gray-800 transition-colors"
           >
             Return Home
           </button>

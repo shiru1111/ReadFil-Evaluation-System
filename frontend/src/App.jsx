@@ -6,6 +6,11 @@ export default function App() {
   const [imageOpacity, setImageOpacity] = useState(1);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedLevel, setSelectedLevel] = useState('');
+  
+  // NEW: State variables to hold the user's input
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -28,14 +33,27 @@ export default function App() {
   const handleCloseModal = () => {
     setIsModalOpen(false);
     setSelectedLevel('');
+    setFirstName(''); // Clear form on close
+    setLastName('');  // Clear form on close
     document.body.style.overflow = 'unset';
   };
 
- const handleProceed = (e) => {
+  const handleProceed = (e) => {
     e.preventDefault();
     
+    // NEW: Save the user's name and selected level to localStorage before navigating!
+    localStorage.setItem('user_firstName', firstName);
+    localStorage.setItem('user_lastName', lastName);
+    
+    // We format "Progressive Mode" to just say "Progressive" on the certificate if needed, 
+    // or keep it as the selected level.
+    localStorage.setItem('evaluated_level', selectedLevel);
+
+    // Make sure to unlock the scroll behavior before navigating away
+    document.body.style.overflow = 'unset';
+    
     if (selectedLevel === 'Progressive Mode') {
-      navigate('/progressive'); // This correctly targets your new Progressive.jsx file
+      navigate('/progressive'); 
       return;
     }
     
@@ -265,11 +283,25 @@ Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolor
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2">First Name</label>
-                  <input type="text" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" placeholder="Juan" required />
+                  <input 
+                    type="text" 
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" 
+                    placeholder="Juan" 
+                    required 
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2">Last Name</label>
-                  <input type="text" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" placeholder="Dela Cruz" required />
+                  <input 
+                    type="text" 
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" 
+                    placeholder="Dela Cruz" 
+                    required 
+                  />
                 </div>
               </div>
 
