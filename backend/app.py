@@ -13,7 +13,7 @@ CORS(app)
 
 # <--- MongoDB Connection Setup --->
 # REPLACE "YOUR_MONGODB_ATLAS_URI_HERE" with your actual connection string from MongoDB Atlas
-client = MongoClient("YOUR_MONGODB_ATLAS_URI_HERE")
+client = MongoClient("mongodb+srv://admin:pH36VCD12S9BG5CS@readfil.j1thrv3.mongodb.net/?appName=READFIL")
 db = client['readfil_database'] 
 evaluations_collection = db['evaluations'] 
 # <--------------------------------->
