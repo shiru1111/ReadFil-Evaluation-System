@@ -101,6 +101,7 @@ export default function Moderate() {
   // Actual Test States
   const [isRecording, setIsRecording] = useState(false);
   const [hasRecorded, setHasRecorded] = useState(false);
+  const [elapsedTime, setElapsedTime] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   // Refs for the ACTUAL evaluation recording
@@ -141,6 +142,24 @@ export default function Moderate() {
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     };
   }, []);
+  // --- UPDATED: Continuous Live Timer Logic ---
+  useEffect(() => {
+    let timer;
+    if (isTestReady) {
+      timer = setInterval(() => {
+        setElapsedTime((prev) => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(timer);
+    }
+    return () => clearInterval(timer);
+  }, [isTestReady]);
+
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
 
   // --- Visualizer Logic ---
   const drawWaveform = () => {
@@ -394,19 +413,30 @@ const sendAudioToServer = async () => {
           <div className="text-center mb-12">
             <h1 className="text-4xl font-extrabold mb-4 text-[#0096FF]">Moderate Evaluation</h1>
           </div>
-          <div className="bg-white p-10 rounded-[2rem] shadow-xl border border-gray-100 mb-10">
+
+<div className="bg-white p-10 rounded-[2rem] shadow-xl border border-gray-100 mb-10 relative">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-[#0096FF]">Reading Material</h2>
-              <span className="text-sm font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">{currentIndex + 1} / {testPassages.length}</span>
+              <span className="text-sm font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
+                {currentIndex + 1} / {testPassages.length}
+              </span>
             </div>
             
-            <div className="p-8 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center">
+            <div className="p-8 pb-12 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center relative">
               <p className="text-2xl leading-relaxed text-center font-medium text-black">
                 "{testPassages[currentIndex]?.text}"
               </p>
               <span className="mt-6 text-sm text-gray-400 italic">
                 Source: {testPassages[currentIndex]?.source}
               </span>
+
+              {/* NEW: Live Timer */}
+              <div className="absolute bottom-4 right-6 flex items-center gap-2 text-gray-600 font-mono font-bold bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
+                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                {formatTime(elapsedTime)}
+              </div>
             </div>
           </div>
           <div className="flex flex-col items-center justify-center">

@@ -96,10 +96,10 @@ export default function App() {
       <main className="relative flex flex-col lg:flex-row items-start justify-between min-h-screen">
         <div className="lg:w-1/2 pl-10 lg:pl-20 pr-12 pt-32 lg:pt-48 z-20 relative">
           <h1 className="text-5xl lg:text-7xl font-extrabold mb-8 leading-tight">
-            Lorem Ipsum Dolor Sit Amet
+            ReadFil Evaluator
           </h1>
           <p className="text-lg mb-10 leading-relaxed opacity-80">
-            Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum.
+            Consectetur adipiscing elit. Sed do eiusmod tem por incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum.
           </p>
           <a href="#levels" className="inline-block bg-[#0096FF] hover:bg-[#8ACEFF] text-white hover:text-black font-bold py-4 px-10 rounded-full shadow-lg transform transition-all hover:-translate-y-1 text-lg">
             Test your Tagalog now

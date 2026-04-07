@@ -42,112 +42,132 @@ def transcribe_audio(wav_path):
     return transcription, librosa.get_duration(y=speech_array, sr=16000)
 
 def clean_text(text):
-    """Removes punctuation and converts to lowercase for accurate mathematical comparison."""
-    text = text.lower()
-    return re.sub(r'[^a-z0-9\s]', '', text).split()
+    """
+    Removes punctuation, converts to lowercase, and NORMALIZES Tagalog quirks.
+    This stops the AI from penalizing the user for reading 'mga' as 'manga'.
+    """
+    if not text:
+        return []
+        
+    text = str(text).lower()
+    text = re.sub(r'[^a-z0-9\s]', '', text)
+    words = text.split()
+    
+    normalized_words = []
+    for w in words:
+        if w == 'mga':
+            normalized_words.append('manga')
+        elif w == 'ng':
+            normalized_words.append('nang')
+        elif w == 'nang':
+            normalized_words.append('nang') # Keep it consistent
+        else:
+            normalized_words.append(w)
+            
+    return normalized_words
 
 def modified_levenshtein(word1, word2):
     """
-    Modified Levenshtein Distance calibrated to local phonetic theory.
-    Reduces penalty for common Tagalog vowel shifts (e/i, o/u).
+    Calculates phonetic distance. 
+    Returns a percentage of error between 0.0 (perfect) and 1.0 (completely different).
     """
     m, n = len(word1), len(word2)
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    dp = [[0.0] * (n + 1) for _ in range(m + 1)]
     
     for i in range(m + 1):
-        dp[i][0] = i
+        dp[i][0] = float(i)
     for j in range(n + 1):
-        dp[0][j] = j
+        dp[0][j] = float(j)
         
     for i in range(1, m + 1):
         for j in range(1, n + 1):
             if word1[i-1] == word2[j-1]:
-                cost = 0
+                dp[i][j] = dp[i-1][j-1]
             else:
-                # Custom Tagalog Phonetic Rules
                 char1, char2 = word1[i-1], word2[j-1]
-                if (char1 in 'ei' and char2 in 'ei') or (char1 in 'ou' and char2 in 'ou'):
-                    cost = 0.5  # Reduced penalty for valid regional vowel shifts
+                # Forgive common Tagalog vowel shifts and soft consonant swaps
+                if (char1 in 'ei' and char2 in 'ei') or (char1 in 'ou' and char2 in 'ou') or (char1 in 'dr' and char2 in 'dr'):
+                    cost = 0.3  # Very small penalty
                 else:
-                    cost = 1.0  # Standard penalty for full mismatches
+                    cost = 1.0  # Standard penalty
                     
-            dp[i][j] = min(dp[i-1][j] + 1,       # Deletion
-                           dp[i][j-1] + 1,       # Insertion
-                           dp[i-1][j-1] + cost)  # Substitution
-                           
-    # Convert distance to a percentage of error for the specific word
+                dp[i][j] = min(dp[i-1][j] + 1.0,         
+                               dp[i][j-1] + 1.0,         
+                               dp[i-1][j-1] + cost)      
+                               
     max_len = max(len(word1), len(word2))
     if max_len == 0:
-        return 0
-    return dp[m][n] / max_len
+        return 0.0
+    return dp[m][n] / float(max_len)
 
 def needleman_wunsch_alignment(target_words, spoken_words):
     """
-    Global sequence alignment to track insertions and deletions.
-    Uses manuscript parameters: Match +5, Mismatch -4, Gap -1.
+    RELAXED global sequence alignment.
+    Allows for AI misspellings and focuses on conversational fluency.
     """
-    MATCH = 5
-    MISMATCH = -4
-    GAP = -1
+    MATCH = 5.0
+    MISMATCH = -2.0 # Relaxed penalty so one wrong word doesn't break the sentence
+    GAP = -2.0
     
     m, n = len(target_words), len(spoken_words)
-    score = [[0] * (n + 1) for _ in range(m + 1)]
+    score = [[0.0] * (n + 1) for _ in range(m + 1)]
+    pointers = [[None] * (n + 1) for _ in range(m + 1)]
     
     for i in range(m + 1):
         score[i][0] = GAP * i
+        pointers[i][0] = 'U' 
     for j in range(n + 1):
         score[0][j] = GAP * j
+        pointers[0][j] = 'L' 
         
+    pointers[0][0] = None
+    
     for i in range(1, m + 1):
         for j in range(1, n + 1):
-            # Check for exact match or use MLD for slight phonetic variations
             dist = modified_levenshtein(target_words[i-1], spoken_words[j-1])
-            if dist == 0:
-                match_score = score[i-1][j-1] + MATCH
-            elif dist < 0.4: # Allow minor phonetic shifts to pass as partial matches
-                match_score = score[i-1][j-1] + (MATCH * (1 - dist))
+            
+            # ---> RELAXED THRESHOLD: We now accept words up to 55% incorrect spelling 
+            # to account for the AI mishearing you, as long as it's phonetically close.
+            if dist <= 0.55: 
+                match_score = score[i-1][j-1] + (MATCH * (1.0 - dist))
             else:
                 match_score = score[i-1][j-1] + MISMATCH
                 
             delete_score = score[i-1][j] + GAP
             insert_score = score[i][j-1] + GAP
-            score[i][j] = max(match_score, delete_score, insert_score)
             
-    # Traceback to calculate final errors
-    align_target, align_spoken = [], []
+            best_score = max(match_score, delete_score, insert_score)
+            score[i][j] = best_score
+            
+            if best_score == match_score:
+                pointers[i][j] = 'D'
+            elif best_score == delete_score:
+                pointers[i][j] = 'U'
+            else:
+                pointers[i][j] = 'L'
+                
     i, j = m, n
     errors = 0
     correct_words = 0
     
     while i > 0 or j > 0:
-        if i > 0 and j > 0:
+        if pointers[i][j] == 'D':
             dist = modified_levenshtein(target_words[i-1], spoken_words[j-1])
-            is_match = dist < 0.4
-        else:
-            is_match = False
-
-        if i > 0 and j > 0 and score[i][j] == score[i-1][j-1] + (MATCH if dist == 0 else (MATCH * (1 - dist) if is_match else MISMATCH)):
-            align_target.append(target_words[i-1])
-            align_spoken.append(spoken_words[j-1])
-            if is_match:
+            # Again, relaxed threshold here for the final count
+            if dist <= 0.55:
                 correct_words += 1
             else:
-                errors += 1
+                errors += 1 
             i -= 1
             j -= 1
-        elif i > 0 and score[i][j] == score[i-1][j] + GAP:
-            align_target.append(target_words[i-1])
-            align_spoken.append("-")
-            errors += 1 # Deletion error
+        elif pointers[i][j] == 'U':
+            errors += 1 
             i -= 1
-        else:
-            align_target.append("-")
-            align_spoken.append(spoken_words[j-1])
-            errors += 1 # Insertion error
+        elif pointers[i][j] == 'L':
+            errors += 1 
             j -= 1
             
     return correct_words, errors
-
 @app.route('/api/evaluate', methods=['POST'])
 def evaluate_audio():
     if 'audio' not in request.files or 'target_text' not in request.form:
@@ -175,16 +195,21 @@ def evaluate_audio():
         # Execute Dual-Algorithm Framework
         correct_words, errors = needleman_wunsch_alignment(target_words, spoken_words)
         
-        # Calculate Final Metrics
+# Calculate Final Metrics using strict Phil-IRI rubrics
         total_target_words = len(target_words)
-        accuracy_rate = 0
+        
+        # Standard Formula: Correct Words = Total Target - Errors (Insertions + Deletions + Substitutions)
+        # We cap it at 0 so heavy misreaders don't get negative scores
+        final_correct_count = max(0, total_target_words - errors)
+        
+        accuracy_rate = 0.0
         if total_target_words > 0:
-            accuracy_rate = max(0, ((total_target_words - errors) / total_target_words) * 100)
+            accuracy_rate = (final_correct_count / total_target_words) * 100.0
             
         duration_minutes = duration_seconds / 60.0
-        wcpm = 0
+        wcpm = 0.0
         if duration_minutes > 0:
-            wcpm = max(0, correct_words / duration_minutes)
+            wcpm = final_correct_count / duration_minutes
             
         # <--- NEW: MongoDB Database Insertion --->
         evaluation_record = {

@@ -80,7 +80,9 @@ export default function Beginner() {
   
   // Actual Test States
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [hasRecorded, setHasRecorded] = useState(false);
+  const [elapsedTime, setElapsedTime] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   // Refs for the ACTUAL evaluation recording
@@ -121,6 +123,26 @@ export default function Beginner() {
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     };
   }, []);
+
+  // --- NEW: Live Timer Logic ---
+// --- UPDATED: Continuous Live Timer Logic ---
+  useEffect(() => {
+    let timer;
+    if (isTestReady) {
+      timer = setInterval(() => {
+        setElapsedTime((prev) => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(timer);
+    }
+    return () => clearInterval(timer);
+  }, [isTestReady]);
+
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
 
   // --- NEW: Visualizer Logic ---
   const drawWaveform = () => {
@@ -230,6 +252,10 @@ const sendAudioToServer = async () => {
       // You can later save these results to state/localStorage to display on Results.jsx
     } catch (error) {
       console.error("Error sending audio to server:", error);
+    }finally {
+      // <--- NEW: Stop loading and show the button ONLY after server is done
+      setIsProcessing(false); 
+      setHasRecorded(true);
     }
     audioChunksRef.current = [];
   };
@@ -258,9 +284,9 @@ const sendAudioToServer = async () => {
 
   const toggleRecording = () => {
     if (isRecording) {
+      setIsProcessing(true);
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      setHasRecorded(true);
     } else {
       audioChunksRef.current = [];
       mediaRecorderRef.current.start();
@@ -384,15 +410,23 @@ const sendAudioToServer = async () => {
               </span>
             </div>
             
-            <div className="p-8 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center">
+<div className="p-8 pb-12 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center relative">
               <p className="text-2xl leading-relaxed text-center font-medium text-black">
                 "{testPassages[currentIndex]?.text}"
               </p>
               <span className="mt-6 text-sm text-gray-400 italic">
                 Source: {testPassages[currentIndex]?.source}
               </span>
+
+              {/* NEW: Live Timer */}
+              <div className="absolute bottom-4 right-6 flex items-center gap-2 text-gray-600 font-mono font-bold bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
+                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                {formatTime(elapsedTime)}
+              </div>
             </div>
-          </div>
+            </div>
 
           <div className="flex flex-col items-center justify-center">
             <button 
@@ -410,16 +444,19 @@ const sendAudioToServer = async () => {
               </svg>
             </button>
             
-            <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-500' : 'text-gray-500'}`}>
-              {isRecording ? 'Recording... Click to stop.' : (hasRecorded ? 'Recording sent to server!' : 'Click to start recording')}
+<p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-500' : isProcessing ? 'text-[#0096FF] animate-pulse' : 'text-gray-500'}`}>
+              {isRecording ? 'Recording... Click to stop.' : 
+               isProcessing ? 'AI is grading your audio... Please wait.' : 
+               (hasRecorded ? 'Recording graded and saved!' : 'Click to start recording')}
             </p>
 
-            {hasRecorded && (
+            {/* The button will now only appear when hasRecorded is true (after the server replies!) */}
+            {hasRecorded && !isProcessing && (
               <button 
                 onClick={nextPassage}
-                className="mt-8 bg-[#0096FF] hover:bg-[#8ACEFF] text-white font-bold py-4 px-10 rounded-full shadow-lg transition-all transform hover:-translate-y-1"
+                className="mt-8 bg-[#0096FF] text-white font-bold py-4 px-10 rounded-full shadow-lg hover:bg-blue-600 transition-all transform hover:-translate-y-1"
               >
-                {currentIndex < testPassages.length - 1 ? 'Proceed to Next Passage \u2192' : 'Finish Test \u2192'}
+                {currentIndex < testPassages.length - 1 ? 'Proceed to Next Passage →' : 'Finish Test →'}
               </button>
             )}
           </div>
