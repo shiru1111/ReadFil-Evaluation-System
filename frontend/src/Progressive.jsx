@@ -17,13 +17,20 @@ export default function Progressive() {
 
   // Actual Test States
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [hasRecorded, setHasRecorded] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
 
   // Modal States
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showLevelUpModal, setShowLevelUpModal] = useState(false);
-  const [mockScore, setMockScore] = useState(0);
+  
+  // === THE MEMORY VAULT ===
+  const [phaseScores, setPhaseScores] = useState([]); // Remembers current level passages
+  const [cumulativeLogs, setCumulativeLogs] = useState([]); // NEW: Remembers ALL passed levels!
+  
+  const [phaseScore, setPhaseScore] = useState(0);    // The final average score
+  const [isPhasePassed, setIsPhasePassed] = useState(false); // Did they get >= 75?
 
   // Refs for the ACTUAL evaluation recording
   const mediaRecorderRef = useRef(null);
@@ -37,6 +44,7 @@ export default function Progressive() {
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
   const streamRef = useRef(null);
+  const currentTextRef = useRef("");
 
   // Load Passages based on Current Level
   useEffect(() => {
@@ -61,7 +69,8 @@ export default function Progressive() {
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     };
   }, []);
-  // --- UPDATED: Continuous Live Timer Logic ---
+
+  // Continuous Live Timer Logic
   useEffect(() => {
     let timer;
     if (isTestReady) {
@@ -73,6 +82,11 @@ export default function Progressive() {
     }
     return () => clearInterval(timer);
   }, [isTestReady]);
+
+  // Keep the target text perfectly in sync with the screen
+  useEffect(() => {
+    currentTextRef.current = testPassages[currentIndex]?.text || "";
+  }, [currentIndex, testPassages]);
 
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -171,29 +185,30 @@ export default function Progressive() {
   };
 
   // --- Actual Evaluation Logic ---
-const sendAudioToServer = async () => {
+  const sendAudioToServer = async () => {
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     const formData = new FormData();
     formData.append('audio', audioBlob, 'latest_recording.webm');
     
-    // Add the target passage text to the payload
-    const targetText = testPassages[currentIndex]?.text || "";
+    const targetText = currentTextRef.current; 
     formData.append('target_text', targetText);
 
     try {
-      const response = await fetch('https://indira-topflight-mindi.ngrok-free.dev/api/evaluate', {
+      const response = await fetch('http://127.0.0.1:5000/api/evaluate', {
         method: 'POST',
         body: formData,
       });
       const result = await response.json();
       console.log("Server Evaluation Results:", result);
 
-      localStorage.setItem('final_accuracy', result.accuracy_rate);
-      localStorage.setItem('final_wcpm', result.wcpm);
+      // Save safely to memory, NO overwriting local storage here!
+      setPhaseScores(prev => [...prev, result]);
       
-      // You can later save these results to state/localStorage to display on Results.jsx
     } catch (error) {
       console.error("Error sending audio to server:", error);
+    } finally {
+      setIsProcessing(false); 
+      setHasRecorded(true);
     }
     audioChunksRef.current = [];
   };
@@ -219,6 +234,7 @@ const sendAudioToServer = async () => {
 
   const toggleRecording = () => {
     if (isRecording) {
+      setIsProcessing(true);
       mediaRecorderRef.current.stop();
       setIsRecording(false);
       setHasRecorded(true);
@@ -236,23 +252,68 @@ const sendAudioToServer = async () => {
       setIsRecording(false);
       setHasRecorded(false);
     } else {
-      if (currentLevel === 'Beginner' || currentLevel === 'Moderate') {
-        setMockScore(Math.floor(Math.random() * (98 - 85 + 1)) + 85);
-        setShowLevelUpModal(true);
-      } else if (currentLevel === 'Expert') {
-        navigate('/results');
+      // CALCULATE REAL SCORE AT THE END OF THE PHASE
+      let totalAccuracy = 0;
+      let totalWcpm = 0;
+      
+      if (phaseScores.length > 0) {
+        totalAccuracy = phaseScores.reduce((sum, item) => sum + item.accuracy_rate, 0) / phaseScores.length;
+        totalWcpm = phaseScores.reduce((sum, item) => sum + item.wcpm, 0) / phaseScores.length;
       }
+
+      // If it is the Expert Phase, bypass the modal completely and go straight to Results!
+      if (currentLevel === 'Expert') {
+        localStorage.setItem('evaluated_level', 'Progressive');
+        localStorage.setItem('final_accuracy', totalAccuracy);
+        localStorage.setItem('final_wcpm', totalWcpm);
+        
+        // === CRITICAL FIX: COMBINE ALL 75 LOGS (Beginner + Moderate + Expert) ===
+        const allLogs = [...cumulativeLogs, ...phaseScores];
+        localStorage.setItem('reading_logs', JSON.stringify(allLogs));
+        
+        navigate('/results'); 
+        return;
+      }
+
+      // Otherwise, it is Beginner or Moderate, so show the Pass/Fail Modal
+      const targetWcpm = 150; 
+      const accuracyScore = totalAccuracy * 0.5; 
+      const fluencyScore = Math.min((totalWcpm / targetWcpm) * 50, 50); 
+      const finalCalculatedScore = Math.round(accuracyScore + fluencyScore);
+
+      setPhaseScore(finalCalculatedScore);
+
+      // Set Pass/Fail Threshold (Adjust 75 to whatever passing grade you want)
+      if (finalCalculatedScore >= 75) {
+        setIsPhasePassed(true);
+      } else {
+        setIsPhasePassed(false);
+      }
+      
+      setShowLevelUpModal(true);
     }
   };
 
   const handleLevelUp = () => {
+    // === CRITICAL FIX: DUMP CURRENT PASSAGES INTO THE CUMULATIVE VAULT BEFORE RESETTING ===
+    setCumulativeLogs(prev => [...prev, ...phaseScores]);
+
     if (currentLevel === 'Beginner') {
       setCurrentLevel('Moderate');
     } else if (currentLevel === 'Moderate') {
       setCurrentLevel('Expert');
-    }
-    
-    // Complete reset for the new phase
+    } 
+    // Reset everything for the next phase
+    resetPhaseState();
+  };
+
+  const handleRetryPhase = () => {
+    // Keep them on the current level, just wipe the slate clean for this specific phase
+    // Note: Because we do NOT touch cumulativeLogs here, they keep their previously passed levels!
+    resetPhaseState();
+  };
+
+  const resetPhaseState = () => {
     setIsTestReady(false); 
     setMicStatus('idle'); 
     setTestAudioUrl(null);
@@ -261,7 +322,7 @@ const sendAudioToServer = async () => {
     setHasRecorded(false);
     setShowLevelUpModal(false);
     audioChunksRef.current = []; 
-    
+    setPhaseScores([]); // WIPE MEMORY CLEAN FOR THE NEW LEVEL ONLY
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -350,7 +411,7 @@ const sendAudioToServer = async () => {
             <p className="text-gray-500 font-bold uppercase tracking-widest text-sm">Progressive Assessment Mode</p>
           </div>
 
-<div className="bg-white p-10 rounded-[2rem] shadow-xl border border-gray-100 mb-10 relative">
+          <div className="bg-white p-10 rounded-[2rem] shadow-xl border border-gray-100 mb-10 relative">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-[#0096FF]">Reading Material</h2>
               <span className="text-sm font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
@@ -366,7 +427,7 @@ const sendAudioToServer = async () => {
                 Source: {testPassages[currentIndex]?.source}
               </span>
 
-              {/* NEW: Live Timer */}
+              {/* Live Timer */}
               <div className="absolute bottom-4 right-6 flex items-center gap-2 text-gray-600 font-mono font-bold bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
                 <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -392,49 +453,76 @@ const sendAudioToServer = async () => {
               </svg>
             </button>
             
-            <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-500' : 'text-gray-500'}`}>
-              {isRecording ? 'Recording... Click to stop.' : (hasRecorded ? 'Recording sent to server!' : 'Click to start recording')}
+            <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-600' : isProcessing ? 'text-[#005FA3] animate-pulse' : 'text-gray-500'}`}>
+              {isRecording ? 'Recording Expert Audio...' : 
+               isProcessing ? 'AI is grading your audio... Please wait.' : 
+               (hasRecorded ? 'Recording graded and saved!' : 'Click to begin')}
             </p>
 
-            {hasRecorded && (
-              <button 
-                onClick={nextPassage}
-                className={`mt-8 ${theme.bg} ${theme.hover} text-white font-bold py-4 px-10 rounded-full shadow-lg transition-all transform hover:-translate-y-1`}
-              >
-                {currentIndex < testPassages.length - 1 ? 'Proceed to Next Passage \u2192' : 'Submit Phase Evaluation \u2192'}
+            {hasRecorded && !isProcessing && (
+              <button onClick={nextPassage} className="mt-8 bg-[#005FA3] text-white font-bold py-4 px-10 rounded-full shadow-lg hover:bg-[#004A80] transition-all transform hover:-translate-y-1">
+                {currentIndex < testPassages.length - 1 ? 'Next Passage \u2192' : 'Complete Evaluation \u2192'}
               </button>
             )}
           </div>
         </main>
       )}
 
-      {/* Level Up Qualification Modal */}
+      {/* Level Up / Fail Modal */}
       {showLevelUpModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
           
           <div className="relative bg-white w-full max-w-md rounded-[2rem] shadow-2xl overflow-hidden z-10 text-center animate-in zoom-in duration-300">
-            <div className={`${theme.bg} py-10 px-8 flex flex-col items-center`}>
+            {/* Dynamic Header Background based on Pass/Fail */}
+            <div className={`${isPhasePassed ? theme.bg : 'bg-red-600'} py-10 px-8 flex flex-col items-center`}>
               <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-lg mb-6">
-                <span className={`text-4xl font-black ${theme.text}`}>{mockScore}</span>
+                <span className={`text-4xl font-black ${isPhasePassed ? theme.text : 'text-red-600'}`}>{phaseScore}</span>
               </div>
-              <h3 className="text-3xl font-extrabold text-white mb-2">Phase Cleared!</h3>
+              <h3 className="text-3xl font-extrabold text-white mb-2">
+                {isPhasePassed ? 'Phase Cleared!' : 'Phase Failed'}
+              </h3>
               <p className="text-white/90 font-medium">
-                You scored {mockScore}/100 in the {currentLevel} evaluation.
+                You scored {phaseScore}/100 in the {currentLevel} evaluation.
               </p>
             </div>
             
             <div className="p-8">
-              <p className="text-gray-700 text-lg mb-8 font-medium">
-                Congratulations! You are officially qualified to proceed to the <span className={`font-bold ${currentLevel === 'Beginner' ? 'text-[#0096FF]' : 'text-[#005FA3]'}`}>{currentLevel === 'Beginner' ? 'Moderate' : 'Expert'}</span> Level.
-              </p>
-              
-              <button 
-                onClick={handleLevelUp}
-                className={`w-full px-6 py-4 rounded-xl font-bold text-white ${currentLevel === 'Beginner' ? 'bg-[#0096FF] hover:bg-blue-600' : 'bg-[#005FA3] hover:bg-[#004A80]'} transition-all transform hover:-translate-y-1 shadow-lg text-lg`}
-              >
-                Proceed to {currentLevel === 'Beginner' ? 'Moderate' : 'Expert'} Phase
-              </button>
+              {isPhasePassed ? (
+                /* PASS SCENARIO UI */
+                <>
+                  <p className="text-gray-700 text-lg mb-8 font-medium">
+                    Congratulations! You are officially qualified to proceed.
+                  </p>
+                  <button 
+                    onClick={handleLevelUp}
+                    className={`w-full px-6 py-4 rounded-xl font-bold text-white ${theme.bg} ${theme.hover} transition-all transform hover:-translate-y-1 shadow-lg text-lg`}
+                  >
+                    Proceed to {currentLevel === 'Beginner' ? 'Moderate' : 'Expert'} Phase
+                  </button>
+                </>
+              ) : (
+                /* FAIL SCENARIO UI */
+                <>
+                  <p className="text-gray-700 text-lg mb-8 font-medium">
+                    You need a score of at least 75 to advance. You must retry this phase.
+                  </p>
+                  <div className="flex gap-4">
+                    <button 
+                      onClick={confirmReturnHome} 
+                      className="w-1/2 px-6 py-4 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+                    >
+                      Exit
+                    </button>
+                    <button 
+                      onClick={handleRetryPhase} 
+                      className="w-1/2 px-6 py-4 rounded-xl font-bold text-white bg-red-600 hover:bg-red-700 transition-all shadow-lg text-lg transform hover:-translate-y-1"
+                    >
+                      Retry Phase
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

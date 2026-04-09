@@ -75,7 +75,7 @@ export default function Beginner() {
   });
 
   // Updated Mic Test States
-  const [micStatus, setMicStatus] = useState('idle'); // idle, recording_test, playback_ready
+  const [micStatus, setMicStatus] = useState('idle'); 
   const [testAudioUrl, setTestAudioUrl] = useState(null);
   
   // Actual Test States
@@ -84,6 +84,10 @@ export default function Beginner() {
   const [hasRecorded, setHasRecorded] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+
+  // === CRITICAL MISSING PIECE ADDED HERE ===
+  // Memory to store all 25 passages so the Results page can read them
+  const [phaseScores, setPhaseScores] = useState([]); 
 
   // Refs for the ACTUAL evaluation recording
   const mediaRecorderRef = useRef(null);
@@ -97,6 +101,7 @@ export default function Beginner() {
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
   const streamRef = useRef(null);
+  const currentTextRef = useRef("");
 
   useEffect(() => {
     if (testPassages.length === 0) {
@@ -115,7 +120,6 @@ export default function Beginner() {
     localStorage.setItem('beginner_currentIndex', currentIndex.toString());
   }, [currentIndex]);
 
-  // Clean up media tracks and animations when component unmounts
   useEffect(() => {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
@@ -124,8 +128,6 @@ export default function Beginner() {
     };
   }, []);
 
-  // --- NEW: Live Timer Logic ---
-// --- UPDATED: Continuous Live Timer Logic ---
   useEffect(() => {
     let timer;
     if (isTestReady) {
@@ -144,7 +146,10 @@ export default function Beginner() {
     return `${m}:${s}`;
   };
 
-  // --- NEW: Visualizer Logic ---
+  useEffect(() => {
+    currentTextRef.current = testPassages[currentIndex]?.text || "";
+  }, [currentIndex, testPassages]);
+
   const drawWaveform = () => {
     if (!analyserRef.current || !canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -156,11 +161,11 @@ export default function Beginner() {
       animationRef.current = requestAnimationFrame(draw);
       analyserRef.current.getByteTimeDomainData(dataArray);
 
-      ctx.fillStyle = '#f9fafb'; // Match the gray-50 background of the container
+      ctx.fillStyle = '#f9fafb'; 
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       ctx.lineWidth = 3;
-      ctx.strokeStyle = '#0096FF'; // Your primary blue theme
+      ctx.strokeStyle = '#0096FF'; 
       ctx.beginPath();
 
       const sliceWidth = canvas.width * 1.0 / bufferLength;
@@ -182,22 +187,18 @@ export default function Beginner() {
     draw();
   };
 
-  // --- UPDATED: Mic Test Logic ---
   const handleMicTestToggle = async () => {
     if (micStatus === 'idle' || micStatus === 'playback_ready') {
       try {
-        // Request microphone access
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         streamRef.current = stream;
         
-        // Setup Web Audio API for visualizer
         audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
         analyserRef.current = audioContextRef.current.createAnalyser();
         const source = audioContextRef.current.createMediaStreamSource(stream);
         source.connect(analyserRef.current);
         analyserRef.current.fftSize = 2048;
 
-        // Setup temporary recorder for playback
         testRecorderRef.current = new MediaRecorder(stream);
         testChunksRef.current = [];
         
@@ -211,7 +212,6 @@ export default function Beginner() {
           setTestAudioUrl(audioUrl);
         };
 
-        // Start everything
         testRecorderRef.current.start();
         setMicStatus('recording_test');
         drawWaveform();
@@ -221,39 +221,35 @@ export default function Beginner() {
         alert("Please allow microphone permissions in your browser to proceed.");
       }
     } else if (micStatus === 'recording_test') {
-      // Stop testing and generate playback
       testRecorderRef.current.stop();
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
       setMicStatus('playback_ready');
     }
   };
 
-  // --- Actual Evaluation Logic ---
-const sendAudioToServer = async () => {
+  const sendAudioToServer = async () => {
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     const formData = new FormData();
     formData.append('audio', audioBlob, 'latest_recording.webm');
     
-    // Add the target passage text to the payload
-    const targetText = testPassages[currentIndex]?.text || "";
+    const targetText = currentTextRef.current; 
     formData.append('target_text', targetText);
 
     try {
-  const response = await fetch('https://indira-topflight-mindi.ngrok-free.dev/api/evaluate', {       
+      const response = await fetch('http://127.0.0.1:5000/api/evaluate', {       
         method: 'POST',
         body: formData,
       });
       const result = await response.json();
       console.log("Server Evaluation Results:", result);
 
-      localStorage.setItem('final_accuracy', result.accuracy_rate);
-      localStorage.setItem('final_wcpm', result.wcpm);
+      // === CRITICAL FIX ADDED HERE ===
+      // Store the result in our local memory array instead of overwriting the final score immediately
+      setPhaseScores(prev => [...prev, result]);
       
-      // You can later save these results to state/localStorage to display on Results.jsx
     } catch (error) {
       console.error("Error sending audio to server:", error);
-    }finally {
-      // <--- NEW: Stop loading and show the button ONLY after server is done
+    } finally {
       setIsProcessing(false); 
       setHasRecorded(true);
     }
@@ -261,7 +257,6 @@ const sendAudioToServer = async () => {
   };
 
   const startActualTest = async () => {
-    // We must secure the stream for the actual test before moving on
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
@@ -272,7 +267,6 @@ const sendAudioToServer = async () => {
 
       mediaRecorderRef.current.onstop = sendAudioToServer;
       
-      // Stop the test tracks to avoid hardware conflicts
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
       
       setIsTestReady(true);
@@ -313,9 +307,29 @@ const sendAudioToServer = async () => {
       setIsRecording(false); 
       setHasRecorded(false);
     } else {
+      // === CRITICAL CALCULATION ADDED HERE ===
+      // Calculate true average from all passages
+      let totalAccuracy = 0;
+      let totalWcpm = 0;
+      
+      if (phaseScores.length > 0) {
+        totalAccuracy = phaseScores.reduce((sum, item) => sum + item.accuracy_rate, 0) / phaseScores.length;
+        totalWcpm = phaseScores.reduce((sum, item) => sum + item.wcpm, 0) / phaseScores.length;
+      }
+
+      // Save the specific final numbers to localStorage
+      localStorage.setItem('evaluated_level', 'Beginner'); 
+      localStorage.setItem('final_accuracy', totalAccuracy);
+      localStorage.setItem('final_wcpm', totalWcpm);
+      
+      // Save the complete log array so the Results page can render the UI
+      localStorage.setItem('reading_logs', JSON.stringify(phaseScores));
+      
+      // Clean up the local tracker
       localStorage.removeItem('beginner_passages');
       localStorage.removeItem('beginner_currentIndex');
       localStorage.removeItem('beginner_isTestReady');
+      
       navigate('/results');
     }
   };
@@ -338,7 +352,6 @@ const sendAudioToServer = async () => {
 
           <div className="bg-white p-10 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col items-center">
             
-            {/* Visualizer Canvas */}
             <div className="w-full h-32 bg-gray-50 rounded-xl border border-gray-200 mb-8 overflow-hidden flex items-center justify-center">
               {micStatus === 'idle' && <p className="text-gray-400 font-medium">Waveform will appear here</p>}
               <canvas 
@@ -355,7 +368,6 @@ const sendAudioToServer = async () => {
                'Test complete! Listen to your playback.'}
             </p>
 
-            {/* Test Controls */}
             <div className="flex flex-col items-center gap-6">
               {micStatus !== 'playback_ready' ? (
                 <button 
@@ -410,7 +422,7 @@ const sendAudioToServer = async () => {
               </span>
             </div>
             
-<div className="p-8 pb-12 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center relative">
+            <div className="p-8 pb-12 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center relative">
               <p className="text-2xl leading-relaxed text-center font-medium text-black">
                 "{testPassages[currentIndex]?.text}"
               </p>
@@ -418,7 +430,6 @@ const sendAudioToServer = async () => {
                 Source: {testPassages[currentIndex]?.source}
               </span>
 
-              {/* NEW: Live Timer */}
               <div className="absolute bottom-4 right-6 flex items-center gap-2 text-gray-600 font-mono font-bold bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
                 <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -444,26 +455,24 @@ const sendAudioToServer = async () => {
               </svg>
             </button>
             
-<p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-500' : isProcessing ? 'text-[#0096FF] animate-pulse' : 'text-gray-500'}`}>
+            <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-500' : isProcessing ? 'text-[#0096FF] animate-pulse' : 'text-gray-500'}`}>
               {isRecording ? 'Recording... Click to stop.' : 
-               isProcessing ? 'AI is grading your audio... Please wait.' : 
+               isProcessing ? 'Processing... Please wait.' : 
                (hasRecorded ? 'Recording graded and saved!' : 'Click to start recording')}
             </p>
 
-            {/* The button will now only appear when hasRecorded is true (after the server replies!) */}
             {hasRecorded && !isProcessing && (
               <button 
                 onClick={nextPassage}
                 className="mt-8 bg-[#0096FF] text-white font-bold py-4 px-10 rounded-full shadow-lg hover:bg-blue-600 transition-all transform hover:-translate-y-1"
               >
-                {currentIndex < testPassages.length - 1 ? 'Proceed to Next Passage →' : 'Finish Test →'}
+                {currentIndex < testPassages.length - 1 ? 'Proceed to Next Passage \u2192' : 'Finish Test \u2192'}
               </button>
             )}
           </div>
         </main>
       )}
 
-      {/* Return Home Custom Modal */}
       {showConfirmModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowConfirmModal(false)}></div>

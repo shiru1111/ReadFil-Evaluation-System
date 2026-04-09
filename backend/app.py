@@ -6,17 +6,9 @@ import librosa
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 from pydub import AudioSegment
 import re
-from pymongo import MongoClient  # <--- Imported MongoClient
 
 app = Flask(__name__)
 CORS(app)
-
-# <--- MongoDB Connection Setup --->
-# REPLACE "YOUR_MONGODB_ATLAS_URI_HERE" with your actual connection string from MongoDB Atlas
-client = MongoClient("mongodb+srv://admin:pH36VCD12S9BG5CS@readfil.j1thrv3.mongodb.net/?appName=READFIL")
-db = client['readfil_database'] 
-evaluations_collection = db['evaluations'] 
-# <--------------------------------->
 
 UPLOAD_FOLDER = 'temp_audio'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -126,7 +118,7 @@ def needleman_wunsch_alignment(target_words, spoken_words):
         for j in range(1, n + 1):
             dist = modified_levenshtein(target_words[i-1], spoken_words[j-1])
             
-            # ---> RELAXED THRESHOLD: We now accept words up to 55% incorrect spelling 
+            # RELAXED THRESHOLD: We now accept words up to 55% incorrect spelling 
             # to account for the AI mishearing you, as long as it's phonetically close.
             if dist <= 0.55: 
                 match_score = score[i-1][j-1] + (MATCH * (1.0 - dist))
@@ -153,7 +145,6 @@ def needleman_wunsch_alignment(target_words, spoken_words):
     while i > 0 or j > 0:
         if pointers[i][j] == 'D':
             dist = modified_levenshtein(target_words[i-1], spoken_words[j-1])
-            # Again, relaxed threshold here for the final count
             if dist <= 0.55:
                 correct_words += 1
             else:
@@ -168,6 +159,7 @@ def needleman_wunsch_alignment(target_words, spoken_words):
             j -= 1
             
     return correct_words, errors
+
 @app.route('/api/evaluate', methods=['POST'])
 def evaluate_audio():
     if 'audio' not in request.files or 'target_text' not in request.form:
@@ -195,11 +187,8 @@ def evaluate_audio():
         # Execute Dual-Algorithm Framework
         correct_words, errors = needleman_wunsch_alignment(target_words, spoken_words)
         
-# Calculate Final Metrics using strict Phil-IRI rubrics
+        # Calculate Final Metrics using strict Phil-IRI rubrics
         total_target_words = len(target_words)
-        
-        # Standard Formula: Correct Words = Total Target - Errors (Insertions + Deletions + Substitutions)
-        # We cap it at 0 so heavy misreaders don't get negative scores
         final_correct_count = max(0, total_target_words - errors)
         
         accuracy_rate = 0.0
@@ -211,7 +200,17 @@ def evaluate_audio():
         if duration_minutes > 0:
             wcpm = final_correct_count / duration_minutes
             
-        # <--- NEW: MongoDB Database Insertion --->
+        # ========================================================
+        # CLEAN TERMINAL DASHBOARD
+        # ========================================================
+        print(f"\n" + "="*60)
+        print(f" TARGET : {target_text}")
+        print(f" HEARD  : {transcription}")
+        print(f" SCORE  : Accuracy: {round(accuracy_rate, 2)}% | WCPM: {round(wcpm, 2)}")
+        print(f" ERRORS : {errors} out of {total_target_words} total words")
+        print("="*60 + "\n")
+        
+        # Return Data to React
         evaluation_record = {
             "target_text": target_text,
             "transcription": transcription,
@@ -221,12 +220,6 @@ def evaluate_audio():
             "status": "success"
         }
         
-        # This securely inserts the data into your MongoDB cluster
-        evaluations_collection.insert_one(evaluation_record)
-        # <--------------------------------------->
-        
-        # Return the data to the React Frontend (Notice we removed _id to avoid JSON serialization errors)
-        evaluation_record.pop('_id', None)
         return jsonify(evaluation_record), 200
         
     except Exception as e:

@@ -100,9 +100,14 @@ export default function Moderate() {
 
   // Actual Test States
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [hasRecorded, setHasRecorded] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+
+  // === CRITICAL MISSING PIECE ADDED HERE ===
+  // Memory to store all 25 passages so the Results page can read them
+  const [phaseScores, setPhaseScores] = useState([]); 
 
   // Refs for the ACTUAL evaluation recording
   const mediaRecorderRef = useRef(null);
@@ -116,6 +121,7 @@ export default function Moderate() {
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
   const streamRef = useRef(null);
+  const currentTextRef = useRef("");
 
   useEffect(() => {
     if (testPassages.length === 0) {
@@ -142,6 +148,7 @@ export default function Moderate() {
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
     };
   }, []);
+
   // --- UPDATED: Continuous Live Timer Logic ---
   useEffect(() => {
     let timer;
@@ -154,6 +161,11 @@ export default function Moderate() {
     }
     return () => clearInterval(timer);
   }, [isTestReady]);
+
+  // ADD THIS EFFECT: Keep the target text perfectly in sync with the screen
+  useEffect(() => {
+    currentTextRef.current = testPassages[currentIndex]?.text || "";
+  }, [currentIndex, testPassages]);
 
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -246,29 +258,33 @@ export default function Moderate() {
   };
 
   // --- Actual Evaluation Logic ---
-const sendAudioToServer = async () => {
+  const sendAudioToServer = async () => {
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     const formData = new FormData();
     formData.append('audio', audioBlob, 'latest_recording.webm');
     
-    // Add the target passage text to the payload
-    const targetText = testPassages[currentIndex]?.text || "";
+    // Make sure you kept the currentTextRef fix here!
+    const targetText = currentTextRef.current; 
     formData.append('target_text', targetText);
 
     try {
-      const response = await fetch('https://indira-topflight-mindi.ngrok-free.dev/api/evaluate', {
+      const response = await fetch('http://127.0.0.1:5000/api/evaluate', {
         method: 'POST',
         body: formData,
       });
       const result = await response.json();
       console.log("Server Evaluation Results:", result);
 
-      localStorage.setItem('final_accuracy', result.accuracy_rate);
-      localStorage.setItem('final_wcpm', result.wcpm);
+      // === CRITICAL FIX ADDED HERE ===
+      // Store the result in our local memory array instead of overwriting the final score immediately
+      setPhaseScores(prev => [...prev, result]);
       
-      // You can later save these results to state/localStorage to display on Results.jsx
     } catch (error) {
       console.error("Error sending audio to server:", error);
+    } finally {
+      // <--- Turn off loading and show the next button ONLY after server is done
+      setIsProcessing(false); 
+      setHasRecorded(true);
     }
     audioChunksRef.current = [];
   };
@@ -297,9 +313,9 @@ const sendAudioToServer = async () => {
 
   const toggleRecording = () => {
     if (isRecording) {
+      setIsProcessing(true);
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      setHasRecorded(true);
     } else {
       audioChunksRef.current = [];
       mediaRecorderRef.current.start();
@@ -326,6 +342,24 @@ const sendAudioToServer = async () => {
       setIsRecording(false); 
       setHasRecorded(false);
     } else {
+      // === CRITICAL CALCULATION ADDED HERE ===
+      // Calculate true average from all passages
+      let totalAccuracy = 0;
+      let totalWcpm = 0;
+      
+      if (phaseScores.length > 0) {
+        totalAccuracy = phaseScores.reduce((sum, item) => sum + item.accuracy_rate, 0) / phaseScores.length;
+        totalWcpm = phaseScores.reduce((sum, item) => sum + item.wcpm, 0) / phaseScores.length;
+      }
+
+      // Save the specific final numbers to localStorage
+      localStorage.setItem('evaluated_level', 'Moderate'); 
+      localStorage.setItem('final_accuracy', totalAccuracy);
+      localStorage.setItem('final_wcpm', totalWcpm);
+      
+      // Save the complete log array so the Results page can render the UI
+      localStorage.setItem('reading_logs', JSON.stringify(phaseScores));
+
       localStorage.removeItem('moderate_passages');
       localStorage.removeItem('moderate_currentIndex');
       localStorage.removeItem('moderate_isTestReady');
@@ -414,7 +448,7 @@ const sendAudioToServer = async () => {
             <h1 className="text-4xl font-extrabold mb-4 text-[#0096FF]">Moderate Evaluation</h1>
           </div>
 
-<div className="bg-white p-10 rounded-[2rem] shadow-xl border border-gray-100 mb-10 relative">
+          <div className="bg-white p-10 rounded-[2rem] shadow-xl border border-gray-100 mb-10 relative">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-[#0096FF]">Reading Material</h2>
               <span className="text-sm font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
@@ -449,10 +483,15 @@ const sendAudioToServer = async () => {
                 )}
               </svg>
             </button>
-            <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-500' : 'text-gray-500'}`}>{isRecording ? 'Recording... Click to stop.' : (hasRecorded ? 'Recording sent to server!' : 'Click to start recording')}</p>
-            {hasRecorded && (
-              <button onClick={nextPassage} className="mt-8 bg-[#0096FF] text-white font-bold py-4 px-10 rounded-full shadow-lg hover:bg-blue-600 transition-all transform hover:-translate-y-1">
-                {currentIndex < testPassages.length - 1 ? 'Proceed to Next Passage \u2192' : 'Finish Test \u2192'}
+            <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-600' : isProcessing ? 'text-[#005FA3] animate-pulse' : 'text-gray-500'}`}>
+              {isRecording ? 'Recording Expert Audio...' : 
+               isProcessing ? 'Processing... Please wait.' : 
+               (hasRecorded ? 'Recording graded and saved!' : 'Click to begin')}
+            </p>
+
+            {hasRecorded && !isProcessing && (
+              <button onClick={nextPassage} className="mt-8 bg-[#005FA3] text-white font-bold py-4 px-10 rounded-full shadow-lg hover:bg-[#004A80] transition-all transform hover:-translate-y-1">
+                {currentIndex < testPassages.length - 1 ? 'Next Passage \u2192' : 'Complete Evaluation \u2192'}
               </button>
             )}
           </div>
