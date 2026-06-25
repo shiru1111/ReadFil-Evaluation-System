@@ -1,83 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-
-const rawPassages = [
-  "May isang asong gutom na gutom na naglalakad sa kalsada. Habang naglalakad, ibinubulong niya sa sarili na kailangan niyang makakita ng isang lunggang puno ng pagkain.",
-  "Nang makakita siya ng lungga sa dulo ng kalsada, agad siyang pumasok dito. Kumain siya hanggang mabusog.",
-  "Nang lalabas na lamang siya, napansin niyang hindi na siya magkasya sa labasan. Sumigaw siya upang humingi ng tulong.",
-  "Hanap nang hanap si Susan kay Muning. Dala ni Susan ang lalagyan ng pagkain ni Muning.",
-  "May laman na ang lalagyan, pero wala si Muning. Wala siya sa kusina. Wala rin siya sa silid.",
-  "Nakita ni Susan ang kasama ni Muning. Mga kuting ang kasama ni Muning sa kahon. May puti, itim at magkahalong puti at itim na kulay na mga kuting. Tuwang-tuwa si Susan.",
-  "Si Brownie ay aking alagang aso. Ang aking aso ay masamang magalit. Minsan ay may pumasok na malaking manok sa aming bakuran.",
-  "Kaagad niya itong tinahulan. Kung hindi lamang siya nakatali nang mahigpit, malamang na habulin niya ito.",
-  "Bahagya pa niyang ginalaw ang kanyang buntot nang makita ako. Kaagad kong binitbit sa buntot ang daga at ipinakita kay Tatay.",
-  "Maraming salamat mga bata. Natatapos agad ang gawain kung nagtutulungan.",
-  "Pagdating sa paaralan, gayundin ang kanilang nakita. Maputik ang silid at madungis ang pader. Nagkalat ang mga dahon sa buong paligid.",
-  "Papasok na ng paaralan ang tatlong mag-aaral. Nakita nila ang nagkalat na mga sanga ng puno sa mahabang daan.",
-  "Nagtitinda ng dyaryo si Luis tuwing umaga. Nilagang mais at saging naman ang itinitinda ni Karen.",
-  "Katulad mo rin. Nakapagbibigay din ako kay Inay at nakapag-iipon pa ako.",
-  "Dumaan ang habagat sa Luzon. Nagdulot ito ng pinsala sa tao.",
-  "Maiiwasan sana ang pagguho ng lupa sa mga kabundukan kung isasagawa ng mga tao ang programa ng Kagawaran ng Pangangalaga sa kapaligiran at Likas na Yaman.",
-  "Iwasan natin ang paggamit ng mga plastik at ang pagtatapon ng basura kung saan-saan.",
-  "Mag-umpisa tayong maglinis ng paligid at magtanim ng mga puno sa mga bakanteng lupa ng ating bakuran.",
-  "Matiyaga siyang nagsaka at maingat na nagplano ng patubigan para sa mga tanim",
-  "Isang araw, nagulat si Rizal nang biglang dumating sa Dapitan si Pio Valenzuela",
-  "Binanggit din niya ang alok na ibibigay ni Bonifacio kay Rizal, ang liderato ng katipunan kung sakaling aanib ang doktor sa kilusang ito.",
-  "Sa simula pa lang ng kasaysayan ng ating mundo, mayroon nang di pagkakasundo sa pagitan ng dalawang grupo ng tao.",
-  "Anumang pag-aaway na naglalayong sirain, talunin at pagharian ang bawat isa ay maituturing na digmaan.",
-  "Ang basurang nabubulok ay maaaring pampataba ng lupa na pagtataniman ng mga halaman",
-  "Pumili ng isang lugar at humukay ng pagtatapunan ng basurang nabubulok tulad ng balat ng prutas at tuyong dahon",
-  "Muling magagamit ang ibang basurang di-nabubulok tulad ng mga basyo ng lata, plastic, o bote.",
-  "Malaki ang matutulong natin sa pagpapanatili ng kalinisan at kaayusan sa ganitiong paraan.",
-  "Nagtitiis silang mawalay sa pamilya upang makapag hanapbuhay at may maitustos sa pamilya",
-  "Higit sa walong milyong Pilipino ang naghahanapbuhay sa iba’t ibang bansa ngayon.",
-  "Bilang pagkilala sa malaking kontribusyon nila sa ating bansa, pinagkaloooban sila ng ating pamahalaan ng karapatang bumoto kahit sila ay nasa labas ng bansa",
-  "Ang Embahada ng Pilipinas sa bansang kanilang pinag hahanapbuhayan ay nagsisilbing sentro ng botohan.",
-  "Gamit din bilang dekorasyon ang makukulay at iba’t ibang hugis na kiping na mula sa bigas.",
-  "Maraming mga tao ang nakapag pasigla ng ating kultura sa larangan ng pelikula, paglilok, literatura, at arkitektura.",
-  "Nagpapaalala ang mga ito na puno ng pag-asa ang buhay at ng pagmamahal sa kalayaan.",
-  "Nagpapahiwatig din ito na malulutas ang suliranin at matutupad ang mga mithiin kung hihilingin ito sa Poong Maykapal",
-  "kapag nakatamo ang bansa ng tagumpay, nakadarama ng pagmamalaki ang mamamayan.",
-  "Ang pangangalaga sa kalayaan at karapatang tinatamasa ng mamamayan ay isa sa mga pangunahing katangian ng lipunang demokratiko.",
-  "Hindi mabilang ang malalaki at maliliit na mga robot na kumikilos tulad ng mga tao.",
-  "May makukulay na mga sasakyang panghimpapawid na animo saranggolang nakasabit sa langit.",
-  "Ang usapin ng populasyon ay mahalaga para sa pag-unlad ng isang bansa.",
-  "Ang mabilis na paglaki ng populasyon ay kritikal sa madaling pagkaubos ng likas na yaman.",
-  "Kung ang likas na yaman ay isa sa pangunahing batayan ng pag-unlad ng isang bansa, ang malaking populasyon ay nangangahulugang maramihang paggamit sa likas ng yaman.",
-  "Marami rin ang walang hanapbuhay kung kaya’t nangingibang-bansa sila kung saan mas malaki ang kita",
-  "Ang krimen na dulot ng matinding kahirapan ay hadlang din sa pag-unlad ng ekonomiya dahil sa kawalan ng seguridad sa lipunan.",
-  "nagiging dahilan din ito upang mabigong mahikayat ang mga dayuhan na mamuhunan sa ating bansa.",
-  "Tungkulin ng mga batang sumunod sa batas ng bansa at sa mga tuntunin sa pinapasukang paaralan",
-  "Ang ating bansa ay napaliligiran ng malawak na karagatan. Sagana ito sa iba’t ibang uri ng isda",
-  "Iba’t ibang uri ng isda ang dinadala natin sa mga bansang ito tulad ng tuna at lapu-lapu.",
-  "Malaki ang naitutulong nito sa hanapbuhay ng ating mga mangingisda. Subalit ang kasaganahang ito ay malimit na inaabuso.",
-  "May mga mangingisdang gumagamit ng mga pampasabog at lasong kemikal para makahuli ng maraming isda.",
-  "Namamatay ang maliliit na isda na dapat sana ay lumaki at dumami pa. Ang iba naman ay sinisiral.",
-  "Ang Kagawaran ng Agrikultura sa pangunguna ng ay patuloy na gumagawa ng mga hakbang para masugpo ang mga mangingisdang lumalabag sa batas.",
-  "Malaking bahagi ng ekonomiya ang nagbubuhat sa sektor ng mga mangingisda.",
-  "Ito ang mga dahilan kung bakit kailangang alagaan ang industriyang ito.",
-  "Iba’t ibang kamangha-manghang hugis ang nabuo mula sa mga limestone sa loob ng kuweba.",
-  "Ang ilog ay tinatayang dalawang kilometro ang haba at ito ay tumutuloy sa dagat.",
-  "Anumang gawaing ninanais niya ay isinasakatuparan niya agad. Ayaw niya na may masayang na panahon dahil naniniwala siya na ang oras ay ginto.",
-  "Sa pamamagitan ng pagsasakatuparan ng katarungang Panlipunan, binigyan niya ng pantay na pagpapahalaga ang mahihirap at mayayaman",
-  "Ang bulaklak ng niyog ay ginagawang suka at alak. Ang ubod naman ay ginagawang atsara, sariwang lumpiya, at panghalo sa mga lutuing karne o lamang dagat.",
-  "Ang bawat panukalang-batas na mapagtitibay ng kongreso ay ihaharap sa pangulo bago maging batas. Lalagdaan ito ng pangulo kung sinasang-ayunan niya ito",
-  "May pinagdadaanang proseso ang isang panukalang-batas bago ito tuluyang maging batas para maipatupad sa ating bansa.",
-  "Tatlong araw bago mapagtibay ito ay ipinag-uutos ang pamamahagi ng nakalimbag na kopya nito sa mga kagawad ng kapulungan.",
-  "Tanghaling tapat na. Marami sa mga mag-aaral ang nagmamadali nang umuwi. Walang lilim na masisilungan kahit saan.",
-  "Ihanda muna natin ang mga takip ng bote o tansan para sa gulong. Pagkatapos, kailangan nating maghanap ng kahon ng posporo para sa katawan.",
-  "Kasama si Jamil, isang batang Muslim, sa sumalubong sa pagdating ng kanyang tiyuhin.",
-  "Nagkukulang din sa suplay ng tubig sa mga imbakan gaya ng La Mesa Dam na matatagpuan sa Lungsod Quezon at Angat Dam sa Bulacan.",
-  "Ang mga ito ang pinagkukunan ng tubig sa kamaynilaan at sa mga karatig probinsya nito.",
-  "Dahil sa patuloy na pagputol ng mga punong kahoy, marami na ang nagaganap na mga kalamidad tulad ng biglaang pagbaha sa iba’t ibang pook.",
-  "Sa paggawa ng karosang ito, ipinakikita ng mga Pilipino ang kanilang pagiging malikhain at pagiging matulungin.",
-  "Ang pinakasikat at inaabangang gawain tuwing pista ng bulaklak ay ang parada."
-];
-
-const allPassages = rawPassages.map(text => ({
-  text: text,
-  source: "Phil-IRI The Philippine Informal Reading Inventory Manual"
-}));
+import { moderatePassages } from './data/passages'; // NEW IMPORT
 
 export default function Moderate() {
   const navigate = useNavigate();
@@ -105,7 +28,6 @@ export default function Moderate() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-  // === CRITICAL MISSING PIECE ADDED HERE ===
   // Memory to store all 25 passages so the Results page can read them
   const [phaseScores, setPhaseScores] = useState([]); 
 
@@ -125,12 +47,13 @@ export default function Moderate() {
 
   useEffect(() => {
     if (testPassages.length === 0) {
-      const shuffled = [...allPassages];
+      // NOW USING THE IMPORTED DATA FROM passages.jsx
+      const shuffled = [...moderatePassages];
       for (let i = shuffled.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 25);
+      const selected = shuffled.slice(0, 5);
       setTestPassages(selected);
       localStorage.setItem('moderate_passages', JSON.stringify(selected));
     }
@@ -275,14 +198,13 @@ export default function Moderate() {
       const result = await response.json();
       console.log("Server Evaluation Results:", result);
 
-      // === CRITICAL FIX ADDED HERE ===
       // Store the result in our local memory array instead of overwriting the final score immediately
       setPhaseScores(prev => [...prev, result]);
       
     } catch (error) {
       console.error("Error sending audio to server:", error);
     } finally {
-      // <--- Turn off loading and show the next button ONLY after server is done
+      // Turn off loading and show the next button ONLY after server is done
       setIsProcessing(false); 
       setHasRecorded(true);
     }
@@ -342,7 +264,6 @@ export default function Moderate() {
       setIsRecording(false); 
       setHasRecorded(false);
     } else {
-      // === CRITICAL CALCULATION ADDED HERE ===
       // Calculate true average from all passages
       let totalAccuracy = 0;
       let totalWcpm = 0;

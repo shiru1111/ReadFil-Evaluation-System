@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import html2canvas from 'html2canvas';
 
 export default function Results() {
   const navigate = useNavigate();
+  const certificateRef = useRef(null);
 
-  // Dynamic State to hold the actual user data and server results
   const [resultData, setResultData] = useState({
     firstName: "Student",
     lastName: "",
@@ -16,21 +17,14 @@ export default function Results() {
 
   const [readingLogs, setReadingLogs] = useState([]);
 
-  // Fetch the real data when the certificate loads
   useEffect(() => {
-    // 1. Fetch User Registration Data
     const storedFirstName = localStorage.getItem('user_firstName') || "Student";
     const storedLastName = localStorage.getItem('user_lastName') || "";
-    
-    // 2. Fetch the Evaluation Metrics from the Python Server and ROUND them
     const storedAccuracy = Math.round(parseFloat(localStorage.getItem('final_accuracy')) || 0);
     const storedWcpm = Math.round(parseFloat(localStorage.getItem('final_wcpm')) || 0);
-    
-    // 3. Determine the evaluated level 
     const storedLevel = localStorage.getItem('evaluated_level') || "Overall";
-
-    // Fetch the detailed reading logs we just saved
     const storedLogs = JSON.parse(localStorage.getItem('reading_logs')) || [];
+    
     setReadingLogs(storedLogs);
 
     setResultData({
@@ -43,15 +37,12 @@ export default function Results() {
     });
   }, []);
 
-  // FORMAL COMPUTATION (Max Score = 100)
-  // 50% weight for Accuracy, 50% weight for WCPM.
   const targetWcpm = 150; 
   
   const accuracyScore = resultData.accuracyRate * 0.5; 
   const fluencyScore = Math.min((resultData.wcpm / targetWcpm) * 50, 50); 
   const finalScore = Math.round(accuracyScore + fluencyScore);
 
-  // === NEW: Determine Tagalog Level ===
   let tagalogLevel = "";
   if (finalScore >= 90) {
     tagalogLevel = "Independent";
@@ -61,7 +52,6 @@ export default function Results() {
     tagalogLevel = "Frustration";
   }
 
-  // SVG Calculations for Progress Rings
   const rarRadius = 36;
   const rarCircumference = 2 * Math.PI * rarRadius;
   const rarOffset = rarCircumference - (resultData.accuracyRate / 100) * rarCircumference;
@@ -73,17 +63,14 @@ export default function Results() {
   const wcpmPercentage = Math.min((resultData.wcpm / targetWcpm) * 100, 100);
 
   // ==========================================
-  // Visual Error Highlighter Function
+  // FIXED: Visual Error Highlighter Function
   // ==========================================
   const highlightErrors = (target, heard) => {
     if (!heard) return <span className="text-gray-400 italic">No audio detected.</span>;
 
-    const targetWords = target.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(' ').map(w => {
-      if (w === 'mga') return 'manga';
-      if (w === 'ng') return 'nang';
-      return w;
-    });
-
+    // Pure stripping. No hardcoded dictionary mapping. 
+    // We trust the backend's Two-Way Snapper to have formatted the words correctly.
+    const targetWords = target.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(' ');
     const heardWords = heard.split(' ');
     
     return heardWords.map((word, index) => {
@@ -102,8 +89,25 @@ export default function Results() {
   };
   // ==========================================
 
-  const handleSaveAsImage = () => {
-    alert("Functionality to save this report as an image will be implemented here.");
+  const handleSaveAsImage = async () => {
+    if (!certificateRef.current) return;
+    
+    try {
+      const canvas = await html2canvas(certificateRef.current, {
+        scale: 2, 
+        backgroundColor: '#ffffff', 
+        useCORS: true 
+      });
+      
+      const image = canvas.toDataURL('image/png', 1.0);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = image;
+      downloadLink.download = `ReadFil_Certificate_${resultData.firstName}_${resultData.lastName}.png`;
+      downloadLink.click();
+    } catch (error) {
+      console.error("Error generating certificate image:", error);
+      alert("There was an error saving your certificate. Please try again.");
+    }
   };
 
   const handleSendEmail = () => {
@@ -111,7 +115,6 @@ export default function Results() {
   };
 
   const handleReturnHome = () => {
-    // Clear the session data so the next student starts fresh
     localStorage.removeItem('final_accuracy');
     localStorage.removeItem('final_wcpm');
     localStorage.removeItem('evaluated_level');
@@ -122,18 +125,17 @@ export default function Results() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#0096FF]/20 to-white font-sans text-gray-900 pb-20">
       
-      {/* Navigation Header */}
       <nav className="w-full bg-white px-10 lg:px-20 py-5 flex justify-between items-center border-b border-gray-200">
         <div className="text-2xl font-black tracking-tight text-gray-900">ReadFil</div>
       </nav>
 
-      {/* Main Content */}
       <main className="max-w-4xl mx-auto px-6 mt-12">
         
-        {/* Minimalist Results Card */}
-        <div className="bg-white/90 backdrop-blur-md rounded-sm shadow-sm border border-gray-200 p-10 lg:p-14 animate-in fade-in zoom-in duration-700">
+        <div 
+          ref={certificateRef} 
+          className="bg-white/90 backdrop-blur-md rounded-sm shadow-sm border border-gray-200 p-10 lg:p-14 animate-in fade-in zoom-in duration-700"
+        >
           
-          {/* Document Header */}
           <div className="text-center border-b border-gray-300 pb-8 mb-10">
             <h1 className="text-3xl font-bold text-gray-900 tracking-widest uppercase mb-2">
               Tagalog Evaluation Certificate
@@ -143,7 +145,6 @@ export default function Results() {
             </p>
           </div>
 
-          {/* Certification Statement */}
           <div className="text-center mb-14">
             <p className="text-gray-500 text-sm uppercase tracking-widest mb-4">This document certifies that</p>
             <h2 className="text-4xl font-black text-gray-900 mb-4 uppercase tracking-wide">
@@ -155,10 +156,8 @@ export default function Results() {
             <p className="text-xs text-gray-400 mt-6 font-medium uppercase tracking-widest">Date of Examination: {resultData.date}</p>
           </div>
 
-          {/* Metrics Section */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12 mb-12">
             
-            {/* Accuracy Rate - Circular Progress */}
             <div className="flex items-center gap-6">
               <div className="relative w-24 h-24 flex-shrink-0">
                 <svg className="w-full h-full transform -rotate-90">
@@ -171,11 +170,10 @@ export default function Results() {
               </div>
               <div>
                 <p className="text-sm text-gray-900 uppercase tracking-widest font-bold">Accuracy Rate</p>
-                <p className="text-xs text-gray-500 mt-1">Percentage of correct pronunciation</p>
+                <p className="text-xs text-gray-500 mt-1">Percentage of correct words</p>
               </div>
             </div>
 
-            {/* WCPM - Linear Progress Gauge */}
             <div className="flex flex-col justify-center">
               <div className="flex justify-between items-end mb-2">
                 <div>
@@ -197,7 +195,6 @@ export default function Results() {
 
           </div>
 
-          {/* Final Total Score */}
           <div className="bg-gray-50 border border-gray-200 p-10 flex flex-col items-center justify-center mt-8">
             <h3 className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-6">Composite Final Score</h3>
             
@@ -214,14 +211,12 @@ export default function Results() {
               </div>
             </div>
             
-            {/* === CHANGED TEXT HERE === */}
             <h3 className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-6">Tagalog level: {tagalogLevel}</h3>
             
           </div>
 
         </div>
 
-        {/* Action Buttons */}
         <div className="mt-8 flex flex-col md:flex-row justify-end items-center gap-4">
           <button 
             onClick={handleSaveAsImage}
@@ -254,7 +249,6 @@ export default function Results() {
             <p className="text-gray-500 mt-2 font-medium tracking-wide">Detailed breakdown of Target Passages and Transcriptions.</p>
           </div>
 
-          {/* FALLBACK UI IF NO LOGS ARE FOUND */}
           {readingLogs.length === 0 ? (
             <div className="bg-gray-50 p-10 rounded-sm border border-gray-200 text-center">
               <p className="text-gray-500 font-medium">No transcript logs were found for this session. Complete a full evaluation to see your phonetic analysis here.</p>
@@ -267,7 +261,6 @@ export default function Results() {
                 return (
                   <div key={index} className={`bg-white rounded-sm shadow-sm border overflow-hidden transition-all hover:shadow-md ${hasErrors ? 'border-red-200' : 'border-green-200'}`}>
                     
-                    {/* Header of the Log Card */}
                     <div className={`px-6 py-4 border-b flex justify-between items-center ${hasErrors ? 'bg-red-50/50 border-red-100' : 'bg-green-50/50 border-green-100'}`}>
                       <span className="font-extrabold text-gray-800 tracking-wider">PASSAGE #{index + 1}</span>
                       <span className={`px-4 py-1.5 rounded-sm text-xs font-black uppercase tracking-widest shadow-sm ${hasErrors ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-green-100 text-green-700 border border-green-200'}`}>
@@ -275,13 +268,10 @@ export default function Results() {
                       </span>
                     </div>
 
-                    {/* Body: Side-by-Side Comparison */}
                     <div className="p-6 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-8 relative">
                       
-                      {/* Decorative Line down the middle for desktop */}
                       <div className="hidden md:block absolute left-1/2 top-8 bottom-8 w-px bg-gray-200 transform -translate-x-1/2"></div>
 
-                      {/* Target Text Box */}
                       <div className="flex flex-col">
                         <span className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3 flex items-center gap-2">
                           Target Text
@@ -293,7 +283,6 @@ export default function Results() {
                         </div>
                       </div>
 
-                      {/* Heard Text Box WITH HIGHLIGHTER */}
                       <div className="flex flex-col">
                         <span className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3 flex items-center gap-2">
                           Transcription
@@ -307,7 +296,6 @@ export default function Results() {
 
                     </div>
 
-                    {/* Footer: Individual Metrics */}
                     <div className="bg-gray-50 px-8 py-5 flex justify-around border-t border-gray-100 text-sm">
                       <div className="flex flex-col items-center">
                         <span className="text-gray-400 text-xs font-bold uppercase tracking-widest">Accuracy</span>

@@ -49,16 +49,28 @@ export default function Progressive() {
   // Load Passages based on Current Level
   useEffect(() => {
     let sourcePassages = [];
-    if (currentLevel === 'Beginner') sourcePassages = [...beginnerPassages];
-    if (currentLevel === 'Moderate') sourcePassages = [...moderatePassages];
-    if (currentLevel === 'Expert') sourcePassages = [...expertPassages];
+    let passageLimit = 25; // Default fallback
 
-    // Shuffle and select up to 25 passages per level
+    // Set the source and specific limits per level
+    if (currentLevel === 'Beginner') {
+      sourcePassages = [...beginnerPassages];
+      passageLimit = 10;
+    } else if (currentLevel === 'Moderate') {
+      sourcePassages = [...moderatePassages];
+      passageLimit = 10;
+    } else if (currentLevel === 'Expert') {
+      sourcePassages = [...expertPassages];
+      passageLimit = 5;
+    }
+
+    // Shuffle the passages randomly
     for (let i = sourcePassages.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [sourcePassages[i], sourcePassages[j]] = [sourcePassages[j], sourcePassages[i]];
     }
-    setTestPassages(sourcePassages.slice(0, 25));
+    
+    // Slice exactly the amount needed for the current level
+    setTestPassages(sourcePassages.slice(0, passageLimit));
   }, [currentLevel]);
 
   // Clean up media tracks and animations when component unmounts
@@ -333,7 +345,7 @@ export default function Progressive() {
   if (testPassages.length === 0) return null;
 
   return (
-    <div className={`min-h-screen bg-gradient-to-br from-white via-white to-${theme.lightBg} text-black font-sans relative transition-colors duration-700`}>
+    <div className={`min-h-screen bg-gradient-to-br from-white via-white to-${theme.lightBg} text-black font-sans relative`}>
       <nav className="w-full bg-white/80 backdrop-blur-md shadow-sm px-10 lg:px-20 py-5 flex justify-between items-center z-50 relative">
         <div className={`text-2xl font-black tracking-tight ${theme.text}`}>ReadFil Progressive</div>
         <button onClick={() => setShowConfirmModal(true)} className={`font-semibold text-sm uppercase tracking-wide hover:${theme.text} transition-colors cursor-pointer`}>
@@ -342,7 +354,7 @@ export default function Progressive() {
       </nav>
 
       {!isTestReady ? (
-        <main className="max-w-3xl mx-auto pt-32 px-10 pb-20 text-center animate-in fade-in zoom-in duration-500">
+        <main className="max-w-3xl mx-auto pt-32 px-10 pb-20 text-center">
           <h1 className={`text-4xl font-extrabold mb-4 ${theme.text}`}>{theme.title} Phase Verification</h1>
           <p className="text-gray-600 text-lg mb-12">You are about to start the {theme.title} evaluation. Please confirm your audio.</p>
 
@@ -405,7 +417,7 @@ export default function Progressive() {
           </div>
         </main>
       ) : (
-        <main className="max-w-4xl mx-auto pt-20 px-10 pb-20 animate-in fade-in duration-500">
+        <main className="max-w-4xl mx-auto pt-20 px-10 pb-20">
           <div className="text-center mb-12">
             <h1 className={`text-4xl font-extrabold mb-2 ${theme.text}`}>{theme.title} Phase</h1>
             <p className="text-gray-500 font-bold uppercase tracking-widest text-sm">Progressive Assessment Mode</p>
@@ -454,8 +466,8 @@ export default function Progressive() {
             </button>
             
             <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-600' : isProcessing ? 'text-[#005FA3] animate-pulse' : 'text-gray-500'}`}>
-              {isRecording ? 'Recording Expert Audio...' : 
-               isProcessing ? 'AI is grading your audio... Please wait.' : 
+              {isRecording ? 'Recording Audio...' : 
+               isProcessing ? 'We are grading your audio... Please wait.' : 
                (hasRecorded ? 'Recording graded and saved!' : 'Click to begin')}
             </p>
 
@@ -532,7 +544,7 @@ export default function Progressive() {
       {showConfirmModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowConfirmModal(false)}></div>
-          <div className="relative bg-white w-full max-w-lg rounded-[2rem] shadow-2xl overflow-hidden z-10">
+          <div className="relative bg-white w-full max-w-lg rounded-[2rem] shadow-2xl overflow-hidden z-10 animate-in fade-in zoom-in duration-200">
             <div className="p-8 border-b border-gray-100">
               <h3 className="text-3xl font-extrabold text-black mb-2">Quit Assessment?</h3>
               <p className="text-gray-500">Your progressive run will not be saved.</p>

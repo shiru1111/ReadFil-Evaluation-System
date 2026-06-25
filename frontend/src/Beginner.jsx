@@ -1,63 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-
-const rawPassages = [
-  "Keso ang paborito nito.",
-  "Sa garapon nakatira.",
-  "Tulungan mo ako.",
-  "Paglabas ko rito",
-  "Masaya talaga ako.",
-  "Reyna ng mga duwende.",
-  "Lagi siyang nakaupo",
-  "Sa malaking balde.",
-  "Berdeng balde ang paborito niya.",
-  "Balat ng saging.",
-  "Ang korona niya.",
-  "Pumunta sa lawa si Tito",
-  "Nakita nila ang palaka.",
-  "Nakita nila ang bibe.",
-  "Nakita rin nila ang buwaya.",
-  "Si Mila ay nakatira sa bukid.",
-  "Maraming hayop, marami ring halaman.",
-  "May alagang baboy si Mila.",
-  "May alaga din siyang baka at kambing.",
-  "Ang manok niya ang kanyang paborito.",
-  "Tiko ang pangalan ng manok niya.",
-  "Siya ang gumigising kay Mila tuwing umaga.",
-  "May karera ng kotse.",
-  "Makukulay ang mga ito.",
-  "Manonood ako ng karera.",
-  "Magdadala ako ng kamera.",
-  "Sasakay na ako sa bisikleta.",
-  "May gitara si Lana.",
-  "Maganda ang kulay nito.",
-  "Kulay pula at may bulaklak na disenyo.",
-  "Bigay ito ni Tita Ana.",
-  "Binigay niya ito noong kaarawan ni Lana.",
-  "Naglalakad si Lana papunta sa parke.",
-  "Tumama ang paa ni Lana sa isang malaking bato.",
-  "Naglalaro sa bakuran ang mga bata.",
-  "Matibay ang kahoy ng punong narra.",
-  "Nagmistulang malaking karagatan ang mga ito.",
-  "Ginamot niya ang mga may sakit.",
-  "Nagturo rin siya ng mga samahang sibiko.",
-  "Kulay dilaw ang hinog nito.",
-  "May punong mangga sa bakuran nina Ana.",
-  "May kamote sa mesa.",
-  "Bunga ng maraming basura.",
-  "Sanhi ng pagbabago.",
-  "Malaki ang mga papaya.",
-  "Tumulong sa pangkat.",
-  "Tatlong araw na siyang hindi kumakain.",
-  "Humingi siya ng tulong dito.",
-  "Lubos na ipinagmamalaki natin ito.",
-  "Hinuhuli niya ang palaka."
-];
-
-const allPassages = rawPassages.map(text => ({
-  text: text,
-  source: "Phil-IRI The Philippine Informal Reading Inventory Manual"
-}));
+import { beginnerPassages } from './data/passages'; // NEW IMPORT
 
 export default function Beginner() {
   const navigate = useNavigate();
@@ -85,7 +28,6 @@ export default function Beginner() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-  // === CRITICAL MISSING PIECE ADDED HERE ===
   // Memory to store all 25 passages so the Results page can read them
   const [phaseScores, setPhaseScores] = useState([]); 
 
@@ -105,12 +47,13 @@ export default function Beginner() {
 
   useEffect(() => {
     if (testPassages.length === 0) {
-      const shuffled = [...allPassages];
+      // NOW USING THE IMPORTED DATA FROM passages.jsx
+      const shuffled = [...beginnerPassages]; 
       for (let i = shuffled.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 25);
+      const selected = shuffled.slice(0, 5);
       setTestPassages(selected);
       localStorage.setItem('beginner_passages', JSON.stringify(selected));
     }
@@ -243,8 +186,6 @@ export default function Beginner() {
       const result = await response.json();
       console.log("Server Evaluation Results:", result);
 
-      // === CRITICAL FIX ADDED HERE ===
-      // Store the result in our local memory array instead of overwriting the final score immediately
       setPhaseScores(prev => [...prev, result]);
       
     } catch (error) {
@@ -307,8 +248,6 @@ export default function Beginner() {
       setIsRecording(false); 
       setHasRecorded(false);
     } else {
-      // === CRITICAL CALCULATION ADDED HERE ===
-      // Calculate true average from all passages
       let totalAccuracy = 0;
       let totalWcpm = 0;
       
@@ -317,15 +256,12 @@ export default function Beginner() {
         totalWcpm = phaseScores.reduce((sum, item) => sum + item.wcpm, 0) / phaseScores.length;
       }
 
-      // Save the specific final numbers to localStorage
       localStorage.setItem('evaluated_level', 'Beginner'); 
       localStorage.setItem('final_accuracy', totalAccuracy);
       localStorage.setItem('final_wcpm', totalWcpm);
       
-      // Save the complete log array so the Results page can render the UI
       localStorage.setItem('reading_logs', JSON.stringify(phaseScores));
       
-      // Clean up the local tracker
       localStorage.removeItem('beginner_passages');
       localStorage.removeItem('beginner_currentIndex');
       localStorage.removeItem('beginner_isTestReady');

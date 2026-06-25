@@ -9,9 +9,14 @@ export default function App() {
   const [isAlgorithmModalOpen, setIsAlgorithmModalOpen] = useState(false); 
   const [selectedLevel, setSelectedLevel] = useState('');
   
-  // State variables to hold the user's input
+// State variables to hold the user's input
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  
+  // NEW STATES FOR EMAIL VALIDATION
+  const [email, setEmail] = useState('');
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
 
   const navigate = useNavigate();
 
@@ -32,16 +37,32 @@ export default function App() {
     document.body.style.overflow = 'hidden';
   };
 
-  const handleCloseModal = () => {
+const handleCloseModal = () => {
     setIsModalOpen(false);
     setSelectedLevel('');
     setFirstName(''); 
     setLastName('');  
+    setEmail('');
+    setConfirmEmail('');
+    setErrorMessage('');
     document.body.style.overflow = 'unset';
   };
 
   const handleProceed = (e) => {
     e.preventDefault();
+    setErrorMessage(''); // Reset any previous errors
+    
+    // VALIDATION 1: Check if email ends with @gmail.com
+    if (!email.endsWith('@gmail.com')) {
+      setErrorMessage('Email address must end with @gmail.com');
+      return; // Stop the function from proceeding
+    }
+
+    // VALIDATION 2: Check if emails match
+    if (email !== confirmEmail) {
+      setErrorMessage('Email addresses do not match.');
+      return; // Stop the function from proceeding
+    }
     
     localStorage.setItem('user_firstName', firstName);
     localStorage.setItem('user_lastName', lastName);
@@ -261,8 +282,7 @@ export default function App() {
           <div>
             <h4 className="text-2xl font-bold text-white mb-4">About the System</h4>
             <p className="text-sm leading-relaxed text-gray-400">
-              Lorem Ipsum Dolor Sit Amet
-Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum.
+              Built to bridge the gap between traditional literacy assessment and modern technology, ReadFil is a standalone evaluator that scores Tagalog reading fluency. It seamlessly records your speech and processes it through a custom algorithmic engine to detect precise phonetic errors and measure your words correct per minute.
             </p>
           </div>
           <div>
@@ -498,8 +518,16 @@ Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolor
               <p className="text-gray-500">Please provide your details to begin the evaluation.</p>
             </div>
 
-            {/* Modal Form */}
+{/* Modal Form */}
             <form onSubmit={handleProceed} className="p-8 space-y-6">
+              
+              {/* Show error message if validation fails */}
+              {errorMessage && (
+                <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm font-bold border border-red-100 text-center">
+                  {errorMessage}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2">First Name</label>
@@ -507,10 +535,12 @@ Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolor
                     type="text" 
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
+                    maxLength={20}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" 
                     placeholder="Juan" 
                     required 
                   />
+                  <p className="text-[10px] text-gray-400 mt-1 text-right">{firstName.length}/20</p>
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2">Last Name</label>
@@ -518,21 +548,37 @@ Consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolor
                     type="text" 
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
+                    maxLength={15}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" 
                     placeholder="Dela Cruz" 
                     required 
                   />
+                  <p className="text-[10px] text-gray-400 mt-1 text-right">{lastName.length}/15</p>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2">Email Address</label>
-                  <input type="email" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" placeholder="juan@example.com" required />
+                  <input 
+                    type="email" 
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" 
+                    placeholder="juan@gmail.com" 
+                    required 
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2">Confirm Email</label>
-                  <input type="email" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" placeholder="juan@example.com" required />
+                  <input 
+                    type="email" 
+                    value={confirmEmail}
+                    onChange={(e) => setConfirmEmail(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" 
+                    placeholder="juan@gmail.com" 
+                    required 
+                  />
                 </div>
               </div>
 
