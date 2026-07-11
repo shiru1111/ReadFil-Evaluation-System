@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+temp_audio/
+.vscode/
+.venv/
+node_modules/
+dist/
+*.log

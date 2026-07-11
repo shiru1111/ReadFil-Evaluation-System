@@ -186,11 +186,14 @@ def fix_segmentation_errors(target_words, spoken_words):
             matched = False
             for j in range(len(target_words) - 1):
                 fused_target = target_words[j] + target_words[j + 1]
-                if modified_levenshtein(fused_target, fused_spoken) <= 0.15:
-                    optimized.extend([target_words[j], target_words[j + 1]])
-                    i += 2
-                    matched = True
-                    break
+                if len(fused_target) == len(fused_spoken):
+                    if modified_levenshtein(fused_target, fused_spoken) <= 0.15:
+                        # ONLY snap if there is NO standard Tagalog vowel shift
+                        if not has_vowel_shift(fused_target, fused_spoken):
+                            optimized.extend([target_words[j], target_words[j + 1]])
+                            i += 2
+                            matched = True
+                            break
             if matched:
                 continue
                 
@@ -219,8 +222,24 @@ def fix_segmentation_errors(target_words, spoken_words):
 # =================================================================
 # SCORING ALGORITHMS
 # =================================================================
+def phonetic_normalize(word):
+    if not word:
+        return ""
+    w = word.lower()
+    # Normalize common Tagalog/Spanish/English phonetic variations:
+    w = w.replace('ch', 'ts')
+    w = w.replace('j', 'dy')
+    w = w.replace('sh', 'sy')
+    w = w.replace('f', 'p')
+    w = w.replace('v', 'b')
+    w = w.replace('z', 's')
+    w = w.replace('c', 'k')  # 'c' is usually 'k' in Tagalog phonetics (e.g. kochi -> kotsi)
+    return w
+
 def modified_levenshtein(word1, word2):
-    m, n = len(word1), len(word2)
+    w1 = phonetic_normalize(word1)
+    w2 = phonetic_normalize(word2)
+    m, n = len(w1), len(w2)
     dp = [[0.0] * (n + 1) for _ in range(m + 1)]
 
     for i in range(m + 1): dp[i][0] = float(i)
@@ -228,25 +247,31 @@ def modified_levenshtein(word1, word2):
 
     for i in range(1, m + 1):
         for j in range(1, n + 1):
-            if word1[i - 1] == word2[j - 1]:
+            if w1[i - 1] == w2[j - 1]:
                 dp[i][j] = dp[i - 1][j - 1]
             else:
-                c1, c2 = word1[i - 1], word2[j - 1]
-                if (c1 in 'ei' and c2 in 'ei') or \
-                   (c1 in 'ou' and c2 in 'ou') or \
-                   (c1 in 'dr' and c2 in 'dr') or \
-                   (c1 in 'lr' and c2 in 'lr') or \
-                   (c1 in 'ck' and c2 in 'ck'):
-                    cost = 0.3
+                c1, c2 = w1[i - 1], w2[j - 1]
+                
+                # Check for standard Tagalog vowel shifts (e.g., e <-> i, o <-> u)
+                # which are common regional accent variations (such as Bisaya or Batangueño)
+                is_vowel_shift = (c1 == 'e' and c2 == 'i') or (c1 == 'i' and c2 == 'e') or \
+                                 (c1 == 'o' and c2 == 'u') or (c1 == 'u' and c2 == 'o')
+                
+                # Check for other Tagalog consonant/phonetic variations
+                is_consonant_shift = (c1 == 'd' and c2 == 'r') or (c1 == 'r' and c2 == 'd') or \
+                                     (c1 == 'l' and c2 == 'r') or (c1 == 'r' and c2 == 'l')
+                
+                if is_vowel_shift or is_consonant_shift:
+                    cost = 0.3  # Apply minimum penalization for valid Tagalog phonetic shifts
                 else:
-                    cost = 1.0
+                    cost = 1.0  # Apply standard substitution penalty for general mismatches
                 dp[i][j] = min(
                     dp[i - 1][j] + 1.0,
                     dp[i][j - 1] + 1.0,
                     dp[i - 1][j - 1] + cost
                 )
 
-    max_len = max(len(word1), len(word2))
+    max_len = max(len(w1), len(w2))
     if max_len == 0: return 0.0
     return dp[m][n] / float(max_len)
 
@@ -300,6 +325,182 @@ def needleman_wunsch_alignment(target_words, spoken_words):
 
     return correct_words, errors
 
+def get_alignment_mapping(target_words, spoken_words):
+    MATCH    =  5.0
+    MISMATCH = -2.0
+    GAP      = -2.0
+
+    m, n = len(target_words), len(spoken_words)
+    score    = [[0.0]  * (n + 1) for _ in range(m + 1)]
+    pointers = [[None] * (n + 1) for _ in range(m + 1)]
+
+    for i in range(m + 1):
+        score[i][0]    = GAP * i
+        pointers[i][0] = 'U'
+    for j in range(n + 1):
+        score[0][j]    = GAP * j
+        pointers[0][j] = 'L'
+    pointers[0][0] = None
+
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            dist = modified_levenshtein(target_words[i - 1], spoken_words[j - 1])
+            if dist <= 0.55:
+                match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
+            else:
+                match_score = score[i - 1][j - 1] + MISMATCH
+            delete_score = score[i - 1][j] + GAP
+            insert_score = score[i][j - 1] + GAP
+            best_score   = max(match_score, delete_score, insert_score)
+            score[i][j]  = best_score
+
+            if best_score == match_score: pointers[i][j] = 'D'
+            elif best_score == delete_score: pointers[i][j] = 'U'
+            else: pointers[i][j] = 'L'
+
+    i, j = m, n
+    spoken_to_target = {}
+    target_to_spoken = {}
+
+    while i > 0 or j > 0:
+        if pointers[i][j] == 'D':
+            spoken_to_target[j - 1] = i - 1
+            target_to_spoken[i - 1] = spoken_words[j - 1]
+            i -= 1; j -= 1
+        elif pointers[i][j] == 'U':
+            target_to_spoken[i - 1] = None
+            i -= 1
+        elif pointers[i][j] == 'L':
+            spoken_to_target[j - 1] = None
+            j -= 1
+
+    return spoken_to_target, target_to_spoken
+
+def fuse_best_with_other(target_words, best_opt, other_opt):
+    best_spoken_to_target, best_target_to_spoken = get_alignment_mapping(target_words, best_opt)
+    other_spoken_to_target, other_target_to_spoken = get_alignment_mapping(target_words, other_opt)
+    
+    fused_opt = list(best_opt)
+    
+    for idx_best, target_idx in best_spoken_to_target.items():
+        if target_idx is not None:
+            target_word = target_words[target_idx]
+            best_word = best_opt[idx_best]
+            
+            if best_word != target_word:
+                other_word = other_target_to_spoken.get(target_idx)
+                if other_word is not None:
+                    dist_best = modified_levenshtein(target_word, best_word)
+                    dist_other = modified_levenshtein(target_word, other_word)
+                    
+                    import re
+                    def contains_double_consonant(w):
+                        return bool(re.search(r'([b-df-hj-np-tv-z])\1', w.lower()))
+                        
+                    is_better = False
+                    if dist_other < dist_best:
+                        is_better = True
+                    elif dist_other == dist_best:
+                        # Tie-breaker: If best_word has double consonants not present in target, but other_word does not
+                        if contains_double_consonant(best_word) and not contains_double_consonant(other_word) and not contains_double_consonant(target_word):
+                            is_better = True
+                            
+                    if is_better:
+                        fused_opt[idx_best] = other_word
+                        print(f"[Fusion Correction] Replacing '{best_word}' with '{other_word}' for target '{target_word}'")
+                        
+    return fused_opt
+
+def has_vowel_shift(word1, word2):
+    m, n = len(word1), len(word2)
+    dp = [[0.0] * (n + 1) for _ in range(m + 1)]
+    has_v_shift = [[False] * (n + 1) for _ in range(m + 1)]
+
+    for i in range(m + 1): dp[i][0] = float(i)
+    for j in range(n + 1): dp[0][j] = float(j)
+
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if word1[i - 1] == word2[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1]
+                has_v_shift[i][j] = has_v_shift[i - 1][j - 1]
+            else:
+                c1, c2 = word1[i - 1], word2[j - 1]
+                is_vowel_shift = (c1 == 'e' and c2 == 'i') or (c1 == 'i' and c2 == 'e') or \
+                                 (c1 == 'o' and c2 == 'u') or (c1 == 'u' and c2 == 'o')
+                is_consonant_shift = (c1 == 'd' and c2 == 'r') or (c1 == 'r' and c2 == 'd') or \
+                                     (c1 == 'l' and c2 == 'r') or (c1 == 'r' and c2 == 'l') or \
+                                     (c1 == 'c' and c2 == 'k') or (c1 == 'k' and c2 == 'c')
+                
+                cost = 0.3 if (is_vowel_shift or is_consonant_shift) else 1.0
+                
+                d_val = dp[i - 1][j] + 1.0
+                i_val = dp[i][j - 1] + 1.0
+                s_val = dp[i - 1][j - 1] + cost
+                
+                best = min(d_val, i_val, s_val)
+                dp[i][j] = best
+                
+                if best == s_val:
+                    has_v_shift[i][j] = has_v_shift[i - 1][j - 1] or is_vowel_shift
+                elif best == d_val:
+                    has_v_shift[i][j] = has_v_shift[i - 1][j]
+                else:
+                    has_v_shift[i][j] = has_v_shift[i][j - 1]
+                    
+    return has_v_shift[m][n]
+
+def is_pure_vowel_shift(word1, word2):
+    if len(word1) != len(word2):
+        return False
+    diff_count = 0
+    for c1, c2 in zip(word1, word2):
+        if c1 != c2:
+            is_vowel_shift = (c1 == 'e' and c2 == 'i') or (c1 == 'i' and c2 == 'e') or \
+                             (c1 == 'o' and c2 == 'u') or (c1 == 'u' and c2 == 'o')
+            if not is_vowel_shift:
+                return False
+            diff_count += 1
+    return diff_count > 0
+
+def deduplicate_whisper_hallucinations(fused_opt, other_opt, target_words):
+    spoken_to_target, _ = get_alignment_mapping(target_words, fused_opt)
+    
+    to_remove = set()
+    n = len(fused_opt)
+    
+    for idx in range(n):
+        if spoken_to_target.get(idx) is None:
+            for adj_idx in [idx - 1, idx + 1]:
+                if 0 <= adj_idx < n and spoken_to_target.get(adj_idx) is not None:
+                    ins_word = fused_opt[idx]
+                    match_word = fused_opt[adj_idx]
+                    
+                    is_prefix = match_word.startswith(ins_word) and len(ins_word) >= 3
+                    is_suffix = match_word.endswith(ins_word) and len(ins_word) >= 3
+                    
+                    if is_prefix or is_suffix:
+                        other_has_both_adjacent = False
+                        for o_idx in range(len(other_opt) - 1):
+                            if (other_opt[o_idx] == ins_word and other_opt[o_idx + 1] == match_word) or \
+                               (other_opt[o_idx] == match_word and other_opt[o_idx + 1] == ins_word):
+                                other_has_both_adjacent = True
+                                break
+                        
+                        if not other_has_both_adjacent:
+                            ins_in_other = ins_word in other_opt
+                            match_in_other = match_word in other_opt
+                            
+                            if ins_in_other and not match_in_other:
+                                to_remove.add(adj_idx)
+                            elif match_in_other and not ins_in_other:
+                                to_remove.add(idx)
+                            else:
+                                to_remove.add(idx)
+                                
+    cleaned_opt = [fused_opt[i] for i in range(n) if i not in to_remove]
+    return cleaned_opt
+
 def score_candidate(target_words, raw_transcription):
     spoken   = clean_text(raw_transcription)
     optimized = fix_segmentation_errors(target_words, spoken)
@@ -338,6 +539,13 @@ def evaluate_audio():
         wav2vec_raw = future_w2v.result() 
         whisper_raw = future_whisper.result() 
 
+        # Check if no audio/speech was transcribed (empty or silent audio)
+        if not wav2vec_raw.strip() and not whisper_raw.strip():
+            return jsonify({
+                "error": "No speech detected. Please speak clearly into the microphone.",
+                "status": "empty"
+            }), 400
+
         target_words = clean_text(target_text)
 
         w2v_acc, w2v_correct, w2v_errors, w2v_opt = score_candidate(target_words, wav2vec_raw)
@@ -350,10 +558,12 @@ def evaluate_audio():
         if w2v_acc > whi_acc:
             winner, best_acc, best_correct, best_errors, best_opt = \
                 "WAV2VEC", w2v_acc, w2v_correct, w2v_errors, w2v_opt
+            other_opt = whi_opt
                 
         elif whi_acc > w2v_acc:
             winner, best_acc, best_correct, best_errors, best_opt = \
                 "WHISPER", whi_acc, whi_correct, whi_errors, whi_opt
+            other_opt = w2v_opt
                 
         else: # IT'S A TIE
             # Combine arrays into strings for a pure character-level assessment
@@ -368,11 +578,40 @@ def evaluate_audio():
             if w2v_distance < whi_distance:
                 winner, best_acc, best_correct, best_errors, best_opt = \
                     "WAV2VEC (Tie-Breaker)", w2v_acc, w2v_correct, w2v_errors, w2v_opt
+                other_opt = whi_opt
             else:
                 winner, best_acc, best_correct, best_errors, best_opt = \
                     "WHISPER (Tie-Breaker)", whi_acc, whi_correct, whi_errors, whi_opt
+                other_opt = w2v_opt
 
-        fused_transcription = " ".join(best_opt)
+        # Apply word-level alignment fusion to correct spelling/words using the losing candidate if it is a closer match
+        fused_opt = fuse_best_with_other(target_words, best_opt, other_opt)
+
+        # Deduplicate Whisper hallucinations/repetitions (e.g. natu natutuhan -> natu, or nakapanggagamot mot -> nakapanggagamot)
+        fused_opt = deduplicate_whisper_hallucinations(fused_opt, other_opt, target_words)
+
+        # Get alignment mapping to identify words that align to target words and are graded correct (distance <= 0.55)
+        fused_spoken_to_target, _ = get_alignment_mapping(target_words, fused_opt)
+        
+        # Snap correct spoken words to their exact target spellings to prevent visual frontend highlights
+        final_opt = list(fused_opt)
+        for idx_spoken, idx_target in fused_spoken_to_target.items():
+            if idx_target is not None:
+                target_word = target_words[idx_target]
+                spoken_word = fused_opt[idx_spoken]
+                
+                # Check distance (using the phonetically aware modified_levenshtein)
+                dist = modified_levenshtein(target_word, spoken_word)
+                if dist <= 0.25:
+                    # Allow snapping if length difference is at most 1 character (handles missing/extra letters like bbe/bbi)
+                    if abs(len(target_word) - len(spoken_word)) <= 1:
+                        final_opt[idx_spoken] = target_word
+
+        fused_transcription = " ".join(final_opt)
+
+        # Recalculate errors on the final snapped/corrected output
+        _, final_errors = needleman_wunsch_alignment(target_words, final_opt)
+        best_errors = final_errors
 
         total_target_words  = len(target_words)
         final_correct_count = max(0, total_target_words - best_errors)

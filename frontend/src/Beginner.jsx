@@ -18,18 +18,19 @@ export default function Beginner() {
   });
 
   // Updated Mic Test States
-  const [micStatus, setMicStatus] = useState('idle'); 
+  const [micStatus, setMicStatus] = useState('idle');
   const [testAudioUrl, setTestAudioUrl] = useState(null);
-  
+
   // Actual Test States
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [hasRecorded, setHasRecorded] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [isSilence, setIsSilence] = useState(false);
 
   // Memory to store all 25 passages so the Results page can read them
-  const [phaseScores, setPhaseScores] = useState([]); 
+  const [phaseScores, setPhaseScores] = useState([]);
 
   // Refs for the ACTUAL evaluation recording
   const mediaRecorderRef = useRef(null);
@@ -48,7 +49,7 @@ export default function Beginner() {
   useEffect(() => {
     if (testPassages.length === 0) {
       // NOW USING THE IMPORTED DATA FROM passages.jsx
-      const shuffled = [...beginnerPassages]; 
+      const shuffled = [...beginnerPassages];
       for (let i = shuffled.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -104,11 +105,11 @@ export default function Beginner() {
       animationRef.current = requestAnimationFrame(draw);
       analyserRef.current.getByteTimeDomainData(dataArray);
 
-      ctx.fillStyle = '#f9fafb'; 
+      ctx.fillStyle = '#f9fafb';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       ctx.lineWidth = 3;
-      ctx.strokeStyle = '#0096FF'; 
+      ctx.strokeStyle = '#0096FF';
       ctx.beginPath();
 
       const sliceWidth = canvas.width * 1.0 / bufferLength;
@@ -135,7 +136,7 @@ export default function Beginner() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         streamRef.current = stream;
-        
+
         audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
         analyserRef.current = audioContextRef.current.createAnalyser();
         const source = audioContextRef.current.createMediaStreamSource(stream);
@@ -144,7 +145,7 @@ export default function Beginner() {
 
         testRecorderRef.current = new MediaRecorder(stream);
         testChunksRef.current = [];
-        
+
         testRecorderRef.current.ondataavailable = (event) => {
           if (event.data.size > 0) testChunksRef.current.push(event.data);
         };
@@ -174,25 +175,36 @@ export default function Beginner() {
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     const formData = new FormData();
     formData.append('audio', audioBlob, 'latest_recording.webm');
-    
-    const targetText = currentTextRef.current; 
+
+    const targetText = currentTextRef.current;
     formData.append('target_text', targetText);
 
     try {
-      const response = await fetch('http://127.0.0.1:5000/api/evaluate', {       
+      const response = await fetch('/api/evaluate', {
         method: 'POST',
         body: formData,
       });
       const result = await response.json();
-      console.log("Server Evaluation Results:", result);
 
+      if (!response.ok) {
+        if (result.status === 'empty') {
+          setIsSilence(true);
+          setIsProcessing(false);
+          audioChunksRef.current = [];
+          return;
+        }
+        throw new Error(result.error || "Evaluation failed");
+      }
+
+      console.log("Server Evaluation Results:", result);
       setPhaseScores(prev => [...prev, result]);
-      
+      setHasRecorded(true);
+
     } catch (error) {
       console.error("Error sending audio to server:", error);
+      alert("An error occurred during evaluation. Please try again.");
     } finally {
-      setIsProcessing(false); 
-      setHasRecorded(true);
+      setIsProcessing(false);
     }
     audioChunksRef.current = [];
   };
@@ -201,15 +213,15 @@ export default function Beginner() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
-      
+
       mediaRecorderRef.current.ondataavailable = (event) => {
         if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
 
       mediaRecorderRef.current.onstop = sendAudioToServer;
-      
+
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
-      
+
       setIsTestReady(true);
       localStorage.setItem('beginner_isTestReady', 'true');
     } catch (err) {
@@ -223,6 +235,7 @@ export default function Beginner() {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     } else {
+      setIsSilence(false);
       audioChunksRef.current = [];
       mediaRecorderRef.current.start();
       setIsRecording(true);
@@ -241,31 +254,32 @@ export default function Beginner() {
     localStorage.removeItem('beginner_isTestReady');
     navigate('/');
   };
-  
+
   const nextPassage = () => {
     if (currentIndex < testPassages.length - 1) {
       setCurrentIndex((prevIndex) => prevIndex + 1);
-      setIsRecording(false); 
+      setIsRecording(false);
       setHasRecorded(false);
+      setIsSilence(false);
     } else {
       let totalAccuracy = 0;
       let totalWcpm = 0;
-      
+
       if (phaseScores.length > 0) {
         totalAccuracy = phaseScores.reduce((sum, item) => sum + item.accuracy_rate, 0) / phaseScores.length;
         totalWcpm = phaseScores.reduce((sum, item) => sum + item.wcpm, 0) / phaseScores.length;
       }
 
-      localStorage.setItem('evaluated_level', 'Beginner'); 
+      localStorage.setItem('evaluated_level', 'Beginner');
       localStorage.setItem('final_accuracy', totalAccuracy);
       localStorage.setItem('final_wcpm', totalWcpm);
-      
+
       localStorage.setItem('reading_logs', JSON.stringify(phaseScores));
-      
+
       localStorage.removeItem('beginner_passages');
       localStorage.removeItem('beginner_currentIndex');
       localStorage.removeItem('beginner_isTestReady');
-      
+
       navigate('/results');
     }
   };
@@ -287,30 +301,29 @@ export default function Beginner() {
           <p className="text-gray-600 text-lg mb-12">Let us verify your audio quality before we begin.</p>
 
           <div className="bg-white p-10 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col items-center">
-            
+
             <div className="w-full h-32 bg-gray-50 rounded-xl border border-gray-200 mb-8 overflow-hidden flex items-center justify-center">
               {micStatus === 'idle' && <p className="text-gray-400 font-medium">Waveform will appear here</p>}
-              <canvas 
-                ref={canvasRef} 
-                width="600" 
-                height="128" 
+              <canvas
+                ref={canvasRef}
+                width="600"
+                height="128"
                 className={`w-full h-full ${micStatus === 'idle' ? 'hidden' : 'block'}`}
               />
             </div>
 
             <p className="text-xl font-medium text-gray-700 mb-8">
-              {micStatus === 'idle' ? 'Click the microphone to record a test phrase.' : 
-               micStatus === 'recording_test' ? 'Recording... Speak clearly, then click to stop.' : 
-               'Test complete! Listen to your playback.'}
+              {micStatus === 'idle' ? 'Click the microphone to record a test phrase.' :
+                micStatus === 'recording_test' ? 'Recording... Speak clearly, then click to stop.' :
+                  'Test complete! Listen to your playback.'}
             </p>
 
             <div className="flex flex-col items-center gap-6">
               {micStatus !== 'playback_ready' ? (
-                <button 
+                <button
                   onClick={handleMicTestToggle}
-                  className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all ${
-                    micStatus === 'recording_test' ? 'bg-red-500 hover:bg-red-600 animate-pulse scale-110' : 'bg-black hover:bg-gray-800 hover:scale-105'
-                  }`}
+                  className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all ${micStatus === 'recording_test' ? 'bg-red-500 hover:bg-red-600 animate-pulse scale-110' : 'bg-black hover:bg-gray-800 hover:scale-105'
+                    }`}
                 >
                   <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     {micStatus === 'recording_test' ? (
@@ -324,13 +337,13 @@ export default function Beginner() {
                 <div className="flex flex-col items-center gap-6 w-full">
                   <audio src={testAudioUrl} controls className="w-full max-w-md" />
                   <div className="flex gap-4">
-                    <button 
+                    <button
                       onClick={() => { setMicStatus('idle'); setTestAudioUrl(null); }}
                       className="px-6 py-3 rounded-full font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
                     >
                       Retest Mic
                     </button>
-                    <button 
+                    <button
                       onClick={startActualTest}
                       className="bg-[#0096FF] hover:bg-[#8ACEFF] text-white font-bold py-3 px-8 rounded-full shadow-lg transition-all transform hover:-translate-y-1"
                     >
@@ -357,7 +370,7 @@ export default function Beginner() {
                 {currentIndex + 1} / {testPassages.length}
               </span>
             </div>
-            
+
             <div className="p-8 pb-12 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center relative">
               <p className="text-2xl leading-relaxed text-center font-medium text-black">
                 "{testPassages[currentIndex]?.text}"
@@ -373,32 +386,32 @@ export default function Beginner() {
                 {formatTime(elapsedTime)}
               </div>
             </div>
-            </div>
+          </div>
 
           <div className="flex flex-col items-center justify-center">
-            <button 
+            <button
               onClick={toggleRecording}
-              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 ${
-                isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-black hover:bg-gray-800'
-              }`}
+              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 ${isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-black hover:bg-gray-800'
+                }`}
             >
               <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 {isRecording ? (
-                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
                 ) : (
-                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
                 )}
               </svg>
             </button>
-            
-            <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-500' : isProcessing ? 'text-[#0096FF] animate-pulse' : 'text-gray-500'}`}>
-              {isRecording ? 'Recording... Click to stop.' : 
-               isProcessing ? 'Processing... Please wait.' : 
-               (hasRecorded ? 'Recording graded and saved!' : 'Click to start recording')}
+
+            <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-500' : isProcessing ? 'text-[#0096FF] animate-pulse' : isSilence ? 'text-red-600' : 'text-gray-500'}`}>
+              {isRecording ? 'Recording... Click to stop.' :
+                isProcessing ? 'Processing... Please wait.' :
+                  isSilence ? 'No speech detected. Please speak clearly into the microphone.' :
+                    (hasRecorded ? 'Recording graded and saved!' : 'Click to start recording')}
             </p>
 
             {hasRecorded && !isProcessing && (
-              <button 
+              <button
                 onClick={nextPassage}
                 className="mt-8 bg-[#0096FF] text-white font-bold py-4 px-10 rounded-full shadow-lg hover:bg-blue-600 transition-all transform hover:-translate-y-1"
               >

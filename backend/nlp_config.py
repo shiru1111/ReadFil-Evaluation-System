@@ -9,10 +9,7 @@ SYNONYM_PAIRS = [
     {'syay', 'siyay'},
     {'nya', 'niya'},
     {'nyang', 'niyang'},
-    {'rin', 'din'},
-    {'rito', 'dito'},
-    {'roon', 'doon'},
-    {'raw', 'daw'}
+
 ]
 
 ENCLITIC_Y_BASES = {
