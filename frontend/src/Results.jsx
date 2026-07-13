@@ -125,19 +125,19 @@ export default function Results() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#0096FF]/20 to-white font-sans text-gray-900 pb-20">
       
-      <nav className="w-full bg-white px-10 lg:px-20 py-5 flex justify-between items-center border-b border-gray-200">
-        <div className="text-2xl font-black tracking-tight text-gray-900">ReadFil</div>
+      <nav className="w-full bg-white px-4 sm:px-10 lg:px-20 py-4 sm:py-5 flex justify-between items-center border-b border-gray-200">
+        <div className="text-xl sm:text-2xl font-black tracking-tight text-gray-900">ReadFil</div>
       </nav>
 
-      <main className="max-w-4xl mx-auto px-6 mt-12">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 mt-8 sm:mt-12">
         
         <div 
           ref={certificateRef} 
-          className="bg-white/90 backdrop-blur-md rounded-sm shadow-sm border border-gray-200 p-10 lg:p-14 animate-in fade-in zoom-in duration-700"
+          className="bg-white/90 backdrop-blur-md rounded-xl sm:rounded-sm shadow-md border border-gray-200 p-5 sm:p-10 lg:p-14 animate-in fade-in zoom-in duration-700"
         >
           
           <div className="text-center border-b border-gray-300 pb-8 mb-10">
-            <h1 className="text-3xl font-bold text-gray-900 tracking-widest uppercase mb-2">
+            <h1 className="text-xl sm:text-3xl font-bold text-gray-900 tracking-wider sm:tracking-widest uppercase mb-2">
               Tagalog Evaluation Certificate
             </h1>
             <p className="text-gray-500 font-medium tracking-widest uppercase text-xs">
@@ -147,16 +147,16 @@ export default function Results() {
 
           <div className="text-center mb-14">
             <p className="text-gray-500 text-sm uppercase tracking-widest mb-4">This document certifies that</p>
-            <h2 className="text-4xl font-black text-gray-900 mb-4 uppercase tracking-wide">
+            <h2 className="text-2xl sm:text-4xl font-black text-gray-900 mb-4 uppercase tracking-wide">
               {resultData.firstName} {resultData.lastName}
             </h2>
-            <p className="text-lg text-gray-700 leading-relaxed max-w-2xl mx-auto">
+            <p className="text-base sm:text-lg text-gray-700 leading-relaxed max-w-2xl mx-auto">
               has successfully finished the ReadFil Evaluation and demonstrated reading proficiency at the <span className="font-bold text-gray-900 border-b-2 border-[#0096FF] pb-1">{resultData.level} Level</span>.
             </p>
             <p className="text-xs text-gray-400 mt-6 font-medium uppercase tracking-widest">Date of Examination: {resultData.date}</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-12 mb-12">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-12 mb-12">
             
             <div className="flex items-center gap-6">
               <div className="relative w-24 h-24 flex-shrink-0">
@@ -195,7 +195,7 @@ export default function Results() {
 
           </div>
 
-          <div className="bg-gray-50 border border-gray-200 p-10 flex flex-col items-center justify-center mt-8">
+          <div className="bg-gray-50 border border-gray-200 p-6 sm:p-10 flex flex-col items-center justify-center mt-8 rounded-xl sm:rounded-none">
             <h3 className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-6">Composite Final Score</h3>
             
             <div className="relative w-40 h-40">
@@ -217,24 +217,24 @@ export default function Results() {
 
         </div>
 
-        <div className="mt-8 flex flex-col md:flex-row justify-end items-center gap-4">
+        <div className="mt-8 flex flex-col sm:flex-row justify-end items-center gap-3 sm:gap-4">
           <button 
             onClick={handleSaveAsImage}
-            className="w-full md:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm hover:bg-gray-50 transition-colors"
+            className="w-full sm:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm hover:bg-gray-50 transition-colors text-center"
           >
             Save as Image
           </button>
 
           <button 
             onClick={handleSendEmail}
-            className="w-full md:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm hover:bg-gray-50 transition-colors"
+            className="w-full sm:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm hover:bg-gray-50 transition-colors text-center"
           >
             Send to Email
           </button>
           
           <button 
             onClick={handleReturnHome}
-            className="w-full md:w-auto px-8 py-3 bg-gray-900 text-white font-bold text-xs uppercase tracking-widest shadow-sm hover:bg-gray-800 transition-colors"
+            className="w-full sm:w-auto px-8 py-3 bg-gray-900 text-white font-bold text-xs uppercase tracking-widest shadow-sm hover:bg-gray-800 transition-colors text-center"
           >
             Return Home
           </button>
@@ -268,7 +268,7 @@ export default function Results() {
                       </span>
                     </div>
 
-                    <div className="p-6 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-8 relative">
+                    <div className="p-4 sm:p-6 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-8 relative">
                       
                       <div className="hidden md:block absolute left-1/2 top-8 bottom-8 w-px bg-gray-200 transform -translate-x-1/2"></div>
 

@@ -19,5 +19,6 @@ ENCLITIC_Y_BASES = {
 }
 
 TAGALOG_PARTICLES = [
-    'nang', 'ang', 'na', 'sa', 'at', 'ay', 'si', 'ni', 'pa', 'ma', 'ka'
+    'nang', 'ang', 'na', 'sa', 'at', 'ay', 'si', 'ni', 'pa', 'ma', 'ka',
+    'ko', 'mo', 'o', 'yo', 'to'
 ]

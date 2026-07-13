@@ -35,6 +35,7 @@ export default function Expert() {
   // Refs for the ACTUAL evaluation recording
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const stopTimeoutRef = useRef(null);
 
   // Refs for the MIC TEST phase
   const testRecorderRef = useRef(null);
@@ -70,6 +71,7 @@ export default function Expert() {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
       if (audioContextRef.current) audioContextRef.current.close();
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
+      if (stopTimeoutRef.current) clearTimeout(stopTimeoutRef.current);
     };
   }, []);
 
@@ -237,10 +239,15 @@ export default function Expert() {
   };
 
   const toggleRecording = () => {
+    if (isProcessing) return;
     if (isRecording) {
       setIsProcessing(true);
-      mediaRecorderRef.current.stop();
       setIsRecording(false);
+      stopTimeoutRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop();
+        }
+      }, 800);
     } else {
       setIsSilence(false);
       audioChunksRef.current = [];
@@ -297,19 +304,19 @@ export default function Expert() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-white via-[#005FA3]/5 to-white text-black font-sans relative">
-      <nav className="w-full bg-white/80 backdrop-blur-md shadow-sm px-10 lg:px-20 py-5 flex justify-between items-center">
-        <div className="text-2xl font-black tracking-tight text-[#005FA3]">ReadFil</div>
-        <a href="/" onClick={handleReturnHomeClick} className="font-semibold text-sm uppercase tracking-wide hover:text-[#005FA3] transition-colors cursor-pointer">
+      <nav className="w-full bg-white/80 backdrop-blur-md shadow-sm px-4 sm:px-10 lg:px-20 py-4 sm:py-5 flex justify-between items-center">
+        <div className="text-xl sm:text-2xl font-black tracking-tight text-[#005FA3]">ReadFil</div>
+        <a href="/" onClick={handleReturnHomeClick} className="font-semibold text-xs sm:text-sm uppercase tracking-wide hover:text-[#005FA3] transition-colors cursor-pointer">
           Return Home
         </a>
       </nav>
 
       {!isTestReady ? (
-        <main className="max-w-3xl mx-auto pt-32 px-10 pb-20 text-center">
-          <h1 className="text-4xl font-extrabold mb-4 text-[#005FA3]">Expert Microphone Check</h1>
-          <p className="text-gray-600 text-lg mb-12">Final audio verification for the Expert Level.</p>
+        <main className="max-w-3xl mx-auto pt-20 sm:pt-32 px-4 sm:px-10 pb-12 sm:pb-20 text-center">
+          <h1 className="text-3xl sm:text-4xl font-extrabold mb-4 text-[#005FA3]">Expert Microphone Check</h1>
+          <p className="text-gray-600 text-base sm:text-lg mb-8 sm:mb-12">Final audio verification for the Expert Level.</p>
 
-          <div className="bg-white p-10 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col items-center">
+          <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl border border-gray-100 flex flex-col items-center">
 
             {/* Visualizer Canvas */}
             <div className="w-full h-32 bg-gray-50 rounded-xl border border-gray-200 mb-8 overflow-hidden flex items-center justify-center">
@@ -347,16 +354,16 @@ export default function Expert() {
               ) : (
                 <div className="flex flex-col items-center gap-6 w-full">
                   <audio src={testAudioUrl} controls className="w-full max-w-md" />
-                  <div className="flex gap-4">
+                  <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
                     <button
                       onClick={() => { setMicStatus('idle'); setTestAudioUrl(null); }}
-                      className="px-6 py-3 rounded-full font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+                      className="w-full sm:w-auto px-6 py-3 rounded-full font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors text-center"
                     >
                       Retest Mic
                     </button>
                     <button
                       onClick={startActualTest}
-                      className="bg-[#005FA3] hover:bg-[#004A80] text-white font-bold py-3 px-8 rounded-full shadow-lg transition-all transform hover:-translate-y-1"
+                      className="w-full sm:w-auto bg-[#005FA3] hover:bg-[#004A80] text-white font-bold py-3 px-8 rounded-full shadow-lg transition-all transform hover:-translate-y-1 text-center"
                     >
                       Start Expert Evaluation
                     </button>
@@ -368,22 +375,22 @@ export default function Expert() {
           </div>
         </main>
       ) : (
-        <main className="max-w-4xl mx-auto pt-20 px-10 pb-20">
-          <div className="text-center mb-12">
-            <h1 className="text-4xl font-extrabold mb-4 text-[#005FA3]">Expert Level</h1>
-            <p className="text-gray-600 text-lg">Focus on articulation and correct vowel pronunciation.</p>
+        <main className="max-w-4xl mx-auto pt-12 sm:pt-20 px-4 sm:px-10 pb-12 sm:pb-20">
+          <div className="text-center mb-8 sm:mb-12">
+            <h1 className="text-3xl sm:text-4xl font-extrabold mb-4 text-[#005FA3]">Expert Level</h1>
+            <p className="text-gray-600 text-base sm:text-lg">Focus on articulation and correct vowel pronunciation.</p>
           </div>
 
-          <div className="bg-white p-10 rounded-[2rem] shadow-xl border border-gray-100 mb-10 relative">
+          <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl border border-gray-100 mb-6 sm:mb-10 relative">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-[#0096FF]">Reading Material</h2>
+              <h2 className="text-xl sm:text-2xl font-bold text-[#0096FF]">Reading Material</h2>
               <span className="text-sm font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
                 {currentIndex + 1} / {testPassages.length}
               </span>
             </div>
 
-            <div className="p-8 pb-12 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center relative">
-              <p className="text-2xl leading-relaxed text-center font-medium text-black">
+            <div className="p-5 pb-20 sm:p-8 sm:pb-12 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center relative">
+              <p className="text-xl sm:text-2xl leading-relaxed text-center font-medium text-black">
                 "{testPassages[currentIndex]?.text}"
               </p>
               <span className="mt-6 text-sm text-gray-400 italic">
@@ -401,7 +408,11 @@ export default function Expert() {
           </div>
 
           <div className="flex flex-col items-center">
-            <button onClick={toggleRecording} className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-[#005FA3] hover:bg-[#004A80]'}`}>
+            <button
+              onClick={toggleRecording}
+              disabled={isProcessing}
+              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transition-all ${isRecording ? 'bg-red-600 animate-pulse' : 'bg-[#005FA3] hover:bg-[#004A80]'} ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
               <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 {isRecording ? (
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
@@ -435,13 +446,13 @@ export default function Expert() {
           ></div>
 
           <div className="relative bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden z-10 animate-in fade-in zoom-in duration-200">
-            <div className="p-8 pb-4">
+            <div className="p-6 sm:p-8 pb-4">
               <div className="flex justify-between items-start mb-2">
                 <div>
                   <h3 className="text-2xl font-bold text-black mb-1">
                     Return Home
                   </h3>
-                  <p className="text-gray-500 text-sm">Are you sure you want to leave the test?</p>
+                  <p className="text-sm text-gray-500">Are you sure you want to leave the test?</p>
                 </div>
                 <button
                   onClick={() => setShowConfirmModal(false)}
@@ -454,7 +465,7 @@ export default function Expert() {
               </div>
             </div>
 
-            <div className="px-8 pb-8 text-left">
+            <div className="px-6 sm:px-8 pb-6 sm:pb-8 text-left">
               <p className="text-gray-700 font-medium mb-8">
                 Your current progress will be reset and you will have to start over.
               </p>

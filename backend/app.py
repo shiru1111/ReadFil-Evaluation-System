@@ -17,7 +17,7 @@ from nlp_config import SYNONYM_PAIRS, ENCLITIC_Y_BASES, TAGALOG_PARTICLES
 app = Flask(__name__)
 CORS(app)
 
-UPLOAD_FOLDER = 'temp_audio'
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_audio')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 _executor = ThreadPoolExecutor(max_workers=2)
@@ -55,11 +55,10 @@ def preprocess_audio(input_wav_path, output_wav_path):
     normalized.export(output_wav_path, format="wav")
 
     speech, sr = librosa.load(output_wav_path, sr=16000)
-    pre_emphasized = np.append(speech[0], speech[1:] - 0.97 * speech[:-1])
-    trimmed, _ = librosa.effects.trim(pre_emphasized, top_db=25)
+    trimmed, _ = librosa.effects.trim(speech, top_db=25)
 
     if len(trimmed) < int(0.5 * sr):
-        trimmed = pre_emphasized
+        trimmed = speech
 
     sf.write(output_wav_path, trimmed, sr)
     return librosa.get_duration(y=trimmed, sr=sr)
@@ -78,7 +77,7 @@ def transcribe_wav2vec(wav_path):
 def transcribe_whisper(wav_path):
     segments, _ = whisper_model.transcribe(
         wav_path, language="tl", beam_size=3, vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=300)
+        vad_parameters=dict(min_silence_duration_ms=1000)
     )
     return " ".join(seg.text.strip() for seg in segments)
 
@@ -93,16 +92,17 @@ def clean_text(text):
         return []
 
     text = str(text).lower()
-    text = re.sub(r"(\w+)'y\b",  r"\1 ay", text)
-    text = re.sub(r"(\w+)'t\b",  r"\1 at", text)
-    text = re.sub(r"(\w+)'ng\b", r"\1 ng", text)
-    text = re.sub(r"(\w+)'m\b",  r"\1 mo", text)
-    text = re.sub(r'(\w)-(\w)', r'\1\2', text)
+    text = re.sub(r"(\w+)['’`]y\b",  r"\1 ay", text)
+    text = re.sub(r"(\w+)['’`]t\b",  r"\1 at", text)
+    text = re.sub(r"(\w+)['’`]ng\b", r"\1 ng", text)
+    text = re.sub(r"(\w+)['’`]m\b",  r"\1 mo", text)
+    text = re.sub(r"(\w)[-\u2010-\u2015\ufe63\uff0d](\w)", r"\1\2", text)
     text = re.sub(r'[^a-z0-9\s]', '', text)
 
     return text.split()
 
-# =================================================================
+
+
 # PRE-PROCESSOR: Fix STT Segmentation Errors
 # =================================================================
 def fix_segmentation_errors(target_words, spoken_words):
@@ -112,6 +112,24 @@ def fix_segmentation_errors(target_words, spoken_words):
 
     while i < len(spoken_words):
         current = spoken_words[i]
+
+        # P0: SYNONYM SNAPPER — runs FIRST so synonym matches (e.g. kanyang→kaniyang)
+        # take priority over any splitting rules that might incorrectly break the word.
+        if current not in target_set:
+            word_snapped = False
+            for pair in SYNONYM_PAIRS:
+                if current in pair:
+                    for syn in pair:
+                        if syn != current and syn in target_set:
+                            optimized.append(syn)
+                            word_snapped = True
+                            break
+                if word_snapped:
+                    break
+            
+            if word_snapped:
+                i += 1
+                continue
 
         # P1: enclitic-y
         if current.endswith('y') and len(current) > 3:
@@ -139,6 +157,8 @@ def fix_segmentation_errors(target_words, spoken_words):
                     i += 2
                     continue
 
+
+
         # P3: 3-word fuse
         if i < len(spoken_words) - 2:
             fused3 = current + spoken_words[i + 1] + spoken_words[i + 2]
@@ -159,7 +179,15 @@ def fix_segmentation_errors(target_words, spoken_words):
             for particle in TAGALOG_PARTICLES:
                 if current.startswith(particle) and len(current) > len(particle) + 2:
                     remainder = current[len(particle):]
+                    matched_target = None
                     if remainder in target_set:
+                        matched_target = remainder
+                    else:
+                        for t_word in target_set:
+                            if is_correct_pronunciation(t_word, remainder):
+                                matched_target = t_word
+                                break
+                    if matched_target is not None:
                         optimized.extend([particle, remainder])
                         split_done = True
                         break
@@ -172,7 +200,26 @@ def fix_segmentation_errors(target_words, spoken_words):
             split_done = False
             for cut in range(1, len(current)):
                 p1, p2 = current[:cut], current[cut:]
-                if p1 in target_set and p2 in target_set:
+                p1_match = None
+                p2_match = None
+                
+                if p1 in target_set:
+                    p1_match = p1
+                else:
+                    for t_word in target_set:
+                        if is_correct_pronunciation(t_word, p1):
+                            p1_match = t_word
+                            break
+                            
+                if p2 in target_set:
+                    p2_match = p2
+                else:
+                    for t_word in target_set:
+                        if is_correct_pronunciation(t_word, p2):
+                            p2_match = t_word
+                            break
+                            
+                if p1_match is not None and p2_match is not None:
                     optimized.extend([p1, p2])
                     split_done = True
                     break
@@ -196,23 +243,6 @@ def fix_segmentation_errors(target_words, spoken_words):
                             break
             if matched:
                 continue
-                
-        # P8: TWO-WAY SYNONYM SNAPPER (Imported from nlp_config.py)
-        if current not in target_set:
-            word_snapped = False
-            for pair in SYNONYM_PAIRS:
-                if current in pair:
-                    for syn in pair:
-                        if syn != current and syn in target_set:
-                            optimized.append(syn)
-                            word_snapped = True
-                            break
-                if word_snapped:
-                    break
-            
-            if word_snapped:
-                i += 1
-                continue
 
         optimized.append(current)
         i += 1
@@ -226,7 +256,12 @@ def phonetic_normalize(word):
     if not word:
         return ""
     w = word.lower()
-    # Normalize common Tagalog/Spanish/English phonetic variations:
+    # Collapse duplicate consonants (e.g., kk -> k, ll -> l, tt -> t, pp -> p, mm -> m, nn -> n, etc.)
+    w = re.sub(r'([b-df-hj-np-tv-z])\1+', r'\1', w)
+
+    # Normalize Tagalog dipthong vowels and phonetic variations:
+    w = w.replace('y', 'i')
+    w = w.replace('w', 'o')
     w = w.replace('ch', 'ts')
     w = w.replace('j', 'dy')
     w = w.replace('sh', 'sy')
@@ -235,6 +270,108 @@ def phonetic_normalize(word):
     w = w.replace('z', 's')
     w = w.replace('c', 'k')  # 'c' is usually 'k' in Tagalog phonetics (e.g. kochi -> kotsi)
     return w
+
+def is_correct_pronunciation(target, spoken):
+    if not target or not spoken:
+        return False
+    t_norm = phonetic_normalize(target)
+    s_norm = phonetic_normalize(spoken)
+    if t_norm == s_norm:
+        return True
+    dist = modified_levenshtein(target, spoken)
+    # Strict phonetic approximation limits (e.g., allowing "bbe" -> "bibe" but not "palalaka" -> "palaka")
+    if dist <= 0.25 and abs(len(target) - len(spoken)) <= 1:
+        return True
+    return False
+
+def align_chars(target, spoken):
+    m, n = len(target), len(spoken)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m + 1): dp[i][0] = i
+    for j in range(n + 1): dp[0][j] = j
+    
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if target[i - 1] == spoken[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1]
+            else:
+                dp[i][j] = min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + 1)
+                
+    i, j = m, n
+    aligned = []
+    while i > 0 or j > 0:
+        if i > 0 and j > 0 and (target[i - 1] == spoken[j - 1] or dp[i][j] == dp[i - 1][j - 1] + 1):
+            aligned.append((target[i - 1], spoken[j - 1]))
+            i -= 1; j -= 1
+        elif i > 0 and (j == 0 or dp[i][j] == dp[i - 1][j] + 1):
+            aligned.append((target[i - 1], '-'))
+            i -= 1
+        else:
+            aligned.append(('-', spoken[j - 1]))
+            j -= 1
+            
+    aligned.reverse()
+    
+    result = []
+    for t_char, s_char in aligned:
+        if t_char != '-':
+            result.append((t_char, s_char))
+            
+    while len(result) < len(target):
+        result.append((target[len(result)], '-'))
+        
+    return result
+
+def repair_word(target_word, w2v_word, whi_word):
+    if not w2v_word:
+        return whi_word
+    if not whi_word:
+        return w2v_word
+        
+    if w2v_word == target_word or is_correct_pronunciation(target_word, w2v_word):
+        return w2v_word
+    
+    # EXTRA-SYLLABLE GUARD: if the winner has significantly more
+    # characters than the target, the student genuinely spoke extra
+    # content — keep the winner's word, don't override it.
+    if len(w2v_word) > len(target_word) + 1:
+        return w2v_word
+    
+    if whi_word == target_word or is_correct_pronunciation(target_word, whi_word):
+        return whi_word
+
+    w2v_align = align_chars(target_word, w2v_word)
+    whi_align = align_chars(target_word, whi_word)
+    
+    reconstructed = []
+    for (t_char, w_char), (_, h_char) in zip(w2v_align, whi_align):
+        # CONSENSUS: if both models agree on this character, trust them
+        # even when it differs from the target.
+        if w_char == h_char and w_char != '-':
+            reconstructed.append(w_char)
+        elif w_char == t_char:
+            reconstructed.append(w_char)
+        elif h_char == t_char:
+            reconstructed.append(h_char)
+        else:
+            if w_char != '-':
+                reconstructed.append(w_char)
+            elif h_char != '-':
+                reconstructed.append(h_char)
+                
+    return "".join(reconstructed)
+
+def both_have_vowel_shift(target, spoken, other):
+    if not target or not spoken or not other:
+        return False
+    s_align = align_chars(target, spoken)
+    o_align = align_chars(target, other)
+    for (t_char1, s_char), (_, o_char) in zip(s_align, o_align):
+        if t_char1 == 'u' and s_char == 'o' and o_char == 'o':
+            return True
+        if t_char1 == 'i' and s_char == 'e' and o_char == 'e':
+            return True
+    return False
 
 def modified_levenshtein(word1, word2):
     w1 = phonetic_normalize(word1)
@@ -275,7 +412,9 @@ def modified_levenshtein(word1, word2):
     if max_len == 0: return 0.0
     return dp[m][n] / float(max_len)
 
-def needleman_wunsch_alignment(target_words, spoken_words):
+
+
+def needleman_wunsch_alignment(target_words, spoken_words, vowel_shifted_targets=None):
     MATCH    =  5.0
     MISMATCH = -2.0
     GAP      = -2.0
@@ -295,7 +434,11 @@ def needleman_wunsch_alignment(target_words, spoken_words):
     for i in range(1, m + 1):
         for j in range(1, n + 1):
             dist = modified_levenshtein(target_words[i - 1], spoken_words[j - 1])
-            if dist <= 0.55:
+            is_correct = is_correct_pronunciation(target_words[i - 1], spoken_words[j - 1])
+            if vowel_shifted_targets and (i - 1) in vowel_shifted_targets:
+                is_correct = False
+            
+            if is_correct:
                 match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
             else:
                 match_score = score[i - 1][j - 1] + MISMATCH
@@ -314,9 +457,14 @@ def needleman_wunsch_alignment(target_words, spoken_words):
 
     while i > 0 or j > 0:
         if pointers[i][j] == 'D':
-            dist = modified_levenshtein(target_words[i - 1], spoken_words[j - 1])
-            if dist <= 0.55: correct_words += 1
-            else: errors += 1
+            is_correct = is_correct_pronunciation(target_words[i - 1], spoken_words[j - 1])
+            if vowel_shifted_targets and (i - 1) in vowel_shifted_targets:
+                is_correct = False
+                
+            if is_correct:
+                correct_words += 1
+            else:
+                errors += 1
             i -= 1; j -= 1
         elif pointers[i][j] == 'U':
             errors += 1; i -= 1
@@ -345,7 +493,7 @@ def get_alignment_mapping(target_words, spoken_words):
     for i in range(1, m + 1):
         for j in range(1, n + 1):
             dist = modified_levenshtein(target_words[i - 1], spoken_words[j - 1])
-            if dist <= 0.55:
+            if is_correct_pronunciation(target_words[i - 1], spoken_words[j - 1]):
                 match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
             else:
                 match_score = score[i - 1][j - 1] + MISMATCH
@@ -376,40 +524,7 @@ def get_alignment_mapping(target_words, spoken_words):
 
     return spoken_to_target, target_to_spoken
 
-def fuse_best_with_other(target_words, best_opt, other_opt):
-    best_spoken_to_target, best_target_to_spoken = get_alignment_mapping(target_words, best_opt)
-    other_spoken_to_target, other_target_to_spoken = get_alignment_mapping(target_words, other_opt)
-    
-    fused_opt = list(best_opt)
-    
-    for idx_best, target_idx in best_spoken_to_target.items():
-        if target_idx is not None:
-            target_word = target_words[target_idx]
-            best_word = best_opt[idx_best]
-            
-            if best_word != target_word:
-                other_word = other_target_to_spoken.get(target_idx)
-                if other_word is not None:
-                    dist_best = modified_levenshtein(target_word, best_word)
-                    dist_other = modified_levenshtein(target_word, other_word)
-                    
-                    import re
-                    def contains_double_consonant(w):
-                        return bool(re.search(r'([b-df-hj-np-tv-z])\1', w.lower()))
-                        
-                    is_better = False
-                    if dist_other < dist_best:
-                        is_better = True
-                    elif dist_other == dist_best:
-                        # Tie-breaker: If best_word has double consonants not present in target, but other_word does not
-                        if contains_double_consonant(best_word) and not contains_double_consonant(other_word) and not contains_double_consonant(target_word):
-                            is_better = True
-                            
-                    if is_better:
-                        fused_opt[idx_best] = other_word
-                        print(f"[Fusion Correction] Replacing '{best_word}' with '{other_word}' for target '{target_word}'")
-                        
-    return fused_opt
+
 
 def has_vowel_shift(word1, word2):
     m, n = len(word1), len(word2)
@@ -463,8 +578,57 @@ def is_pure_vowel_shift(word1, word2):
             diff_count += 1
     return diff_count > 0
 
+def models_same_letters(w2v_words, whi_words):
+    """
+    Returns True when both models produced the exact same character sequence,
+    regardless of where they placed spaces (e.g. 'simila' vs 'si mila').
+    """
+    w2v_chars = "".join(w2v_words)
+    whi_chars = "".join(whi_words)
+    return w2v_chars == whi_chars
+
+
+def letter_level_merge_models(target_words, w2v_words, whi_words):
+    """
+    Both models produced the same character sequence (only spacing differs).
+    This function resolves the best word-segmentation WITHOUT changing any
+    spoken character.
+
+    Rule: the spoken letters are treated as ground-truth of what the speaker
+    said.  We NEVER substitute a target character for a spoken one.
+    If both models heard "nakikita" and the target is "nakita", the returned
+    token list will contain "nakikita" — the scorer then marks it as an error.
+
+    Segmentation strategy:
+      1. Both models share the same char-string S (spaces stripped).
+      2. If len(S) == len(target chars): slice S at target word boundaries.
+         Each slice is the spoken syllables for that position — characters
+         unchanged, only spacing re-inserted at target boundaries.
+      3. Otherwise (insertion/deletion): keep whichever model's word-list
+         aligns more correct words against the target.
+    """
+    agreed_str = "".join(w2v_words)   # == "".join(whi_words) by definition
+    target_str = "".join(target_words)
+
+    if len(agreed_str) == len(target_str):
+        # Slice at target word boundaries — spoken chars preserved exactly.
+        result = []
+        pos = 0
+        for tw in target_words:
+            result.append(agreed_str[pos : pos + len(tw)])
+            pos += len(tw)
+        return result
+
+    # Lengths differ — pick the model segmentation that aligns better.
+    w2v_correct, _ = needleman_wunsch_alignment(target_words, w2v_words)
+    whi_correct, _ = needleman_wunsch_alignment(target_words, whi_words)
+
+    return list(w2v_words) if w2v_correct >= whi_correct else list(whi_words)
+
+
 def deduplicate_whisper_hallucinations(fused_opt, other_opt, target_words):
     spoken_to_target, _ = get_alignment_mapping(target_words, fused_opt)
+    target_set = set(target_words)
     
     to_remove = set()
     n = len(fused_opt)
@@ -479,27 +643,52 @@ def deduplicate_whisper_hallucinations(fused_opt, other_opt, target_words):
                     is_prefix = match_word.startswith(ins_word) and len(ins_word) >= 3
                     is_suffix = match_word.endswith(ins_word) and len(ins_word) >= 3
                     
-                    if is_prefix or is_suffix:
-                        other_has_both_adjacent = False
-                        for o_idx in range(len(other_opt) - 1):
-                            if (other_opt[o_idx] == ins_word and other_opt[o_idx + 1] == match_word) or \
-                               (other_opt[o_idx] == match_word and other_opt[o_idx + 1] == ins_word):
-                                other_has_both_adjacent = True
-                                break
+                    if (is_prefix or is_suffix) and ins_word not in target_set:
+                        to_remove.add(idx)
+                        break
                         
-                        if not other_has_both_adjacent:
-                            ins_in_other = ins_word in other_opt
-                            match_in_other = match_word in other_opt
-                            
-                            if ins_in_other and not match_in_other:
-                                to_remove.add(adj_idx)
-                            elif match_in_other and not ins_in_other:
-                                to_remove.add(idx)
-                            else:
-                                to_remove.add(idx)
-                                
     cleaned_opt = [fused_opt[i] for i in range(n) if i not in to_remove]
     return cleaned_opt
+
+def merge_syllable_hallucinations_and_stutters(spoken_words, target_words):
+    spoken_to_target, _ = get_alignment_mapping(target_words, spoken_words)
+    
+    merged = list(spoken_words)
+    to_remove = set()
+    n = len(spoken_words)
+    
+    for idx in range(n):
+        if spoken_to_target.get(idx) is not None:
+            target_idx = spoken_to_target[idx]
+            target_word = target_words[target_idx]
+            target_chars = set(phonetic_normalize(target_word))
+            
+            # Forward check
+            j = idx + 1
+            while j < n and spoken_to_target.get(j) is None:
+                adj_word = merged[j]
+                adj_chars = set(phonetic_normalize(adj_word))
+                if adj_chars.issubset(target_chars) and len(adj_word) <= 4:
+                    merged[idx] = merged[idx] + adj_word
+                    to_remove.add(j)
+                    j += 1
+                else:
+                    break
+                    
+            # Backward check
+            j = idx - 1
+            while j >= 0 and spoken_to_target.get(j) is None and j not in to_remove:
+                adj_word = merged[j]
+                adj_chars = set(phonetic_normalize(adj_word))
+                if adj_chars.issubset(target_chars) and len(adj_word) <= 4:
+                    merged[idx] = adj_word + merged[idx]
+                    to_remove.add(j)
+                    j -= 1
+                else:
+                    break
+                    
+    cleaned = [merged[i] for i in range(n) if i not in to_remove]
+    return cleaned
 
 def score_candidate(target_words, raw_transcription):
     spoken   = clean_text(raw_transcription)
@@ -509,6 +698,58 @@ def score_candidate(target_words, raw_transcription):
     fc       = max(0, total - errors)
     accuracy = (fc / total * 100.0) if total > 0 else 0.0
     return accuracy, fc, errors, optimized
+
+def reconstruct_contractions(target_text, transcription):
+    dash_apos = r"['’`]"
+    contractions = re.findall(rf"\b\w+{dash_apos}(?:y|t|ng|m)\b", target_text)
+    
+    for contract in contractions:
+        c_lower = contract.lower()
+        apos_match = re.search(dash_apos, c_lower)
+        if not apos_match:
+            continue
+        apos_idx = apos_match.start()
+        base = c_lower[:apos_idx]
+        suffix = c_lower[apos_idx+1:]
+        
+        if suffix == "y":
+            expanded = base + " ay"
+        elif suffix == "t":
+            expanded = base + " at"
+        elif suffix == "ng":
+            expanded = base + " ng"
+        elif suffix == "m":
+            expanded = base + " mo"
+        else:
+            continue
+            
+        pattern = re.compile(rf"\b{re.escape(expanded)}\b", re.IGNORECASE)
+        transcription = pattern.sub(contract, transcription)
+        
+    return transcription
+
+def match_original_casing_and_punctuation(target_text, transcription):
+    import re
+    dash_apos = r"[-'\u2010-\u2015\ufe63\uff0d’‘`]"
+    
+    # Find all tokens in target text, including hyphens and apostrophes
+    target_tokens = re.findall(rf"\b\w+(?:{dash_apos}\w+)*\b", target_text)
+    
+    # Create a mapping of clean -> original
+    token_map = {}
+    for token in target_tokens:
+        clean = re.sub(dash_apos, "", token).lower()
+        if clean not in token_map:
+            token_map[clean] = token
+            
+    # Split transcription into words
+    trans_words = transcription.split()
+    for idx, word in enumerate(trans_words):
+        clean_trans = re.sub(dash_apos, "", word).lower()
+        if clean_trans in token_map:
+            trans_words[idx] = token_map[clean_trans]
+            
+    return " ".join(trans_words)
 
 # =================================================================
 # API ENDPOINT
@@ -528,10 +769,14 @@ def evaluate_audio():
     wav_raw_path   = os.path.join(UPLOAD_FOLDER, "latest_recording_raw.wav")
     wav_clean_path = os.path.join(UPLOAD_FOLDER, "latest_recording_clean.wav")
     audio_file.save(webm_path)
+    import sys, traceback as _tb
 
     try:
+        print(f"[DEBUG] webm saved, size={os.path.getsize(webm_path)}", flush=True)
         convert_webm_to_wav(webm_path, wav_raw_path)
+        print(f"[DEBUG] webm->wav OK, size={os.path.getsize(wav_raw_path)}", flush=True)
         duration_seconds = preprocess_audio(wav_raw_path, wav_clean_path)
+        print(f"[DEBUG] preprocess OK, duration={duration_seconds}", flush=True)
 
         future_w2v     = _executor.submit(transcribe_wav2vec, wav_clean_path)
         future_whisper = _executor.submit(transcribe_whisper, wav_clean_path)
@@ -555,7 +800,23 @@ def evaluate_audio():
         # STEP 5: TIE-BREAKER LOGIC
         # If accuracies are tied, calculate exact character-level phonetic closeness.
         # -------------------------------------------------------------
-        if w2v_acc > whi_acc:
+        # ------------------------------------------------------------------
+        # SAME-LETTER DETECTION: if both models produced the exact same
+        # character sequence (ignoring spaces) do a letter-level merge so
+        # we exploit every correct character from either model instead of
+        # blindly picking one.
+        # ------------------------------------------------------------------
+        if models_same_letters(w2v_opt, whi_opt):
+            merged_opt = letter_level_merge_models(target_words, w2v_opt, whi_opt)
+            mrg_acc, mrg_correct, mrg_errors, mrg_opt = score_candidate(target_words, " ".join(merged_opt))
+            winner        = "MERGED (same-letters)"
+            best_acc      = mrg_acc
+            best_correct  = mrg_correct
+            best_errors   = mrg_errors
+            best_opt      = mrg_opt
+            other_opt     = w2v_opt   # keep w2v as the "other" for repair stage
+
+        elif w2v_acc > whi_acc:
             winner, best_acc, best_correct, best_errors, best_opt = \
                 "WAV2VEC", w2v_acc, w2v_correct, w2v_errors, w2v_opt
             other_opt = whi_opt
@@ -584,33 +845,68 @@ def evaluate_audio():
                     "WHISPER (Tie-Breaker)", whi_acc, whi_correct, whi_errors, whi_opt
                 other_opt = w2v_opt
 
-        # Apply word-level alignment fusion to correct spelling/words using the losing candidate if it is a closer match
-        fused_opt = fuse_best_with_other(target_words, best_opt, other_opt)
-
         # Deduplicate Whisper hallucinations/repetitions (e.g. natu natutuhan -> natu, or nakapanggagamot mot -> nakapanggagamot)
-        fused_opt = deduplicate_whisper_hallucinations(fused_opt, other_opt, target_words)
+        cleaned_opt = deduplicate_whisper_hallucinations(best_opt, other_opt, target_words)
 
-        # Get alignment mapping to identify words that align to target words and are graded correct (distance <= 0.55)
-        fused_spoken_to_target, _ = get_alignment_mapping(target_words, fused_opt)
+        # Merge adjacent short syllable stutters/insertions that belong to the same matched word
+        cleaned_opt = merge_syllable_hallucinations_and_stutters(cleaned_opt, target_words)
+
+        # Get alignment mapping to identify words that align to target words
+        fused_spoken_to_target, winner_target_to_spoken = get_alignment_mapping(target_words, cleaned_opt)
+        
+        # Get target_to_spoken mapping for the other candidate to enable character-level repair
+        _, other_target_to_spoken = get_alignment_mapping(target_words, other_opt)
+        
+        # Identify indices where both models had a vowel shift (so they shouldn't snap/grade correct)
+        vowel_shifted_targets = set()
+        for idx_target, target_word in enumerate(target_words):
+            win_word = winner_target_to_spoken.get(idx_target)
+            oth_word = other_target_to_spoken.get(idx_target)
+            if win_word and oth_word:
+                if both_have_vowel_shift(target_word, win_word, oth_word):
+                    vowel_shifted_targets.add(idx_target)
         
         # Snap correct spoken words to their exact target spellings to prevent visual frontend highlights
-        final_opt = list(fused_opt)
+        final_opt = list(cleaned_opt)
         for idx_spoken, idx_target in fused_spoken_to_target.items():
             if idx_target is not None:
                 target_word = target_words[idx_target]
-                spoken_word = fused_opt[idx_spoken]
+                spoken_word = cleaned_opt[idx_spoken]
+                other_word = other_target_to_spoken.get(idx_target)
                 
-                # Check distance (using the phonetically aware modified_levenshtein)
-                dist = modified_levenshtein(target_word, spoken_word)
-                if dist <= 0.25:
-                    # Allow snapping if length difference is at most 1 character (handles missing/extra letters like bbe/bbi)
-                    if abs(len(target_word) - len(spoken_word)) <= 1:
+                # CONSENSUS GUARD: If both models agree on the same word
+                # (phonetically identical), the student truly said that —
+                # do NOT snap or repair it toward the target.
+                if other_word and phonetic_normalize(spoken_word) == phonetic_normalize(other_word):
+                    # Both models heard the same thing — trust them.
+                    # Only snap if spoken literally/phonetically IS the target,
+                    # not merely "close enough" (strict model consensus).
+                    if (spoken_word.lower() == target_word.lower()
+                        or phonetic_normalize(spoken_word) == phonetic_normalize(target_word)):
                         final_opt[idx_spoken] = target_word
+                    # Otherwise keep the spoken word untouched (both models agree)
+                    continue
+                
+                # Check if correct as is
+                if is_correct_pronunciation(target_word, spoken_word) and idx_target not in vowel_shifted_targets:
+                    final_opt[idx_spoken] = target_word
+                else:
+                    # Try to repair using the other model's aligned token
+                    if other_word:
+                        repaired = repair_word(target_word, spoken_word, other_word)
+                        if is_correct_pronunciation(target_word, repaired) and idx_target not in vowel_shifted_targets:
+                            final_opt[idx_spoken] = target_word
+                        else:
+                            final_opt[idx_spoken] = repaired
 
         fused_transcription = " ".join(final_opt)
+        # Reconstruct Tagalog contractions (like animo'y) if they were expanded during cleaning
+        fused_transcription = reconstruct_contractions(target_text, fused_transcription)
+        # Match original casing, hyphens, and apostrophes from the target reference
+        fused_transcription = match_original_casing_and_punctuation(target_text, fused_transcription)
 
         # Recalculate errors on the final snapped/corrected output
-        _, final_errors = needleman_wunsch_alignment(target_words, final_opt)
+        _, final_errors = needleman_wunsch_alignment(target_words, final_opt, vowel_shifted_targets)
         best_errors = final_errors
 
         total_target_words  = len(target_words)
@@ -625,21 +921,20 @@ def evaluate_audio():
         if duration_minutes > 0:
             wcpm = final_correct_count / duration_minutes
 
-# Terminal dashboard
-            print(f"\n{'='*70}")
-            print(f" TARGET         : {target_text}")
-            print(f" WAV2VEC (raw)  : {wav2vec_raw}")
-            print(f" WHISPER  (raw) : {whisper_raw}")
-            print(f" WAV2VEC score  : {w2v_acc:.1f}%  ({w2v_errors} errors)")
-            print(f" WHISPER  score : {whi_acc:.1f}%  ({whi_errors} errors)")
-            print(f" USED           : {fused_transcription}")
-            print(f" SCORE          : Accuracy: {round(accuracy_rate,2)}% | WCPM: {round(wcpm,2)}")
-            print(f" CORRECT        : {final_correct_count} / {total_target_words}")
-            
-            # ---> ADD THIS LINE RIGHT HERE <---
-            print(f" DURATION       : {round(duration_seconds, 2)} seconds") 
-            
-            print(f"{'='*70}\n")
+        # Terminal dashboard — always printed after every evaluation
+        print(f"\n{'='*70}")
+        print(f" TARGET         : {target_text}")
+        print(f" WAV2VEC (raw)  : {wav2vec_raw}")
+        print(f" WHISPER  (raw) : {whisper_raw}")
+        print(f" WAV2VEC score  : {w2v_acc:.1f}%  ({w2v_errors} errors)")
+        print(f" WHISPER  score : {whi_acc:.1f}%  ({whi_errors} errors)")
+        print(f" USED           : {fused_transcription}")
+        print(f" SCORE          : Accuracy: {round(accuracy_rate,2)}% | WCPM: {round(wcpm,2)}")
+        print(f" CORRECT        : {final_correct_count} / {total_target_words}")
+        print(f" DURATION       : {round(duration_seconds, 2)} seconds")
+        print(f"{'='*70}\n")
+        import sys
+        sys.stdout.flush()
 
         evaluation_record = {
             "target_text":      target_text,
@@ -656,8 +951,13 @@ def evaluate_audio():
         return jsonify(evaluation_record), 200
 
     except Exception as e:
+        import traceback
+        err_log = os.path.join(UPLOAD_FOLDER, "debug_error.log")
+        with open(err_log, "w") as f:
+            traceback.print_exc(file=f)
+        traceback.print_exc()
         print(f"Error during processing: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, use_reloader=False, port=5000)
