@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
+import sys
 import re
 import numpy as np
 import torch
@@ -10,6 +11,37 @@ from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 from pydub import AudioSegment, effects
 from faster_whisper import WhisperModel
 from concurrent.futures import ThreadPoolExecutor
+
+class SafeStream:
+    def __init__(self, original_stream):
+        self.original_stream = original_stream
+
+    def write(self, data):
+        try:
+            if self.original_stream:
+                self.original_stream.write(data)
+        except OSError as e:
+            if e.errno != 22:  # Swallow [Errno 22] Invalid argument
+                raise
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            if self.original_stream:
+                self.original_stream.flush()
+        except OSError as e:
+            if e.errno != 22:  # Swallow [Errno 22] Invalid argument
+                raise
+        except Exception:
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self.original_stream, name)
+
+sys.stdout = SafeStream(sys.stdout)
+sys.stderr = SafeStream(sys.stderr)
+
 
 # IMPORT OUR SMART DICTIONARIES
 from nlp_config import SYNONYM_PAIRS, ENCLITIC_Y_BASES, TAGALOG_PARTICLES
@@ -102,6 +134,15 @@ def clean_text(text):
     return text.split()
 
 
+def find_phonetic_target_match(fused_word, target_set):
+    """Check if fused_word phonetically matches any word in target_set.
+    Returns the matching target word, or None if no match found.
+    Used as a fallback when exact-match fusion fails, to catch
+    vowel-shifted fusions (e.g. 'omaga' matching 'umaga')."""
+    for t_word in target_set:
+        if is_correct_pronunciation(t_word, fused_word):
+            return t_word
+    return None
 
 # PRE-PROCESSOR: Fix STT Segmentation Errors
 # =================================================================
@@ -131,6 +172,47 @@ def fix_segmentation_errors(target_words, spoken_words):
                 i += 1
                 continue
 
+        # P0.5: RUN-ON MULTI-WORD SPLIT
+        # If the spoken word is a concatenation of 2 to 4 consecutive target words,
+        # split it into those individual target words. E.g. "pasiflorante" -> "pa", "si", "florante"
+        if current not in target_set and len(current) > 3:
+            best_match_score = -1
+            best_k = -1
+            best_N = -1
+            target_est = i * (len(target_words) / len(spoken_words)) if len(spoken_words) > 0 else 0
+
+            for k in range(len(target_words)):
+                for N in range(2, 5):  # 2 to 4 words
+                    if k + N <= len(target_words):
+                        t_sub = target_words[k : k + N]
+                        concat_target = "".join(t_sub)
+                        
+                        if concat_target == current:
+                            score = 2
+                        elif is_correct_pronunciation(concat_target, current):
+                            score = 1
+                        else:
+                            continue
+                            
+                        is_better = False
+                        if score > best_match_score:
+                            is_better = True
+                        elif score == best_match_score:
+                            prev_dist = abs(best_k - target_est)
+                            curr_dist = abs(k - target_est)
+                            if curr_dist < prev_dist:
+                                is_better = True
+                                
+                        if is_better:
+                            best_match_score = score
+                            best_k = k
+                            best_N = N
+                            
+            if best_match_score != -1:
+                optimized.extend(target_words[best_k : best_k + best_N])
+                i += 1
+                continue
+
         # P1: enclitic-y
         if current.endswith('y') and len(current) > 3:
             base = current[:-1]
@@ -141,11 +223,22 @@ def fix_segmentation_errors(target_words, spoken_words):
 
         # P2: 2-word fuse
         if i < len(spoken_words) - 1:
-            fused2 = current + spoken_words[i + 1]
+            nxt = spoken_words[i + 1]
+            fused2 = current + nxt
             if fused2 in target_set:
                 optimized.append(fused2)
                 i += 2
                 continue
+            # Vowel-shifted fuse: e.g. "o"+"maga" → "omaga" matches "umaga"
+            # Do not swallow nxt if it is a target word or a synonym of a target word
+            is_nxt_target = (nxt in target_set or 
+                             any(nxt in pair and any(s in target_set for s in pair) for pair in SYNONYM_PAIRS))
+            if not is_nxt_target:
+                fused2_target = find_phonetic_target_match(fused2, target_set)
+                if fused2_target is not None:
+                    optimized.append(fused2)  # keep spoken form for penalty detection
+                    i += 2
+                    continue
 
         # P2b: overlap fuse
         if i < len(spoken_words) - 1:
@@ -156,6 +249,16 @@ def fix_segmentation_errors(target_words, spoken_words):
                     optimized.append(overlap)
                     i += 2
                     continue
+                # Vowel-shifted overlap fuse
+                # Do not swallow nxt if it is a target word or a synonym of a target word
+                is_nxt_target = (nxt in target_set or 
+                                 any(nxt in pair and any(s in target_set for s in pair) for pair in SYNONYM_PAIRS))
+                if not is_nxt_target:
+                    overlap_target = find_phonetic_target_match(overlap, target_set)
+                    if overlap_target is not None:
+                        optimized.append(overlap)  # keep spoken form
+                        i += 2
+                        continue
 
 
 
@@ -164,6 +267,12 @@ def fix_segmentation_errors(target_words, spoken_words):
             fused3 = current + spoken_words[i + 1] + spoken_words[i + 2]
             if fused3 in target_set:
                 optimized.append(fused3)
+                i += 3
+                continue
+            # Vowel-shifted 3-word fuse: e.g. "to"+"mo"+"long" → "tomolong" matches "tumulong"
+            fused3_target = find_phonetic_target_match(fused3, target_set)
+            if fused3_target is not None:
+                optimized.append(fused3)  # keep spoken form for penalty detection
                 i += 3
                 continue
 
@@ -233,7 +342,7 @@ def fix_segmentation_errors(target_words, spoken_words):
             matched = False
             for j in range(len(target_words) - 1):
                 fused_target = target_words[j] + target_words[j + 1]
-                if len(fused_target) == len(fused_spoken):
+                if abs(len(fused_target) - len(fused_spoken)) <= 2:
                     if modified_levenshtein(fused_target, fused_spoken) <= 0.15:
                         # ONLY snap if there is NO standard Tagalog vowel shift
                         if not has_vowel_shift(fused_target, fused_spoken):
@@ -772,11 +881,11 @@ def evaluate_audio():
     import sys, traceback as _tb
 
     try:
-        print(f"[DEBUG] webm saved, size={os.path.getsize(webm_path)}", flush=True)
+        print(f"[DEBUG] webm saved, size={os.path.getsize(webm_path)}")
         convert_webm_to_wav(webm_path, wav_raw_path)
-        print(f"[DEBUG] webm->wav OK, size={os.path.getsize(wav_raw_path)}", flush=True)
+        print(f"[DEBUG] webm->wav OK, size={os.path.getsize(wav_raw_path)}")
         duration_seconds = preprocess_audio(wav_raw_path, wav_clean_path)
-        print(f"[DEBUG] preprocess OK, duration={duration_seconds}", flush=True)
+        print(f"[DEBUG] preprocess OK, duration={duration_seconds}")
 
         future_w2v     = _executor.submit(transcribe_wav2vec, wav_clean_path)
         future_whisper = _executor.submit(transcribe_whisper, wav_clean_path)
@@ -933,8 +1042,6 @@ def evaluate_audio():
         print(f" CORRECT        : {final_correct_count} / {total_target_words}")
         print(f" DURATION       : {round(duration_seconds, 2)} seconds")
         print(f"{'='*70}\n")
-        import sys
-        sys.stdout.flush()
 
         evaluation_record = {
             "target_text":      target_text,

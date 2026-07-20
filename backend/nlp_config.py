@@ -9,6 +9,7 @@ SYNONYM_PAIRS = [
     {'syay', 'siyay'},
     {'nya', 'niya'},
     {'nyang', 'niyang'},
+    {'bbe', 'bibe'},
 
 ]
 
