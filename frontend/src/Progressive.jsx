@@ -25,6 +25,8 @@ export default function Progressive() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showLevelUpModal, setShowLevelUpModal] = useState(false);
   const [isSilence, setIsSilence] = useState(false);
+  const [isCountingDown, setIsCountingDown] = useState(false);
+  const [countdownValue, setCountdownValue] = useState(0);
 
   // === THE MEMORY VAULT ===
   const [phaseScores, setPhaseScores] = useState([]); // Remembers current level passages
@@ -88,7 +90,7 @@ export default function Progressive() {
   // Continuous Live Timer Logic
   useEffect(() => {
     let timer;
-    if (isTestReady) {
+    if (isRecording) {
       timer = setInterval(() => {
         setElapsedTime((prev) => prev + 1);
       }, 1000);
@@ -96,7 +98,24 @@ export default function Progressive() {
       clearInterval(timer);
     }
     return () => clearInterval(timer);
-  }, [isTestReady]);
+  }, [isRecording]);
+
+  useEffect(() => {
+    if (isCountingDown && countdownValue > 0) {
+      const timer = setTimeout(() => setCountdownValue(countdownValue - 1), 1000);
+      return () => clearTimeout(timer);
+    } else if (isCountingDown && countdownValue === 0) {
+      setIsCountingDown(false);
+      
+      const startRecording = () => {
+        mediaRecorderRef.current.start();
+        setIsRecording(true);
+        setElapsedTime(0);
+      };
+
+      startRecording();
+    }
+  }, [isCountingDown, countdownValue]);
 
   // Keep the target text perfectly in sync with the screen
   useEffect(() => {
@@ -259,7 +278,7 @@ export default function Progressive() {
   };
 
   const toggleRecording = () => {
-    if (isProcessing) return;
+    if (isProcessing || isCountingDown) return;
     if (isRecording) {
       setIsProcessing(true);
       setIsRecording(false);
@@ -272,9 +291,9 @@ export default function Progressive() {
     } else {
       setIsSilence(false);
       audioChunksRef.current = [];
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
       setHasRecorded(false);
+      setIsCountingDown(true);
+      setCountdownValue(3);
     }
   };
 
@@ -369,7 +388,7 @@ export default function Progressive() {
     <div className="min-h-screen bg-gradient-to-br from-white via-[#0096FF]/10 to-white text-black font-sans relative">
       <nav className="w-full bg-white/80 backdrop-blur-md shadow-sm px-4 sm:px-10 lg:px-20 py-4 sm:py-5 flex justify-between items-center">
         <div className="text-xl sm:text-2xl font-black tracking-tight text-[#0096FF]">ReadFil</div>
-        <a href="/" onClick={handleReturnHomeClick} className="font-semibold text-xs sm:text-sm uppercase tracking-wide hover:text-[#0096FF] transition-colors cursor-pointer">
+        <a href="/" onClick={(e) => { e.preventDefault(); confirmReturnHome(); }} className="font-semibold text-xs sm:text-sm uppercase tracking-wide hover:text-[#0096FF] transition-colors cursor-pointer">
           Return Home
         </a>
       </nav>
@@ -452,10 +471,17 @@ export default function Progressive() {
             </div>
 
             <div className="p-5 pb-20 sm:p-8 sm:pb-12 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center relative">
-              <p className="text-xl sm:text-2xl leading-relaxed text-center font-medium text-black">
+              {isCountingDown && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/50 backdrop-blur-sm rounded-xl">
+                  <span className="text-6xl sm:text-8xl font-black text-[#0096FF] animate-pulse">
+                    {countdownValue > 0 ? countdownValue : 'Go!'}
+                  </span>
+                </div>
+              )}
+              <p className={`text-xl sm:text-2xl leading-relaxed text-center font-medium text-black transition-all duration-300 ${!isRecording && !hasRecorded ? 'blur-sm select-none' : ''}`}>
                 "{testPassages[currentIndex]?.text}"
               </p>
-              <span className="mt-6 text-sm text-gray-400 italic">
+              <span className={`mt-6 text-sm text-gray-400 italic transition-all duration-300 ${!isRecording && !hasRecorded ? 'blur-sm select-none' : ''}`}>
                 Source: {testPassages[currentIndex]?.source}
               </span>
 
@@ -472,8 +498,8 @@ export default function Progressive() {
           <div className="flex flex-col items-center justify-center">
             <button
               onClick={toggleRecording}
-              disabled={isProcessing}
-              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 ${isRecording ? 'bg-red-500 animate-pulse' : theme.bg} ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={isProcessing || isCountingDown}
+              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 ${isRecording ? 'bg-red-500 animate-pulse' : theme.bg} ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
             >
               <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 {isRecording ? (

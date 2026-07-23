@@ -343,9 +343,10 @@ def fix_segmentation_errors(target_words, spoken_words):
             for j in range(len(target_words) - 1):
                 fused_target = target_words[j] + target_words[j + 1]
                 if abs(len(fused_target) - len(fused_spoken)) <= 2:
-                    if modified_levenshtein(fused_target, fused_spoken) <= 0.15:
+                    if modified_levenshtein(fused_target, fused_spoken) <= 0.12:
                         # ONLY snap if there is NO standard Tagalog vowel shift
-                        if not has_vowel_shift(fused_target, fused_spoken):
+                        # AND the consonant skeleton matches
+                        if not has_vowel_shift(fused_target, fused_spoken) and letters_are_subset_of(fused_target, fused_spoken):
                             optimized.extend([target_words[j], target_words[j + 1]])
                             i += 2
                             matched = True
@@ -380,6 +381,99 @@ def phonetic_normalize(word):
     w = w.replace('c', 'k')  # 'c' is usually 'k' in Tagalog phonetics (e.g. kochi -> kotsi)
     return w
 
+# =================================================================
+# CONSONANT SKELETON UTILITIES — Letter-level verification
+# =================================================================
+VOWELS = set('aeiou')
+
+# Single-character phonetic normalization for known Tagalog equivalences.
+# Does NOT treat e≡i or o≡u — those are vowel shifts, not equivalences.
+CHAR_NORM = {'y': 'i', 'w': 'o', 'f': 'p', 'v': 'b', 'z': 's', 'c': 'k'}
+
+def normalize_char(ch):
+    """Normalize a single character using known Tagalog phonetic equivalences.
+    y→i, w→o, f→p, v→b, z→s, c→k.  Does NOT normalize e→i or o→u."""
+    return CHAR_NORM.get(ch, ch)
+
+def consonant_skeleton(word):
+    """Extract the ordered consonant sequence from a word.
+    E.g. 'palaka' -> 'plk', 'papaka' -> 'ppk', 'pakak' -> 'pkk'
+    Uses phonetic normalization so f/v/c etc. are folded."""
+    if not word:
+        return ""
+    w = phonetic_normalize(word)
+    return "".join(ch for ch in w if ch not in VOWELS and ch.isalpha())
+
+def is_subsequence(needle, haystack):
+    """Check if 'needle' is a subsequence of 'haystack'.
+    E.g. 'plk' is a subsequence of 'plk' (True)
+         'plk' is NOT a subsequence of 'ppk' (False — no 'l')"""
+    it = iter(haystack)
+    return all(ch in it for ch in needle)
+
+def letters_are_subset_of(target, spoken):
+    """Check if the consonant skeleton of the target word is a subsequence
+    of the spoken word's consonant skeleton.  This verifies the student
+    actually produced the key consonant phonemes of the target word.
+    
+    E.g. target='palaka' skeleton='plk', spoken='papaka' skeleton='ppk'
+         -> 'plk' is NOT a subsequence of 'ppk' -> False  (missing 'l')
+    E.g. target='palaka' skeleton='plk', spoken='palaka' skeleton='plk'
+         -> 'plk' IS a subsequence of 'plk' -> True
+    """
+    t_skel = consonant_skeleton(target)
+    s_skel = consonant_skeleton(spoken)
+    return is_subsequence(t_skel, s_skel)
+
+def models_agree_on_letter(target, w2v_word, whi_word):
+    """Full letter-by-letter dual-model verification.
+    For EVERY character in the target (consonants AND vowels), verify that
+    AT LEAST ONE model actually heard that character.
+    
+    This prevents the system from inventing letters that were never spoken:
+    - Missing consonants: target='palaka' (l), neither model has 'l' -> False
+    - Vowel shifts:       target='mila' (i), both models have 'e' -> False
+    - Vowel shifts:       target='kulay' (u), both models have 'o' -> False
+    
+    Uses character-level alignment (align_chars) for positional accuracy and
+    normalize_char for legitimate Tagalog equivalences (y≡i, c≡k, etc.).
+    """
+    if not target:
+        return False
+    if not w2v_word and not whi_word:
+        return False
+    
+    # FAST GATE: consonant skeleton check first
+    t_skel = consonant_skeleton(target)
+    if t_skel:
+        w2v_skel_ok = letters_are_subset_of(target, w2v_word) if w2v_word else False
+        whi_skel_ok = letters_are_subset_of(target, whi_word) if whi_word else False
+        if not (w2v_skel_ok or whi_skel_ok):
+            return False
+    
+    # FULL CHARACTER ALIGNMENT CHECK (catches vowels too)
+    w2v_align = align_chars(target, w2v_word) if w2v_word else [(c, '-') for c in target]
+    whi_align = align_chars(target, whi_word) if whi_word else [(c, '-') for c in target]
+    
+    for i in range(len(target)):
+        t_char = target[i].lower()
+        w_char = w2v_align[i][1] if i < len(w2v_align) else '-'
+        h_char = whi_align[i][1] if i < len(whi_align) else '-'
+        
+        # Normalize for known phonetic equivalences (y≡i, c≡k, etc.)
+        # but NOT vowel shifts (e≢i, o≢u)
+        t_n = normalize_char(t_char)
+        w_n = normalize_char(w_char) if w_char != '-' else '-'
+        h_n = normalize_char(h_char) if h_char != '-' else '-'
+        
+        if w_n == t_n or h_n == t_n:
+            continue  # At least one model heard this character
+        
+        # Both models disagree on this character — it was NOT spoken
+        return False
+    
+    return True
+
 def is_correct_pronunciation(target, spoken):
     if not target or not spoken:
         return False
@@ -387,9 +481,14 @@ def is_correct_pronunciation(target, spoken):
     s_norm = phonetic_normalize(spoken)
     if t_norm == s_norm:
         return True
+    # Consonant skeleton gate: if the spoken word is missing key consonants
+    # from the target, it cannot be a correct pronunciation.
+    if not letters_are_subset_of(target, spoken):
+        return False
     dist = modified_levenshtein(target, spoken)
-    # Strict phonetic approximation limits (e.g., allowing "bbe" -> "bibe" but not "palalaka" -> "palaka")
-    if dist <= 0.25 and abs(len(target) - len(spoken)) <= 1:
+    # Strict phonetic approximation — 0.15 threshold prevents borderline
+    # mismatches like o↔a in 5-char words (1/5=0.20) from passing.
+    if dist <= 0.15 and abs(len(target) - len(spoken)) <= 1:
         return True
     return False
 
@@ -440,14 +539,17 @@ def repair_word(target_word, w2v_word, whi_word):
     if w2v_word == target_word or is_correct_pronunciation(target_word, w2v_word):
         return w2v_word
     
+    # Check if the other model has a correct match BEFORE the extra-syllable guard,
+    # so that a garbage winner word (e.g. "toefplorante") doesn't block a correct
+    # other-model word (e.g. "florante" from Whisper).
+    if whi_word == target_word or is_correct_pronunciation(target_word, whi_word):
+        return whi_word
+    
     # EXTRA-SYLLABLE GUARD: if the winner has significantly more
     # characters than the target, the student genuinely spoke extra
     # content — keep the winner's word, don't override it.
     if len(w2v_word) > len(target_word) + 1:
         return w2v_word
-    
-    if whi_word == target_word or is_correct_pronunciation(target_word, whi_word):
-        return whi_word
 
     w2v_align = align_chars(target_word, w2v_word)
     whi_align = align_chars(target_word, whi_word)
@@ -459,16 +561,39 @@ def repair_word(target_word, w2v_word, whi_word):
         if w_char == h_char and w_char != '-':
             reconstructed.append(w_char)
         elif w_char == t_char:
+            # Only accept the target char if at least one model heard it
             reconstructed.append(w_char)
         elif h_char == t_char:
             reconstructed.append(h_char)
         else:
+            # FABRICATION GUARD: Neither model matched the target char.
+            # Use whichever model actually heard something, but do NOT
+            # insert the target character — that would be inventing speech.
             if w_char != '-':
                 reconstructed.append(w_char)
             elif h_char != '-':
                 reconstructed.append(h_char)
+            # If both are '-', skip — don't fabricate the target char
                 
-    return "".join(reconstructed)
+    repaired = "".join(reconstructed)
+    
+    # FABRICATION GUARD: After merging, verify that the repaired word
+    # didn't gain consonants that neither model actually heard.
+    # If the repaired consonant skeleton has letters not in either model,
+    # reject the repair and return the best raw model word.
+    rep_skel = consonant_skeleton(repaired)
+    w2v_skel = consonant_skeleton(w2v_word)
+    whi_skel = consonant_skeleton(whi_word)
+    
+    # Every consonant in the repaired word must exist in at least one model's skeleton
+    for ch in rep_skel:
+        if ch not in w2v_skel and ch not in whi_skel:
+            # Fabricated consonant detected — reject repair, use closest raw model word
+            w2v_dist = modified_levenshtein(target_word, w2v_word)
+            whi_dist = modified_levenshtein(target_word, whi_word)
+            return w2v_word if w2v_dist <= whi_dist else whi_word
+    
+    return repaired
 
 def both_have_vowel_shift(target, spoken, other):
     if not target or not spoken or not other:
@@ -971,8 +1096,12 @@ def evaluate_audio():
         for idx_target, target_word in enumerate(target_words):
             win_word = winner_target_to_spoken.get(idx_target)
             oth_word = other_target_to_spoken.get(idx_target)
-            if win_word and oth_word:
-                if both_have_vowel_shift(target_word, win_word, oth_word):
+            # Use full letter-level verification (consonants + vowels)
+            # instead of the fragile both_have_vowel_shift check.
+            # This catches vowel shifts (e for i, o for u) AND missing
+            # consonants even when the other model's word is very different.
+            if win_word or oth_word:
+                if not models_agree_on_letter(target_word, win_word, oth_word):
                     vowel_shifted_targets.add(idx_target)
         
         # Snap correct spoken words to their exact target spellings to prevent visual frontend highlights
@@ -988,22 +1117,38 @@ def evaluate_audio():
                 # do NOT snap or repair it toward the target.
                 if other_word and phonetic_normalize(spoken_word) == phonetic_normalize(other_word):
                     # Both models heard the same thing — trust them.
-                    # Only snap if spoken literally/phonetically IS the target,
-                    # not merely "close enough" (strict model consensus).
-                    if (spoken_word.lower() == target_word.lower()
-                        or phonetic_normalize(spoken_word) == phonetic_normalize(target_word)):
-                        final_opt[idx_spoken] = target_word
+                    # Only snap if spoken literally/phonetically IS the target
+                    # AND the letter-level evidence supports it.
+                    w2v_aligned_c = winner_target_to_spoken.get(idx_target)
+                    oth_aligned_c = other_target_to_spoken.get(idx_target)
+                    has_letter_evidence_c = models_agree_on_letter(target_word, w2v_aligned_c, oth_aligned_c)
+                    if has_letter_evidence_c and idx_target not in vowel_shifted_targets:
+                        if (spoken_word.lower() == target_word.lower()
+                            or phonetic_normalize(spoken_word) == phonetic_normalize(target_word)):
+                            final_opt[idx_spoken] = target_word
                     # Otherwise keep the spoken word untouched (both models agree)
                     continue
                 
+                # DUAL-MODEL LETTER VERIFICATION GATE:
+                # Before accepting that this spoken word matches the target,
+                # verify that the key consonants of the target were actually
+                # heard by at least one model.  If both models are missing
+                # a consonant, that consonant was NOT spoken — don't snap.
+                w2v_aligned = winner_target_to_spoken.get(idx_target)
+                oth_aligned = other_target_to_spoken.get(idx_target)
+                has_letter_evidence = models_agree_on_letter(target_word, w2v_aligned, oth_aligned)
+                
                 # Check if correct as is
                 if is_correct_pronunciation(target_word, spoken_word) and idx_target not in vowel_shifted_targets:
-                    final_opt[idx_spoken] = target_word
+                    if has_letter_evidence:
+                        final_opt[idx_spoken] = target_word
+                    # else: spoken word passes phonetic check but key letters missing
+                    # from BOTH models — don't snap, keep spoken word as error
                 else:
                     # Try to repair using the other model's aligned token
                     if other_word:
                         repaired = repair_word(target_word, spoken_word, other_word)
-                        if is_correct_pronunciation(target_word, repaired) and idx_target not in vowel_shifted_targets:
+                        if is_correct_pronunciation(target_word, repaired) and idx_target not in vowel_shifted_targets and has_letter_evidence:
                             final_opt[idx_spoken] = target_word
                         else:
                             final_opt[idx_spoken] = repaired
@@ -1041,6 +1186,35 @@ def evaluate_audio():
         print(f" SCORE          : Accuracy: {round(accuracy_rate,2)}% | WCPM: {round(wcpm,2)}")
         print(f" CORRECT        : {final_correct_count} / {total_target_words}")
         print(f" DURATION       : {round(duration_seconds, 2)} seconds")
+        # LETTER-BY-LETTER CHECKER — debug output for each target word
+        print(f"{'-'*70}")
+        print(f" LETTER CHECK   :")
+        for idx_t, t_word in enumerate(target_words):
+            w_word = winner_target_to_spoken.get(idx_t, '--')
+            o_word = other_target_to_spoken.get(idx_t, '--')
+            used_word = final_opt[idx_t] if idx_t < len(final_opt) else '--'
+            agreed = models_agree_on_letter(t_word, w_word, o_word)
+            flag = '✓' if agreed else '✗'
+            shifted = '(SHIFTED)' if idx_t in vowel_shifted_targets else ''
+            # Show character-level detail for mismatches
+            detail = ''
+            if not agreed and (w_word or o_word):
+                w_align = align_chars(t_word, w_word) if w_word else [(c,'-') for c in t_word]
+                h_align = align_chars(t_word, o_word) if o_word else [(c,'-') for c in t_word]
+                parts = []
+                for ci in range(len(t_word)):
+                    tc = t_word[ci]
+                    wc = w_align[ci][1] if ci < len(w_align) else '-'
+                    hc = h_align[ci][1] if ci < len(h_align) else '-'
+                    tn = normalize_char(tc)
+                    wn = normalize_char(wc) if wc != '-' else '-'
+                    hn = normalize_char(hc) if hc != '-' else '-'
+                    if wn == tn or hn == tn:
+                        parts.append(f'{tc}=OK')
+                    else:
+                        parts.append(f'{tc}≠w:{wc}/h:{hc}')
+                detail = f' [{" ".join(parts)}]'
+            print(f"   {t_word:12s} win={str(w_word):12s} oth={str(o_word):12s} used={str(used_word):12s} {flag} {shifted}{detail}")
         print(f"{'='*70}\n")
 
         evaluation_record = {

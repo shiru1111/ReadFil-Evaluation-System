@@ -6,7 +6,7 @@ SYNONYM_PAIRS = [
     {'kanya', 'kaniya'},
     {'kanyang', 'kaniyang'},
     {'sya', 'siya'},
-    {'syay', 'siyay'},
+    {'syay', 'siyay', 'shyay'},
     {'nya', 'niya'},
     {'nyang', 'niyang'},
     {'bbe', 'bibe'},

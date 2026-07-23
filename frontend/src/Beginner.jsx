@@ -28,6 +28,8 @@ export default function Beginner() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isSilence, setIsSilence] = useState(false);
+  const [isCountingDown, setIsCountingDown] = useState(false);
+  const [countdownValue, setCountdownValue] = useState(0);
 
   // Memory to store all 25 passages so the Results page can read them
   const [phaseScores, setPhaseScores] = useState([]);
@@ -55,7 +57,7 @@ export default function Beginner() {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 5);
+      const selected = shuffled.slice(0, 1);
       setTestPassages(selected);
       localStorage.setItem('beginner_passages', JSON.stringify(selected));
     }
@@ -76,7 +78,7 @@ export default function Beginner() {
 
   useEffect(() => {
     let timer;
-    if (isTestReady) {
+    if (isRecording) {
       timer = setInterval(() => {
         setElapsedTime((prev) => prev + 1);
       }, 1000);
@@ -84,7 +86,24 @@ export default function Beginner() {
       clearInterval(timer);
     }
     return () => clearInterval(timer);
-  }, [isTestReady]);
+  }, [isRecording]);
+
+  useEffect(() => {
+    if (isCountingDown && countdownValue > 0) {
+      const timer = setTimeout(() => setCountdownValue(countdownValue - 1), 1000);
+      return () => clearTimeout(timer);
+    } else if (isCountingDown && countdownValue === 0) {
+      setIsCountingDown(false);
+
+      const startRecording = () => {
+        mediaRecorderRef.current.start();
+        setIsRecording(true);
+        setElapsedTime(0);
+      };
+
+      startRecording();
+    }
+  }, [isCountingDown, countdownValue]);
 
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -232,7 +251,7 @@ export default function Beginner() {
   };
 
   const toggleRecording = () => {
-    if (isProcessing) return;
+    if (isProcessing || isCountingDown) return;
     if (isRecording) {
       setIsProcessing(true);
       setIsRecording(false);
@@ -244,9 +263,9 @@ export default function Beginner() {
     } else {
       setIsSilence(false);
       audioChunksRef.current = [];
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
       setHasRecorded(false);
+      setIsCountingDown(true);
+      setCountdownValue(3);
     }
   };
 
@@ -379,10 +398,17 @@ export default function Beginner() {
             </div>
 
             <div className="p-5 pb-20 sm:p-8 sm:pb-12 bg-gray-50 rounded-xl border border-gray-200 min-h-[150px] flex flex-col items-center justify-center relative">
-              <p className="text-xl sm:text-2xl leading-relaxed text-center font-medium text-black">
+              {isCountingDown && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/50 backdrop-blur-sm rounded-xl">
+                  <span className="text-6xl sm:text-8xl font-black text-[#0096FF] animate-pulse">
+                    {countdownValue > 0 ? countdownValue : 'Go!'}
+                  </span>
+                </div>
+              )}
+              <p className={`text-xl sm:text-2xl leading-relaxed text-center font-medium text-black transition-all duration-300 ${!isRecording && !hasRecorded ? 'blur-sm select-none' : ''}`}>
                 "{testPassages[currentIndex]?.text}"
               </p>
-              <span className="mt-6 text-sm text-gray-400 italic">
+              <span className={`mt-6 text-sm text-gray-400 italic transition-all duration-300 ${!isRecording && !hasRecorded ? 'blur-sm select-none' : ''}`}>
                 Source: {testPassages[currentIndex]?.source}
               </span>
 
@@ -398,8 +424,8 @@ export default function Beginner() {
           <div className="flex flex-col items-center justify-center">
             <button
               onClick={toggleRecording}
-              disabled={isProcessing}
-              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 ${isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-black hover:bg-gray-800'} ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={isProcessing || isCountingDown}
+              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 ${isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-black hover:bg-gray-800'} ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
             >
               <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 {isRecording ? (
