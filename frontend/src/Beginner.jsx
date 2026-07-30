@@ -288,17 +288,7 @@ export default function Beginner() {
       setHasRecorded(false);
       setIsSilence(false);
     } else {
-      let totalAccuracy = 0;
-      let totalWcpm = 0;
-
-      if (phaseScores.length > 0) {
-        totalAccuracy = phaseScores.reduce((sum, item) => sum + item.accuracy_rate, 0) / phaseScores.length;
-        totalWcpm = phaseScores.reduce((sum, item) => sum + item.wcpm, 0) / phaseScores.length;
-      }
-
       localStorage.setItem('evaluated_level', 'Beginner');
-      localStorage.setItem('final_accuracy', totalAccuracy);
-      localStorage.setItem('final_wcpm', totalWcpm);
 
       localStorage.setItem('reading_logs', JSON.stringify(phaseScores));
 

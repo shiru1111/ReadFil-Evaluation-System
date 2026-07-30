@@ -295,19 +295,7 @@ export default function Expert() {
       setHasRecorded(false);
       setIsSilence(false);
     } else {
-      // Calculate true average from all passages
-      let totalAccuracy = 0;
-      let totalWcpm = 0;
-
-      if (phaseScores.length > 0) {
-        totalAccuracy = phaseScores.reduce((sum, item) => sum + item.accuracy_rate, 0) / phaseScores.length;
-        totalWcpm = phaseScores.reduce((sum, item) => sum + item.wcpm, 0) / phaseScores.length;
-      }
-
-      // Save the specific final numbers to localStorage
       localStorage.setItem('evaluated_level', 'Expert');
-      localStorage.setItem('final_accuracy', totalAccuracy);
-      localStorage.setItem('final_wcpm', totalWcpm);
 
       // Save the complete log array so the Results page can render the UI
       localStorage.setItem('reading_logs', JSON.stringify(phaseScores));

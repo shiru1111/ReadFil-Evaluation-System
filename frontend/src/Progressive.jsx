@@ -303,21 +303,9 @@ export default function Progressive() {
       setIsRecording(false);
       setHasRecorded(false);
       setIsSilence(false);
-    } else {
-      // CALCULATE REAL SCORE AT THE END OF THE PHASE
-      let totalAccuracy = 0;
-      let totalWcpm = 0;
-
-      if (phaseScores.length > 0) {
-        totalAccuracy = phaseScores.reduce((sum, item) => sum + item.accuracy_rate, 0) / phaseScores.length;
-        totalWcpm = phaseScores.reduce((sum, item) => sum + item.wcpm, 0) / phaseScores.length;
-      }
-
       // If it is the Expert Phase, bypass the modal completely and go straight to Results!
       if (currentLevel === 'Expert') {
         localStorage.setItem('evaluated_level', 'Progressive');
-        localStorage.setItem('final_accuracy', totalAccuracy);
-        localStorage.setItem('final_wcpm', totalWcpm);
 
         // === CRITICAL FIX: COMBINE ALL 75 LOGS (Beginner + Moderate + Expert) ===
         const allLogs = [...cumulativeLogs, ...phaseScores];
@@ -328,20 +316,7 @@ export default function Progressive() {
       }
 
       // Otherwise, it is Beginner or Moderate, so show the Pass/Fail Modal
-      const targetWcpm = 150;
-      const accuracyScore = totalAccuracy * 0.5;
-      const fluencyScore = Math.min((totalWcpm / targetWcpm) * 50, 50);
-      const finalCalculatedScore = Math.round(accuracyScore + fluencyScore);
-
-      setPhaseScore(finalCalculatedScore);
-
-      // Set Pass/Fail Threshold (Adjust 75 to whatever passing grade you want)
-      if (finalCalculatedScore >= 75) {
-        setIsPhasePassed(true);
-      } else {
-        setIsPhasePassed(false);
-      }
-
+      setIsPhasePassed(true);
       setShowLevelUpModal(true);
     }
   };
