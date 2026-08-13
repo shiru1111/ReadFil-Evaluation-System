@@ -10,7 +10,9 @@ SYNONYM_PAIRS = [
     {'nya', 'niya'},
     {'nyang', 'niyang'},
     {'bbe', 'bibe'},
-
+    {'quezon', 'kezon'},
+    {'suplay', 'suply', 'supply'},
+    {'kweba', 'kuweba'},
 ]
 
 ENCLITIC_Y_BASES = {
@@ -23,3 +25,16 @@ TAGALOG_PARTICLES = [
     'nang', 'ang', 'na', 'sa', 'at', 'ay', 'si', 'ni', 'pa', 'ma', 'ka',
     'ko', 'mo', 'o', 'yo', 'to'
 ]
+
+EXPERT_CORRECTIONS = {
+    'munithindi': 'ngunit hindi',
+    'naiinit': 'naiinip',
+    'ubalit': 'subalit',
+    'ditoay': 'ditoy',
+    'asama': 'kasama',
+    'kasa': 'kasama',
+    'palipasay': 'palibhasay',
+    'tunaiynyang': 'tunay ngang',
+    'saan niya': 'sa kaniya',
+    'lihamg': 'liham',
+}

@@ -223,6 +223,7 @@ export default function Expert() {
     // Make sure you kept the currentTextRef fix here!
     const targetText = currentTextRef.current;
     formData.append('target_text', targetText);
+    formData.append('level', 'Expert');
 
     try {
       const response = await fetch('/api/evaluate', {
