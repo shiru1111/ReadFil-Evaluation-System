@@ -57,7 +57,7 @@ export default function Moderate() {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 5);
+      const selected = shuffled.slice(0, 1);
       setTestPassages(selected);
       localStorage.setItem('moderate_passages', JSON.stringify(selected));
     }
@@ -96,9 +96,26 @@ export default function Moderate() {
       return () => clearTimeout(timer);
     } else if (isCountingDown && countdownValue === 0) {
       setIsCountingDown(false);
-      
-      const startRecording = () => {
-        mediaRecorderRef.current.start();
+
+      const startRecording = async () => {
+        if (!mediaRecorderRef.current) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorderRef.current = new MediaRecorder(stream);
+            mediaRecorderRef.current.ondataavailable = (event) => {
+              if (event.data.size > 0) audioChunksRef.current.push(event.data);
+            };
+            mediaRecorderRef.current.onstop = sendAudioToServer;
+          } catch (err) {
+            console.error("Microphone access denied:", err);
+            alert("Microphone connection lost. Please allow access.");
+            setIsTestReady(false);
+            return;
+          }
+        }
+        if (mediaRecorderRef.current.state === 'inactive') {
+          mediaRecorderRef.current.start();
+        }
         setIsRecording(true);
         setElapsedTime(0);
       };
@@ -422,10 +439,10 @@ export default function Moderate() {
                   </span>
                 </div>
               )}
-              <p className={`text-xl sm:text-2xl leading-relaxed text-center font-medium text-black transition-all duration-300 ${!isRecording && !hasRecorded ? 'blur-sm select-none' : ''}`}>
+              <p className={`text-xl sm:text-2xl leading-relaxed text-center font-medium text-black transition-all duration-300 ${!isRecording && !hasRecorded && !isProcessing ? 'blur-sm select-none' : ''}`}>
                 "{testPassages[currentIndex]?.text}"
               </p>
-              <span className={`mt-6 text-sm text-gray-400 italic transition-all duration-300 ${!isRecording && !hasRecorded ? 'blur-sm select-none' : ''}`}>
+              <span className={`mt-6 text-sm text-gray-400 italic transition-all duration-300 ${!isRecording && !hasRecorded && !isProcessing ? 'blur-sm select-none' : ''}`}>
                 Source: {testPassages[currentIndex]?.source}
               </span>
 
@@ -439,19 +456,21 @@ export default function Moderate() {
             </div>
           </div>
           <div className="flex flex-col items-center justify-center">
-            <button
-              onClick={toggleRecording}
-              disabled={isProcessing || isCountingDown}
-              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-black hover:bg-gray-800'} ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
-            >
-              <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                {isRecording ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
-                )}
-              </svg>
-            </button>
+            {!hasRecorded && (
+              <button
+                onClick={toggleRecording}
+                disabled={isProcessing || isCountingDown}
+                className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-black hover:bg-gray-800'} ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
+              >
+                <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {isRecording ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+                  )}
+                </svg>
+              </button>
+            )}
             <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-600' : isProcessing ? 'text-[#005FA3] animate-pulse' : isSilence ? 'text-red-600' : 'text-gray-500'}`}>
               {isRecording ? 'Recording Expert Audio...' :
                 isProcessing ? 'Processing... Please wait.' :
