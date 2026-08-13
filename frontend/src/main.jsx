@@ -6,8 +6,10 @@ import Beginner from './Beginner.jsx'
 import Moderate from './Moderate.jsx'
 import Expert from './Expert.jsx'
 import Progressive from './Progressive';
+import TermsAndConditions from './TermsAndConditions.jsx';
 import ScrollToTop from './ScrollToTop.jsx' // <-- 1. Imported here
 import Results from './Results.jsx'
+import Simulation from './Simulation.jsx'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -20,7 +22,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/moderate" element={<Moderate />} />
         <Route path="/expert" element={<Expert />} />
         <Route path="/progressive" element={<Progressive />} />
+        <Route path="/terms" element={<TermsAndConditions />} />
         <Route path="/results" element={<Results />} />
+        <Route path="/simulation" element={<Simulation />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import myImage from './assets/picture1.png';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 export default function App() {
   const [imageOpacity, setImageOpacity] = useState(1);
@@ -141,6 +141,11 @@ export default function App() {
             >
               Algorithm
             </button>
+          </li>
+          <li>
+            <Link to="/simulation" target="_blank" className="hover:text-[#0096FF] transition-colors font-semibold uppercase tracking-wide flex items-center gap-1">
+              Simulation
+            </Link>
           </li>
           <li><a href="#footer" className="hover:text-[#0096FF] transition-colors">About Us</a></li>
         </ul>
@@ -337,10 +342,10 @@ export default function App() {
                 <div className="w-16 h-16 bg-[#0096FF]/10 rounded-2xl flex items-center justify-center mb-6 text-[#0096FF]">
                   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                 </div>
-                <h3 className="text-2xl font-bold mb-2">Accuracy Rate</h3>
+                <h3 className="text-2xl font-bold mb-2">Pronunciation Accuracy</h3>
                 <div className="text-sm font-black text-[#0096FF] tracking-widest uppercase mb-4">50% of Final Grade</div>
                 <p className="text-gray-600 leading-relaxed text-justify mb-8 flex-grow">
-                  The system transcribes your speech and compares it directly to the target passage. The formula divides the number of correctly pronounced words by the total number of words, ensuring every single word is accounted for.
+                  The system uses a strict dual-model architecture (Wav2Vec 2.0 & Whisper). If the models detect a mispronunciation, they perform an advanced <strong>letter-by-letter phonetic alignment check</strong>. A word is only marked correct if the pronounced letters align with the target word, ensuring highly accurate grading that ignores minor background noise.
                 </p>
                 <div className="bg-gray-50 p-5 rounded-xl border border-gray-200 mt-auto">
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 text-center">Mathematical Formula</p>
@@ -359,12 +364,12 @@ export default function App() {
                 <h3 className="text-2xl font-bold mb-2">Reading Speed</h3>
                 <div className="text-sm font-black text-[#005FA3] tracking-widest uppercase mb-4">50% of Final Grade</div>
                 <p className="text-gray-600 leading-relaxed text-justify mb-8 flex-grow">
-                  Fluency is about pacing. Words Correct Per Minute (WCPM) takes your total correct words and divides it by the reading time. For this evaluation, reaching the target rate of 150 WCPM grants a perfect speed score.
+                  Fluency requires proper conversational pacing. The system calculates Words Correct Per Minute (WCPM) by taking your total <em>correct</em> words and dividing it by the exact audio duration. Reaching the optimal target rate of 150 WCPM grants a perfect speed score.
                 </p>
                 <div className="bg-gray-50 p-5 rounded-xl border border-gray-200 mt-auto">
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 text-center">Mathematical Formula</p>
                   <p className="text-[#005FA3] font-mono font-bold text-sm text-center">
-                    ( Correct / Seconds ) × 60
+                    WCPM = ( Correct / Seconds ) × 60<br/>Speed % = (WCPM / 150) × 100
                   </p>
                 </div>
               </div>
@@ -375,15 +380,15 @@ export default function App() {
                 <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mb-6 text-white">
                   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
                 </div>
-                <h3 className="text-2xl font-bold mb-2">Composite Score</h3>
+                <h3 className="text-2xl font-bold mb-2">Final Composite Score</h3>
                 <div className="text-sm font-black text-gray-400 tracking-widest uppercase mb-4">Official Result</div>
                 <p className="text-gray-300 leading-relaxed text-justify mb-8 flex-grow">
-                  Your final grade out of 100 points weighs your exact pronunciation accuracy against your conversational pacing. The system merges 50% of your Accuracy Rate with 50% of your WCPM percentage.
+                  Your official grade out of 100 points is a strict weighted average. The system merges 50% of your Pronunciation Accuracy with 50% of your Reading Speed percentage to provide a holistic, objective evaluation of your overall Tagalog fluency.
                 </p>
                 <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 mt-auto">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2 text-center">Mathematical Formula</p>
                   <p className="text-white font-mono font-bold text-xs text-center leading-relaxed">
-                    (Accuracy × 0.5) + <br />((WCPM / 150) × 50)
+                    (Accuracy % × 0.5) + <br />(Speed % × 0.5)
                   </p>
                 </div>
               </div>
@@ -593,7 +598,7 @@ export default function App() {
                   <input id="terms" type="checkbox" className={`w-5 h-5 border border-gray-300 rounded focus:ring-2 focus:ring-[#8ACEFF]/20 cursor-pointer`} required />
                 </div>
                 <label htmlFor="terms" className="ml-3 text-sm text-gray-600 cursor-pointer">
-                  I agree to the <a href="#" className={`font-bold hover:underline ${selectedLevel === 'Progressive Mode' ? 'text-[#0096FF]' : theme.color}`}>Terms and Conditions</a> and consent to the recording of my voice for academic thesis evaluation purposes.
+                  I agree to the <Link to="/terms" target="_blank" rel="noopener noreferrer" className={`font-bold hover:underline ${selectedLevel === 'Progressive Mode' ? 'text-[#0096FF]' : theme.color}`}>Terms and Conditions</Link> and consent to the recording of my voice.
                 </label>
               </div>
 

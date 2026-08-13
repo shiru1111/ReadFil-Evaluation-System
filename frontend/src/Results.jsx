@@ -65,7 +65,7 @@ export default function Results() {
   // ==========================================
   // FIXED: Visual Error Highlighter Function
   // ==========================================
-  const highlightErrors = (target, heard) => {
+  const highlightErrors = (target, heard, stutters = []) => {
     if (!heard) return <span className="text-gray-400 italic">No audio detected.</span>;
 
     // Pure stripping. No hardcoded dictionary mapping. 
@@ -76,11 +76,19 @@ export default function Results() {
     return heardWords.map((word, index) => {
       const cleanWord = word.toLowerCase().replace(/[^a-z0-9\s]/g, '');
       const isError = !targetWords.includes(cleanWord);
+      const isStutter = stutters.includes(cleanWord);
+
+      let styleClass = "text-gray-900";
+      if (isStutter) {
+        styleClass = "bg-orange-200 text-orange-900 font-extrabold px-1.5 py-0.5 rounded-md mx-0.5 shadow-sm";
+      } else if (isError) {
+        styleClass = "bg-red-200 text-red-900 font-extrabold px-1.5 py-0.5 rounded-md mx-0.5 shadow-sm";
+      }
 
       return (
         <span 
           key={index} 
-          className={isError ? "bg-red-200 text-red-900 font-extrabold px-1.5 py-0.5 rounded-md mx-0.5 shadow-sm" : "text-gray-900"}
+          className={styleClass}
         >
           {word}{' '}
         </span>
@@ -219,6 +227,13 @@ export default function Results() {
 
         <div className="mt-8 flex flex-col sm:flex-row justify-end items-center gap-3 sm:gap-4">
           <button 
+            onClick={() => window.open('/simulation', '_blank')}
+            className="w-full sm:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm hover:text-[#0096FF] transition-colors text-center"
+          >
+            Simulation
+          </button>
+
+          <button 
             onClick={handleSaveAsImage}
             className="w-full sm:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm hover:bg-gray-50 transition-colors text-center"
           >
@@ -289,7 +304,7 @@ export default function Results() {
                         </span>
                         <div className={`p-6 rounded-sm border h-full shadow-inner ${hasErrors ? 'bg-red-50/30 border-red-100' : 'bg-gray-50 border-gray-100'}`}>
                           <p className="font-medium leading-relaxed text-lg italic leading-loose">
-                            {highlightErrors(log.target_text, log.transcription)}
+                            {highlightErrors(log.target_text, log.transcription, log.stutter_words)}
                           </p>
                         </div>
                       </div>
@@ -305,6 +320,11 @@ export default function Results() {
                       <div className="flex flex-col items-center">
                         <span className="text-gray-400 text-xs font-bold uppercase tracking-widest">WCPM</span>
                         <span className="font-black text-2xl text-gray-800">{Math.round(log.wcpm)}</span>
+                      </div>
+                      <div className="w-px bg-gray-300"></div>
+                      <div className="flex flex-col items-center">
+                        <span className="text-gray-400 text-xs font-bold uppercase tracking-widest">Duration</span>
+                        <span className="font-black text-2xl text-gray-800">{log.duration_seconds ? `${log.duration_seconds.toFixed(2)}s` : 'N/A'}</span>
                       </div>
                     </div>
 
