@@ -57,7 +57,7 @@ export default function Beginner() {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 5);
+      const selected = shuffled.slice(0, 1);
       setTestPassages(selected);
       localStorage.setItem('beginner_passages', JSON.stringify(selected));
     }
