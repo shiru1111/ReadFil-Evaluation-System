@@ -679,6 +679,8 @@ def needleman_wunsch_alignment(target_words, spoken_words, vowel_shifted_targets
             
             if is_correct:
                 match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
+            elif is_stutter(target_words[i - 1], spoken_words[j - 1]) or has_vowel_shift(target_words[i - 1], spoken_words[j - 1]):
+                match_score = score[i - 1][j - 1] + (MATCH * 0.5)
             else:
                 match_score = score[i - 1][j - 1] + MISMATCH
             delete_score = score[i - 1][j] + GAP
@@ -734,6 +736,8 @@ def get_alignment_mapping(target_words, spoken_words):
             dist = modified_levenshtein(target_words[i - 1], spoken_words[j - 1])
             if is_correct_pronunciation(target_words[i - 1], spoken_words[j - 1]):
                 match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
+            elif is_stutter(target_words[i - 1], spoken_words[j - 1]) or has_vowel_shift(target_words[i - 1], spoken_words[j - 1]):
+                match_score = score[i - 1][j - 1] + (MATCH * 0.5)
             else:
                 match_score = score[i - 1][j - 1] + MISMATCH
             delete_score = score[i - 1][j] + GAP
@@ -969,7 +973,11 @@ def iq_adjust_wav2vec2(target_words, raw_transcription):
     for t_char, s_char in aligned:
         if t_char == '-':
             if s_char != '-':
-                insertions_between[current_t_idx].append(s_char)
+                if chars_seen == 0:
+                    insertions_between[current_t_idx].append(s_char)
+                else:
+                    if current_t_idx < len(target_words):
+                        t_word_char_lists[current_t_idx].append(s_char)
         else:
             if current_t_idx < len(target_words):
                 if s_char != '-':
@@ -1012,7 +1020,8 @@ def iq_adjust_wav2vec2(target_words, raw_transcription):
         if not s_word:
             continue
             
-        dist = modified_levenshtein(t_word.lower(), s_word.lower())
+        dist_ratio = modified_levenshtein(t_word.lower(), s_word.lower())
+        raw_dist = dist_ratio * max(len(t_word.lower()), len(s_word.lower()))
         max_dist = max(2, len(t_word) // 3)
         
         is_stutter_case = is_stutter(t_word.lower(), s_word.lower())
@@ -1020,7 +1029,7 @@ def iq_adjust_wav2vec2(target_words, raw_transcription):
         
         if is_stutter_case or is_vowel_shift_case:
             adjusted_words.append(s_word)
-        elif dist <= max_dist or is_correct_pronunciation(t_word, s_word):
+        elif raw_dist <= max_dist or is_correct_pronunciation(t_word, s_word):
             adjusted_words.append(t_word)
         else:
             adjusted_words.append(s_word)
@@ -1277,6 +1286,8 @@ def get_simulation_trace(target_words, spoken_words):
             dist = modified_levenshtein(target_words[i - 1], spoken_words[j - 1])
             if is_correct_pronunciation(target_words[i - 1], spoken_words[j - 1]):
                 match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
+            elif is_stutter(target_words[i - 1], spoken_words[j - 1]) or has_vowel_shift(target_words[i - 1], spoken_words[j - 1]):
+                match_score = score[i - 1][j - 1] + (MATCH * 0.5)
             else:
                 match_score = score[i - 1][j - 1] + MISMATCH
             delete_score = score[i - 1][j] + GAP
