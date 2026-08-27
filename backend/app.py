@@ -10,6 +10,7 @@ from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 from pydub import AudioSegment, effects
 from faster_whisper import WhisperModel
 from concurrent.futures import ThreadPoolExecutor
+import re
 
 class SafeStream:
     def __init__(self, original_stream):
@@ -109,6 +110,61 @@ def transcribe_whisper(wav_path):
     return " ".join(seg.text.strip() for seg in segments)
 
 # =================================================================
+# SCORING & SEGMENTATION (Sprints 4 & 5)
+# =================================================================
+def calculate_word_metrics(target, transcription):
+    target = re.sub(r'[^\w\s]', '', target.lower())
+    trans = re.sub(r'[^\w\s]', '', transcription.lower())
+    
+    target_words = target.split()
+    trans_words = trans.split()
+    
+    m, n = len(target_words), len(trans_words)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    
+    for i in range(m + 1): dp[i][0] = i
+    for j in range(n + 1): dp[0][j] = j
+        
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if target_words[i - 1] == trans_words[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1]
+            else:
+                dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+                
+    errors = dp[m][n]
+    total_target_words = len(target_words)
+    correct_words = max(0, total_target_words - errors)
+    return total_target_words, correct_words, errors
+
+def segment_phrases(text, transcription):
+    segments = re.split(r'(?<=[.?!])\s+', text.strip())
+    if not segments or not segments[0]:
+        segments = [text]
+        
+    phrase_breakdown = []
+    trans_idx = 0
+    trans_words = transcription.split()
+    trans_clean = [re.sub(r'[^\w\s]', '', w.lower()) for w in trans_words]
+    
+    for segment in segments:
+        seg_clean = [re.sub(r'[^\w\s]', '', w.lower()) for w in segment.split()]
+        num_seg_words = len(seg_clean)
+        
+        # Naive windowing for phrase alignment
+        trans_chunk = trans_clean[trans_idx : trans_idx + num_seg_words + 2] 
+        trans_chunk_str = " ".join(trans_chunk)
+        
+        t_words, c_words, err = calculate_word_metrics(segment, trans_chunk_str)
+        phrase_breakdown.append({
+            "target_phrase": segment,
+            "accuracy": round((c_words / t_words * 100), 2) if t_words > 0 else 0
+        })
+        trans_idx += num_seg_words
+        
+    return phrase_breakdown
+
+# =================================================================
 # API ENDPOINT
 # =================================================================
 @app.route('/api/evaluate', methods=['POST'])
@@ -131,6 +187,13 @@ def evaluate_audio():
         convert_webm_to_wav(webm_path, wav_raw_path)
         duration_seconds = preprocess_audio(wav_raw_path, wav_clean_path)
 
+        # Sprint 5: Edge case handling for extremely short audio
+        if duration_seconds < 0.5:
+            return jsonify({
+                "error": "Audio is too short for reliable transcription.",
+                "status": "error"
+            }), 400
+
         # Sprint 3: Parallel thread execution
         future_w2v     = _executor.submit(transcribe_wav2vec, wav_clean_path)
         future_whisper = _executor.submit(transcribe_whisper, wav_clean_path)
@@ -138,9 +201,10 @@ def evaluate_audio():
         wav2vec_raw = future_w2v.result() 
         whisper_raw = future_whisper.result() 
 
+        # Sprint 5: Handling completely empty transcripts from noisy/silent audio
         if not wav2vec_raw.strip() and not whisper_raw.strip():
             return jsonify({
-                "error": "No speech detected. Please speak clearly into the microphone.",
+                "error": "No speech could be transcribed. The audio might be too noisy or completely silent.",
                 "status": "empty"
             }), 400
 
@@ -153,12 +217,25 @@ def evaluate_audio():
             best_transcription = whisper_raw
             winner = "WHISPER"
 
+        # Sprint 4: Reading accuracy calculation and WCPM scoring logic
+        total_target_words, correct_words, errors = calculate_word_metrics(target_text, best_transcription)
+        
+        duration_minutes = duration_seconds / 60.0 if duration_seconds > 0 else 0
+        wcpm = (correct_words / duration_minutes) if duration_minutes > 0 else 0
+        accuracy = (correct_words / total_target_words * 100) if total_target_words > 0 else 0
+
+        # Sprint 5: Phrase segmentation
+        phrase_breakdown = segment_phrases(target_text, best_transcription)
+
         print(f"\n{'='*70}")
         print(f" TARGET         : {target_text}")
         print(f" WAV2VEC (raw)  : {wav2vec_raw}")
         print(f" WHISPER  (raw) : {whisper_raw}")
         print(f" SELECTED       : {best_transcription}")
         print(f" DURATION       : {round(duration_seconds, 2)} seconds")
+        print(f" WCPM           : {round(wcpm, 2)}")
+        print(f" ACCURACY       : {round(accuracy, 2)}%")
+        print(f" SEGMENTS       : {len(phrase_breakdown)} phrase(s)")
         print(f"{'='*70}\n")
 
         evaluation_record = {
@@ -168,6 +245,9 @@ def evaluate_audio():
             "whisper_raw":      whisper_raw,
             "duration_seconds": round(duration_seconds, 3),
             "model_used":       winner,
+            "wcpm":             round(wcpm, 2),
+            "accuracy":         round(accuracy, 2),
+            "phrase_breakdown": phrase_breakdown,
             "status":           "success"
         }
 
