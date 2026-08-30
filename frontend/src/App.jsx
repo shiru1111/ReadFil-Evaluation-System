@@ -8,6 +8,7 @@ export default function App() {
   const [isCriteriaModalOpen, setIsCriteriaModalOpen] = useState(false);
   const [isAlgorithmModalOpen, setIsAlgorithmModalOpen] = useState(false);
   const [selectedLevel, setSelectedLevel] = useState('');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // State variables to hold the user's input
   const [firstName, setFirstName] = useState('');
@@ -125,7 +126,9 @@ export default function App() {
         <div className="text-xl sm:text-2xl font-black tracking-tight text-[#0096FF]">
           ReadFil
         </div>
-        <ul className="flex space-x-3 sm:space-x-8 font-semibold text-[11px] sm:text-sm uppercase tracking-wide items-center">
+        
+        {/* Desktop Menu */}
+        <ul className="hidden md:flex space-x-3 sm:space-x-8 font-semibold text-[11px] sm:text-sm uppercase tracking-wide items-center">
           <li>
             <button
               onClick={() => setIsCriteriaModalOpen(true)}
@@ -149,7 +152,50 @@ export default function App() {
           </li>
           <li><a href="#footer" className="hover:text-[#0096FF] transition-colors">About Us</a></li>
         </ul>
+
+        {/* Mobile Menu Button */}
+        <button 
+          className="md:hidden text-black hover:text-[#0096FF] focus:outline-none transition-colors"
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        >
+          <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={isMobileMenuOpen ? "M6 18L18 6M6 6l12 12" : "M4 6h16M4 12h16m-7 6h7"}></path>
+          </svg>
+        </button>
       </nav>
+
+      {/* Mobile Menu Dropdown */}
+      {isMobileMenuOpen && (
+        <div className="md:hidden fixed top-[60px] sm:top-[70px] left-0 w-full bg-white shadow-xl z-40 flex flex-col py-6 px-6 space-y-6 font-bold text-sm uppercase tracking-wide border-b border-gray-100 animate-in slide-in-from-top-2 duration-200">
+          <button
+            onClick={() => { setIsCriteriaModalOpen(true); setIsMobileMenuOpen(false); }}
+            className="text-left text-gray-800 hover:text-[#0096FF] transition-colors"
+          >
+            Criteria
+          </button>
+          <button
+            onClick={() => { setIsAlgorithmModalOpen(true); setIsMobileMenuOpen(false); }}
+            className="text-left text-gray-800 hover:text-[#0096FF] transition-colors"
+          >
+            Algorithm
+          </button>
+          <Link 
+            to="/simulation" 
+            target="_blank" 
+            className="text-left text-gray-800 hover:text-[#0096FF] transition-colors" 
+            onClick={() => setIsMobileMenuOpen(false)}
+          >
+            Simulation
+          </Link>
+          <a 
+            href="#footer" 
+            className="text-left text-gray-800 hover:text-[#0096FF] transition-colors" 
+            onClick={() => setIsMobileMenuOpen(false)}
+          >
+            About Us
+          </a>
+        </div>
+      )}
 
       <main className="relative flex flex-col lg:flex-row items-start justify-between min-h-screen">
         <div className="lg:w-1/2 px-4 sm:pl-10 lg:pl-20 sm:pr-12 pt-28 lg:pt-48 z-20 relative w-full">

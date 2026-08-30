@@ -100,11 +100,19 @@ export default function Results() {
   const handleSaveAsImage = async () => {
     if (!certificateRef.current) return;
     
+    const originalStyle = certificateRef.current.style.cssText;
+    
+    // Temporarily force desktop dimensions for the snapshot
+    certificateRef.current.style.width = '1024px';
+    certificateRef.current.style.maxWidth = '1024px';
+    certificateRef.current.style.margin = '0 auto';
+
     try {
       const canvas = await html2canvas(certificateRef.current, {
         scale: 2, 
         backgroundColor: '#ffffff', 
-        useCORS: true 
+        useCORS: true,
+        windowWidth: 1024 // Forces Tailwind's md/lg breakpoints
       });
       
       const image = canvas.toDataURL('image/png', 1.0);
@@ -115,6 +123,9 @@ export default function Results() {
     } catch (error) {
       console.error("Error generating certificate image:", error);
       alert("There was an error saving your certificate. Please try again.");
+    } finally {
+      // Restore original responsive state immediately
+      certificateRef.current.style.cssText = originalStyle;
     }
   };
 
