@@ -2,6 +2,10 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import sys
+
+# Ensure ffmpeg and ffprobe from /usr/bin are always in PATH for systemd/pydub
+os.environ["PATH"] += os.pathsep + "/usr/bin"
+
 import re
 import uuid
 import numpy as np
@@ -10,6 +14,10 @@ import librosa
 import soundfile as sf
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 from pydub import AudioSegment, effects
+
+# Force pydub to use the absolute path
+AudioSegment.converter = "/usr/bin/ffmpeg"
+
 from concurrent.futures import ThreadPoolExecutor
 
 import smtplib
