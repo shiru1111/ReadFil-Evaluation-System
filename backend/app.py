@@ -1268,6 +1268,8 @@ def evaluate_audio():
         print(f" DURATION       : {round(duration_seconds, 2)} seconds")
         print(f"{'='*70}\n")
 
+        trace_data, _, _, _ = get_simulation_trace(target_words, final_opt)
+
         evaluation_record = {
             "target_text":      target_text,
             "transcription":    fused_transcription,
@@ -1278,6 +1280,7 @@ def evaluate_audio():
             "duration_seconds": round(duration_seconds, 3),
             "model_used":       "WAV2VEC",
             "stutter_words":    detected_stutters,
+            "trace":            trace_data,
             "status":           "success"
         }
 

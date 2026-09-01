@@ -11,4 +11,5 @@ gunicorn==21.2.0
 faster-whisper
 soundfile
 numpy
-waitresspython-dotenv
+waitress
+python-dotenv
