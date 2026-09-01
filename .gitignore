@@ -6,3 +6,7 @@ temp_audio/
 node_modules/
 dist/
 *.log
+
+.env
+backend/.env
+

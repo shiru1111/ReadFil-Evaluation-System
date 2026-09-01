@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { expertPassages } from './data/passages'; // NEW IMPORT
+import { useLanguage } from './contexts/LanguageContext';
 
 export default function Expert() {
+  const { t } = useLanguage();
   const navigate = useNavigate();
 
   const [isTestReady, setIsTestReady] = useState(() => {
@@ -57,7 +59,7 @@ export default function Expert() {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 1);
+      const selected = shuffled.slice(0, 10);
       setTestPassages(selected);
       localStorage.setItem('expert_passages', JSON.stringify(selected));
     }
@@ -344,20 +346,20 @@ export default function Expert() {
       <nav className="w-full bg-white/80 backdrop-blur-md shadow-sm px-4 sm:px-10 lg:px-20 py-4 sm:py-5 flex justify-between items-center">
         <div className="text-xl sm:text-2xl font-black tracking-tight text-[#005FA3]">ReadFil</div>
         <a href="/" onClick={handleReturnHomeClick} className="font-semibold text-xs sm:text-sm uppercase tracking-wide hover:text-[#005FA3] transition-colors cursor-pointer">
-          Return Home
+          {t("nav.return_home")}
         </a>
       </nav>
 
       {!isTestReady ? (
         <main className="max-w-3xl mx-auto pt-20 sm:pt-32 px-4 sm:px-10 pb-12 sm:pb-20 text-center">
-          <h1 className="text-3xl sm:text-4xl font-extrabold mb-4 text-[#005FA3]">Expert Microphone Check</h1>
-          <p className="text-gray-600 text-base sm:text-lg mb-8 sm:mb-12">Final audio verification for the Expert Level.</p>
+          <h1 className="text-3xl sm:text-4xl font-extrabold mb-4 text-[#005FA3]">{t("eval.exp_mic_check")}</h1>
+          <p className="text-gray-600 text-base sm:text-lg mb-8 sm:mb-12">{t("eval.expert_verify")}</p>
 
           <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl border border-gray-100 flex flex-col items-center">
 
             {/* Visualizer Canvas */}
             <div className="w-full h-32 bg-gray-50 rounded-xl border border-gray-200 mb-8 overflow-hidden flex items-center justify-center">
-              {micStatus === 'idle' && <p className="text-gray-400 font-medium">Waveform will appear here</p>}
+              {micStatus === 'idle' && <p className="text-gray-400 font-medium">{t("eval.waveform_placeholder")}</p>}
               <canvas
                 ref={canvasRef}
                 width="600"
@@ -367,9 +369,9 @@ export default function Expert() {
             </div>
 
             <p className="text-xl font-medium text-gray-700 mb-8">
-              {micStatus === 'idle' ? 'Click the mic to record a test phrase.' :
-                micStatus === 'recording_test' ? 'Recording... Speak clearly, then click to stop.' :
-                  'Test complete! Listen to your playback.'}
+              {micStatus === 'idle' ? t("eval.click_mic") :
+                micStatus === 'recording_test' ? t("eval.recording_test") :
+                  t("eval.test_complete")}
             </p>
 
             {/* Test Controls */}
@@ -396,13 +398,13 @@ export default function Expert() {
                       onClick={() => { setMicStatus('idle'); setTestAudioUrl(null); }}
                       className="w-full sm:w-auto px-6 py-3 rounded-full font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors text-center"
                     >
-                      Retest Mic
+                      {t("eval.retest_mic")}
                     </button>
                     <button
                       onClick={startActualTest}
                       className="w-full sm:w-auto bg-[#005FA3] hover:bg-[#004A80] text-white font-bold py-3 px-8 rounded-full shadow-lg transition-all transform hover:-translate-y-1 text-center"
                     >
-                      Start Expert Evaluation
+                      {t("eval.start_eval")}
                     </button>
                   </div>
                 </div>
@@ -414,13 +416,13 @@ export default function Expert() {
       ) : (
         <main className="max-w-4xl mx-auto pt-12 sm:pt-20 px-4 sm:px-10 pb-12 sm:pb-20">
           <div className="text-center mb-8 sm:mb-12">
-            <h1 className="text-3xl sm:text-4xl font-extrabold mb-4 text-[#005FA3]">Expert Level</h1>
-            <p className="text-gray-600 text-base sm:text-lg">Focus on articulation and correct vowel pronunciation.</p>
+            <h1 className="text-3xl sm:text-4xl font-extrabold mb-4 text-[#005FA3]">{t("eval.exp_eval_title")}</h1>
+            <p className="text-gray-600 text-base sm:text-lg">{t("eval.focus_articulation")}</p>
           </div>
 
           <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl border border-gray-100 mb-6 sm:mb-10 relative">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl sm:text-2xl font-bold text-[#0096FF]">Reading Material</h2>
+              <h2 className="text-xl sm:text-2xl font-bold text-[#0096FF]">{t("eval.reading_material")}</h2>
               <span className="text-sm font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
                 {currentIndex + 1} / {testPassages.length}
               </span>
@@ -438,7 +440,7 @@ export default function Expert() {
                 "{testPassages[currentIndex]?.text}"
               </p>
               <span className={`mt-6 text-sm text-gray-400 italic transition-all duration-300 ${!isRecording && !hasRecorded && !isProcessing ? 'blur-sm select-none' : ''}`}>
-                Source: {testPassages[currentIndex]?.source}
+                {t("eval.source")} {testPassages[currentIndex]?.source}
               </span>
 
               {/* NEW: Live Timer */}
@@ -468,15 +470,15 @@ export default function Expert() {
               </button>
             )}
             <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-600' : isProcessing ? 'text-[#005FA3] animate-pulse' : isSilence ? 'text-red-600' : 'text-gray-500'}`}>
-              {isRecording ? 'Recording Expert Audio...' :
-                isProcessing ? 'Processing... Please wait.' :
-                  isSilence ? 'No speech detected. Please speak clearly into the microphone.' :
-                    (hasRecorded ? 'Recording graded and saved!' : 'Click to begin')}
+              {isRecording ? t("eval.recording_expert") :
+                isProcessing ? t("eval.processing") :
+                  isSilence ? t("eval.no_speech") :
+                    (hasRecorded ? t("eval.graded") : t("eval.click_begin_alt"))}
             </p>
 
             {hasRecorded && !isProcessing && (
               <button onClick={nextPassage} className="mt-8 bg-[#005FA3] text-white font-bold py-4 px-10 rounded-full shadow-lg hover:bg-[#004A80] transition-all transform hover:-translate-y-1">
-                {currentIndex < testPassages.length - 1 ? 'Next Passage \u2192' : 'Complete Evaluation \u2192'}
+                {currentIndex < testPassages.length - 1 ? t("eval.next_passage_alt") : t("eval.finish_test_alt")}
               </button>
             )}
           </div>
@@ -496,9 +498,9 @@ export default function Expert() {
               <div className="flex justify-between items-start mb-2">
                 <div>
                   <h3 className="text-2xl font-bold text-black mb-1">
-                    Return Home
+                    {t("return_modal.title")}
                   </h3>
-                  <p className="text-sm text-gray-500">Are you sure you want to leave the test?</p>
+                  <p className="text-sm text-gray-500">{t("return_modal.leave_test")}</p>
                 </div>
                 <button
                   onClick={() => setShowConfirmModal(false)}
@@ -513,7 +515,7 @@ export default function Expert() {
 
             <div className="px-6 sm:px-8 pb-6 sm:pb-8 text-left">
               <p className="text-gray-700 font-medium mb-8">
-                Your current progress will be reset and you will have to start over.
+                {t("return_modal.reset_progress")}
               </p>
 
               <div className="flex gap-4">
@@ -522,14 +524,14 @@ export default function Expert() {
                   onClick={() => setShowConfirmModal(false)}
                   className="w-1/2 px-6 py-3 rounded-lg font-bold text-gray-700 bg-[#F3F4F6] hover:bg-gray-200 transition-colors"
                 >
-                  Cancel
+                  {t("return_modal.cancel")}
                 </button>
                 <button
                   type="button"
                   onClick={confirmReturnHome}
                   className="w-1/2 px-6 py-3 rounded-lg font-bold text-white bg-black hover:bg-gray-800 transition-all shadow-md"
                 >
-                  Proceed to Leave
+                  {t("return_modal.proceed_leave")}
                 </button>
               </div>
             </div>

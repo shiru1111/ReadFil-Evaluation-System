@@ -3,6 +3,7 @@ from flask_cors import CORS
 import os
 import sys
 import re
+import uuid
 import numpy as np
 import torch
 import librosa
@@ -10,6 +11,15 @@ import soundfile as sf
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 from pydub import AudioSegment, effects
 from concurrent.futures import ThreadPoolExecutor
+
+import smtplib
+import base64
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class SafeStream:
     def __init__(self, original_stream):
@@ -50,6 +60,31 @@ CORS(app)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_audio')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+import time
+import threading
+
+def cleanup_temp_audio_daemon():
+    while True:
+        try:
+            now = time.time()
+            for filename in os.listdir(UPLOAD_FOLDER):
+                filepath = os.path.join(UPLOAD_FOLDER, filename)
+                if os.path.isfile(filepath):
+                    # Check if older than 5 minutes (300 seconds)
+                    if now - os.path.getmtime(filepath) > 300:
+                        try:
+                            os.remove(filepath)
+                            print(f"[CLEANUP] Deleted old temp file: {filename}")
+                        except:
+                            pass
+        except Exception as e:
+            print(f"[CLEANUP ERROR] {e}")
+        time.sleep(60)
+
+# Start background cleanup daemon
+cleanup_thread = threading.Thread(target=cleanup_temp_audio_daemon, daemon=True)
+cleanup_thread.start()
 
 _executor = ThreadPoolExecutor(max_workers=2)
 
@@ -523,12 +558,6 @@ def is_correct_pronunciation(target, spoken):
     # mismatches like o↔a in 5-char words (1/5=0.20) from passing.
     if dist <= 0.15 and abs(len(target) - len(spoken)) <= 1:
         return True
-        
-    # Forgiving threshold for long words (often victims of vowel-dropping by STT)
-    # e.g., mapagtitibay -> mapagttbay
-    if len(target) >= 7 and dist <= 0.30 and abs(len(target) - len(spoken)) <= 3:
-        if target[:3].lower() == spoken[:3].lower():
-            return True
             
     return False
 
@@ -808,6 +837,18 @@ def has_vowel_shift(word1, word2):
                     
     return has_v_shift[m][n]
 
+def has_omission(target, spoken):
+    if not target or not spoken:
+        return False
+    t_norm = phonetic_normalize(target)
+    s_norm = phonetic_normalize(spoken)
+    
+    if len(s_norm) < len(t_norm):
+        it = iter(t_norm)
+        if all(c in it for c in s_norm):
+            return True
+    return False
+
 def is_pure_vowel_shift(word1, word2):
     if len(word1) != len(word2):
         return False
@@ -824,50 +865,33 @@ def is_pure_vowel_shift(word1, word2):
 
 
 
+import re
+
+def normalize_vowels(word):
+    word = word.lower()
+    word = word.replace('o', 'u')
+    word = word.replace('e', 'i')
+    return word
+
+def reduce_word(word):
+    prev = ''
+    while word != prev:
+        prev = word
+        for length in range(4, 0, -1):
+            pattern = r'(.{' + str(length) + r'})(\1)+'
+            word = re.sub(pattern, r'\1', word)
+    return word
+
 def is_stutter(target, spoken):
     if not target or not spoken:
         return False
-    t_norm = phonetic_normalize(target).lower()
-    s_norm = phonetic_normalize(spoken).lower()
+    t_norm = normalize_vowels(phonetic_normalize(target))
+    s_norm = normalize_vowels(phonetic_normalize(spoken))
     
     if len(s_norm) <= len(t_norm) or s_norm == t_norm:
         return False
-
-    def is_repeated_syllable(chunk, base_word):
-        # If the chunk is in the base word, it's a direct stutter (e.g. 'ba' in 'bata')
-        if chunk in base_word:
-            return True
-        # If it's a repeated syllable like 'baba' for 'bata'
-        # We check if chunk is just a smaller substring repeated
-        for i in range(1, len(chunk) // 2 + 1):
-            if len(chunk) % i == 0:
-                sub = chunk[:i]
-                if sub * (len(chunk) // i) == chunk and sub in base_word:
-                    return True
-        return False
         
-    # Check for prefix stutter (e.g., 'ba' + 'bata' -> 'babata', 'baba' + 'bata')
-    if s_norm.endswith(t_norm):
-        prefix = s_norm[:-len(t_norm)]
-        if is_repeated_syllable(prefix, t_norm):
-            return True
-            
-    # Check for suffix stutter (e.g., 'bata' + 'ta' -> 'batata')
-    if s_norm.startswith(t_norm):
-        suffix = s_norm[len(t_norm):]
-        if is_repeated_syllable(suffix, t_norm):
-            return True
-
-    # Check for internal stutter (e.g., 'mapagtititibay' -> 'mapagtitibay')
-    diff_len = len(s_norm) - len(t_norm)
-    if diff_len > 0:
-        for i in range(1, len(s_norm) - diff_len):
-            chunk = s_norm[i:i+diff_len]
-            remaining = s_norm[:i] + s_norm[i+diff_len:]
-            if remaining == t_norm and is_repeated_syllable(chunk, t_norm):
-                return True
-                
-    return False
+    return reduce_word(s_norm) == reduce_word(t_norm)
 
 def detect_stutters(final_opt, target_words):
     stutter_words = []
@@ -920,14 +944,14 @@ def merge_syllable_hallucinations_and_stutters(spoken_words, target_words):
         if spoken_to_target.get(idx) is not None:
             target_idx = spoken_to_target[idx]
             target_word = target_words[target_idx]
-            target_chars = set(phonetic_normalize(target_word))
+            target_chars = set(normalize_vowels(phonetic_normalize(target_word)))
             
             # Forward check
             j = idx + 1
             while j < n and spoken_to_target.get(j) is None:
                 adj_word = merged[j]
-                adj_chars = set(phonetic_normalize(adj_word))
-                if adj_chars.issubset(target_chars) and len(adj_word) <= 4:
+                adj_chars = set(normalize_vowels(phonetic_normalize(adj_word)))
+                if adj_chars.issubset(target_chars) and len(adj_word) <= 5:
                     merged[idx] = merged[idx] + adj_word
                     to_remove.add(j)
                     j += 1
@@ -938,8 +962,8 @@ def merge_syllable_hallucinations_and_stutters(spoken_words, target_words):
             j = idx - 1
             while j >= 0 and spoken_to_target.get(j) is None and j not in to_remove:
                 adj_word = merged[j]
-                adj_chars = set(phonetic_normalize(adj_word))
-                if adj_chars.issubset(target_chars) and len(adj_word) <= 4:
+                adj_chars = set(normalize_vowels(phonetic_normalize(adj_word)))
+                if adj_chars.issubset(target_chars) and len(adj_word) <= 5:
                     merged[idx] = adj_word + merged[idx]
                     to_remove.add(j)
                     j -= 1
@@ -1026,8 +1050,9 @@ def iq_adjust_wav2vec2(target_words, raw_transcription):
         
         is_stutter_case = is_stutter(t_word.lower(), s_word.lower())
         is_vowel_shift_case = has_vowel_shift(t_word.lower(), s_word.lower())
+        is_omission_case = has_omission(t_word.lower(), s_word.lower())
         
-        if is_stutter_case or is_vowel_shift_case:
+        if is_stutter_case or is_vowel_shift_case or is_omission_case:
             adjusted_words.append(s_word)
         elif raw_dist <= max_dist or is_correct_pronunciation(t_word, s_word):
             adjusted_words.append(t_word)
@@ -1111,9 +1136,10 @@ def evaluate_audio():
     if audio_file.filename == '':
         return jsonify({"error": "Empty audio file received"}), 400
 
-    webm_path      = os.path.join(UPLOAD_FOLDER, "latest_recording.webm")
-    wav_raw_path   = os.path.join(UPLOAD_FOLDER, "latest_recording_raw.wav")
-    wav_clean_path = os.path.join(UPLOAD_FOLDER, "latest_recording_clean.wav")
+    req_id = str(uuid.uuid4())
+    webm_path      = os.path.join(UPLOAD_FOLDER, f"{req_id}.webm")
+    wav_raw_path   = os.path.join(UPLOAD_FOLDER, f"{req_id}_raw.wav")
+    wav_clean_path = os.path.join(UPLOAD_FOLDER, f"{req_id}_clean.wav")
     audio_file.save(webm_path)
     import sys, traceback as _tb
 
@@ -1125,7 +1151,8 @@ def evaluate_audio():
         print(f"[DEBUG] preprocess OK, duration={duration_seconds}")
 
         wav2vec_raw = transcribe_wav2vec(wav_clean_path)
-        wav2vec_2_raw = transcribe_wav2vec(wav_clean_path)
+        # Fix redundant duplicate ML inference call
+        wav2vec_2_raw = wav2vec_raw
 
         level = request.form.get('level', '')
         if level == 'Expert':
@@ -1156,7 +1183,7 @@ def evaluate_audio():
         fused_spoken_to_target_1, target_to_spoken_1 = get_alignment_mapping(target_words, cleaned_opt)
         fused_spoken_to_target_2, target_to_spoken_2 = get_alignment_mapping(target_words, cleaned_opt_2)
         
-        # Build the final sequence based on wav2vec 1's physical sequence, but upgrading words word-by-word
+        # Build the final sequence based on wav2vec 1's physical sequence (preserves insertions/deletions/chaos)
         final_opt = list(cleaned_opt)
         
         for idx_spoken, idx_target in fused_spoken_to_target_1.items():
@@ -1171,41 +1198,42 @@ def evaluate_audio():
                 w1_lower = w1.lower()
                 w2_lower = w2.lower() if w2 else ""
                 
-                # 1. Check for stutters in either model (priority: do not tolerate/hide stutters)
-                if is_stutter(t_lower, w1_lower):
-                    final_opt[idx_spoken] = w1
-                    continue
-                if w2 and is_stutter(t_lower, w2_lower):
-                    final_opt[idx_spoken] = w2
-                    continue
-                    
-                # 2. Check for vowel shifts in either model (priority: do not tolerate/hide vowel shifts)
-                if has_vowel_shift(t_lower, w1_lower):
-                    final_opt[idx_spoken] = w1
-                    continue
-                if w2 and has_vowel_shift(t_lower, w2_lower):
-                    final_opt[idx_spoken] = w2
-                    continue
-                    
-                # 3. If neither is a stutter/vowel shift, check if either is a perfect phonetic match
-                w1_correct = is_correct_pronunciation(target_word, w1)
-                w2_correct = is_correct_pronunciation(target_word, w2) if w2 else False
+                w1_exact = (phonetic_normalize(t_lower) == phonetic_normalize(w1_lower))
+                w1_is_vowel = is_pure_vowel_shift(t_lower, w1_lower)
+                w2_is_vowel = is_pure_vowel_shift(t_lower, w2_lower) if w2 else False
                 
-                if w1_correct and not w2_correct:
-                    final_opt[idx_spoken] = target_word
-                elif w2_correct and not w1_correct:
-                    final_opt[idx_spoken] = target_word
-                elif w1_correct and w2_correct:
-                    final_opt[idx_spoken] = target_word
-                else:
-                    # 4. Both are errors (not stutters/vowel shifts). Pick the one with the closer edit distance.
-                    dist1 = modified_levenshtein(t_lower, w1_lower)
-                    dist2 = modified_levenshtein(t_lower, w2_lower) if w2 else float('inf')
+                # Helper to calculate exact character edit distance
+                def calc_ed(s1, s2):
+                    if len(s1) < len(s2): return calc_ed(s2, s1)
+                    if len(s2) == 0: return len(s1)
+                    prev = list(range(len(s2) + 1))
+                    for i, c1 in enumerate(s1):
+                        curr = [i + 1]
+                        for j, c2 in enumerate(s2):
+                            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (0 if c1 == c2 else 1)))
+                        prev = curr
+                    return prev[-1]
                     
-                    if dist2 < dist1 and w2:
-                        final_opt[idx_spoken] = w2
-                    else:
-                        final_opt[idx_spoken] = w1
+                w1_is_one_letter_error = (calc_ed(t_lower, w1_lower) == 1 and not w1_is_vowel)
+                
+                # User constraint: ALWAYS get deletion/insertion/substitution from wav2vec 1.
+                # In wav2vec 2, ONLY get the vowel shifting. Check strictly letter by letter.
+                
+                if not w1_exact and not w1_is_vowel and not w1_is_one_letter_error:
+                    # w1 has a structural error >= 2 letters (insertion, deletion, stutter, chaos). NEVER hide it.
+                    final_opt[idx_spoken] = w1
+                elif w1_is_one_letter_error and w2:
+                    # Forgive exactly 1-letter STT errors (like 'loog' instead of 'loob') and trust w2.
+                    final_opt[idx_spoken] = w2
+                elif w2 and w2_is_vowel:
+                    # w2 caught a pure vowel shift.
+                    final_opt[idx_spoken] = w2
+                elif w1_is_vowel:
+                    # w1 caught a pure vowel shift.
+                    final_opt[idx_spoken] = w1
+                else:
+                    # w1 is perfectly correct (or functionally equivalent via phonetic normalization).
+                    final_opt[idx_spoken] = target_word
 
         fused_transcription = " ".join(final_opt)
         # Match original casing, hyphens, and apostrophes from the target reference
@@ -1264,6 +1292,11 @@ def evaluate_audio():
         print(f"Error during processing: {e}")
         return jsonify({"error": str(e)}), 500
 
+    finally:
+        # Audio files are now kept in temp_audio for 5 minutes for debugging
+        # and are automatically cleaned up by the cleanup_temp_audio_daemon thread.
+        pass
+
 def get_simulation_trace(target_words, spoken_words):
     MATCH    =  5.0
     MISMATCH = -2.0
@@ -1307,12 +1340,16 @@ def get_simulation_trace(target_words, spoken_words):
             t_word = target_words[i - 1]
             s_word = spoken_words[j - 1]
             dist = modified_levenshtein(t_word, s_word)
+            w1_norm = phonetic_normalize(t_word)
+            w2_norm = phonetic_normalize(s_word)
+            max_len = max(len(w1_norm), len(w2_norm))
+            raw_dist = dist * max_len
             is_correct = is_correct_pronunciation(t_word, s_word)
             trace.append({
                 "type": "match" if is_correct else "substitution",
                 "target": t_word,
                 "spoken": s_word,
-                "distance": round(dist, 2),
+                "distance": round(raw_dist, 1),
                 "is_correct": is_correct
             })
             i -= 1; j -= 1
@@ -1440,5 +1477,71 @@ def simulate():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# (The main block will be removed from here and moved to the end)
+
+@app.route('/api/email', methods=['POST'])
+def send_certificate_email():
+    try:
+        data = request.json
+        recipient_email = data.get('email')
+        name = data.get('name', 'User')
+        level = data.get('level', 'Evaluation')
+        score = data.get('score', 'N/A')
+        image_data = data.get('image_data')
+
+        if not recipient_email or not image_data:
+            return jsonify({"error": "Missing email or image data"}), 400
+
+        sender_email = os.getenv("EMAIL_SENDER")
+        sender_password = os.getenv("EMAIL_APP_PASSWORD")
+
+        if not sender_email or not sender_password:
+            return jsonify({"error": "Server email credentials not configured in .env"}), 500
+
+        # Decode base64 image
+        # image_data looks like "data:image/png;base64,iVBORw0KGgo..."
+        if "," in image_data:
+            base64_str = image_data.split(",")[1]
+        else:
+            base64_str = image_data
+
+        img_bytes = base64.b64decode(base64_str)
+
+        # Setup email
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = recipient_email
+        msg['Subject'] = f"Your ReadFil Tagalog Reading Certificate - {level} Level"
+
+        body = f"""
+        <html>
+            <body>
+                <h2>Congratulations, {name}!</h2>
+                <p>Attached is your official certificate for completing the <strong>{level} Level</strong> evaluation.</p>
+                <p>Your composite score is: <strong>{score}</strong>.</p>
+                <p>Thank you for using ReadFil!</p>
+            </body>
+        </html>
+        """
+        msg.attach(MIMEText(body, 'html'))
+
+        # Attach image
+        image = MIMEImage(img_bytes, name="ReadFil_Certificate.png")
+        msg.attach(image)
+
+        # Send via Gmail SMTP
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+
+        return jsonify({"message": "Email sent successfully!"}), 200
+
+    except Exception as e:
+        print(f"[ERROR] Failed to send email: {e}")
+        return jsonify({"error": str(e)}), 500
 if __name__ == '__main__':
-    app.run(debug=True, use_reloader=False, port=5000)
+    print("Starting Flask server...")
+    app.run(host='0.0.0.0', port=5000, debug=True)
+

@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { beginnerPassages } from './data/passages'; // NEW IMPORT
+import { useLanguage } from './contexts/LanguageContext';
 
 export default function Beginner() {
+  const { t } = useLanguage();
   const navigate = useNavigate();
 
   const [isTestReady, setIsTestReady] = useState(() => {
@@ -57,7 +59,7 @@ export default function Beginner() {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 1);
+      const selected = shuffled.slice(0, 25);
       setTestPassages(selected);
       localStorage.setItem('beginner_passages', JSON.stringify(selected));
     }
@@ -334,19 +336,19 @@ export default function Beginner() {
       <nav className="w-full bg-white/80 backdrop-blur-md shadow-sm px-4 sm:px-10 lg:px-20 py-4 sm:py-5 flex justify-between items-center">
         <div className="text-xl sm:text-2xl font-black tracking-tight text-[#0096FF]">ReadFil</div>
         <a href="/" onClick={handleReturnHomeClick} className="font-semibold text-xs sm:text-sm uppercase tracking-wide hover:text-[#0096FF] transition-colors cursor-pointer">
-          Return Home
+          {t("nav.return_home")}
         </a>
       </nav>
 
       {!isTestReady ? (
         <main className="max-w-3xl mx-auto pt-20 sm:pt-32 px-4 sm:px-10 pb-12 sm:pb-20 text-center">
-          <h1 className="text-3xl sm:text-4xl font-extrabold mb-4">Microphone Check</h1>
-          <p className="text-gray-600 text-base sm:text-lg mb-8 sm:mb-12">Let us verify your audio quality before we begin.</p>
+          <h1 className="text-3xl sm:text-4xl font-extrabold mb-4">{t("eval.mic_check")}</h1>
+          <p className="text-gray-600 text-base sm:text-lg mb-8 sm:mb-12">{t("eval.verify_audio")}</p>
 
           <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl border border-gray-100 flex flex-col items-center">
 
             <div className="w-full h-32 bg-gray-50 rounded-xl border border-gray-200 mb-8 overflow-hidden flex items-center justify-center">
-              {micStatus === 'idle' && <p className="text-gray-400 font-medium">Waveform will appear here</p>}
+              {micStatus === 'idle' && <p className="text-gray-400 font-medium">{t("eval.waveform_placeholder")}</p>}
               <canvas
                 ref={canvasRef}
                 width="600"
@@ -356,9 +358,9 @@ export default function Beginner() {
             </div>
 
             <p className="text-xl font-medium text-gray-700 mb-8">
-              {micStatus === 'idle' ? 'Click the microphone to record a test phrase.' :
-                micStatus === 'recording_test' ? 'Recording... Speak clearly, then click to stop.' :
-                  'Test complete! Listen to your playback.'}
+              {micStatus === 'idle' ? t("eval.click_mic") :
+                micStatus === 'recording_test' ? t("eval.recording_test") :
+                  t("eval.test_complete")}
             </p>
 
             <div className="flex flex-col items-center gap-6">
@@ -384,13 +386,13 @@ export default function Beginner() {
                       onClick={() => { setMicStatus('idle'); setTestAudioUrl(null); }}
                       className="w-full sm:w-auto px-6 py-3 rounded-full font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors text-center"
                     >
-                      Retest Mic
+                      {t("eval.retest_mic")}
                     </button>
                     <button
                       onClick={startActualTest}
                       className="w-full sm:w-auto bg-[#0096FF] hover:bg-[#8ACEFF] text-white font-bold py-3 px-8 rounded-full shadow-lg transition-all transform hover:-translate-y-1 text-center"
                     >
-                      Proceed to Evaluation
+                      {t("eval.proceed_eval")}
                     </button>
                   </div>
                 </div>
@@ -402,13 +404,13 @@ export default function Beginner() {
       ) : (
         <main className="max-w-4xl mx-auto pt-12 sm:pt-20 px-4 sm:px-10 pb-12 sm:pb-20">
           <div className="text-center mb-8 sm:mb-12">
-            <h1 className="text-3xl sm:text-4xl font-extrabold mb-4">Beginner Level Evaluation</h1>
-            <p className="text-gray-600 text-base sm:text-lg">Read the text below clearly and naturally.</p>
+            <h1 className="text-3xl sm:text-4xl font-extrabold mb-4">{t("eval.beg_eval_title")}</h1>
+            <p className="text-gray-600 text-base sm:text-lg">{t("eval.read_text")}</p>
           </div>
 
           <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl border border-gray-100 mb-6 sm:mb-10 relative">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl sm:text-2xl font-bold text-[#0096FF]">Reading Material</h2>
+              <h2 className="text-xl sm:text-2xl font-bold text-[#0096FF]">{t("eval.reading_material")}</h2>
               <span className="text-sm font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
                 {currentIndex + 1} / {testPassages.length}
               </span>
@@ -426,7 +428,7 @@ export default function Beginner() {
                 "{testPassages[currentIndex]?.text}"
               </p>
               <span className={`mt-6 text-sm text-gray-400 italic transition-all duration-300 ${!isRecording && !hasRecorded && !isProcessing ? 'blur-sm select-none' : ''}`}>
-                Source: {testPassages[currentIndex]?.source}
+                {t("eval.source")} {testPassages[currentIndex]?.source}
               </span>
 
               <div className="absolute bottom-4 right-6 flex items-center gap-2 text-gray-600 font-mono font-bold bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
@@ -456,10 +458,10 @@ export default function Beginner() {
             )}
 
             <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-500' : isProcessing ? 'text-[#0096FF] animate-pulse' : isSilence ? 'text-red-600' : 'text-gray-500'}`}>
-              {isRecording ? 'Recording... Click to stop.' :
-                isProcessing ? 'Processing... Please wait.' :
-                  isSilence ? 'No speech detected. Please speak clearly into the microphone.' :
-                    (hasRecorded ? 'Recording graded and saved!' : 'Click to start recording')}
+              {isRecording ? t("eval.recording") :
+                isProcessing ? t("eval.processing") :
+                  isSilence ? t("eval.no_speech") :
+                    (hasRecorded ? t("eval.graded") : t("eval.click_begin"))}
             </p>
 
             {hasRecorded && !isProcessing && (
@@ -467,7 +469,7 @@ export default function Beginner() {
                 onClick={nextPassage}
                 className="mt-8 bg-[#0096FF] text-white font-bold py-4 px-10 rounded-full shadow-lg hover:bg-blue-600 transition-all transform hover:-translate-y-1"
               >
-                {currentIndex < testPassages.length - 1 ? 'Proceed to Next Passage \u2192' : 'Finish Test \u2192'}
+                {currentIndex < testPassages.length - 1 ? t("eval.next_passage") : t("eval.finish_test")}
               </button>
             )}
           </div>
@@ -480,18 +482,18 @@ export default function Beginner() {
           <div className="relative bg-white w-full max-w-lg rounded-2xl sm:rounded-[2rem] shadow-2xl overflow-hidden z-10 animate-in fade-in zoom-in duration-200">
             <div className="p-6 sm:p-8 pb-4 sm:pb-6 border-b border-gray-100">
               <div className="flex justify-between items-center mb-2">
-                <h3 className="text-2xl sm:text-3xl font-extrabold text-black">Return Home</h3>
+                <h3 className="text-2xl sm:text-3xl font-extrabold text-black">{t("return_modal.title")}</h3>
                 <button onClick={() => setShowConfirmModal(false)} className="text-gray-400 hover:text-gray-800 transition-colors">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
               </div>
-              <p className="text-sm sm:text-base text-gray-500">Are you sure you want to leave?</p>
+              <p className="text-sm sm:text-base text-gray-500">{t("return_modal.leave_test_alt")}</p>
             </div>
             <div className="p-6 sm:p-8 text-center">
-              <p className="text-base sm:text-lg text-gray-700 font-medium mb-6 sm:mb-8">Your current test progress will be reset.</p>
+              <p className="text-base sm:text-lg text-gray-700 font-medium mb-6 sm:mb-8">{t("return_modal.reset_progress_alt")}</p>
               <div className="flex gap-4">
-                <button type="button" onClick={() => setShowConfirmModal(false)} className="w-1/2 px-6 py-4 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors">Cancel</button>
-                <button type="button" onClick={confirmReturnHome} className="w-1/2 px-6 py-4 rounded-xl font-bold text-white bg-black hover:bg-gray-800 transition-all transform hover:-translate-y-1 shadow-lg">Proceed</button>
+                <button type="button" onClick={() => setShowConfirmModal(false)} className="w-1/2 px-6 py-4 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors">{t("return_modal.cancel")}</button>
+                <button type="button" onClick={confirmReturnHome} className="w-1/2 px-6 py-4 rounded-xl font-bold text-white bg-black hover:bg-gray-800 transition-all transform hover:-translate-y-1 shadow-lg">{t("return_modal.proceed")}</button>
               </div>
             </div>
           </div>

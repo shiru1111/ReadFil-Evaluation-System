@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { moderatePassages } from './data/passages'; // NEW IMPORT
+import { useLanguage } from './contexts/LanguageContext';
 
 export default function Moderate() {
+  const { t } = useLanguage();
   const navigate = useNavigate();
 
   const [isTestReady, setIsTestReady] = useState(() => {
@@ -57,7 +59,7 @@ export default function Moderate() {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 1);
+      const selected = shuffled.slice(0, 15);
       setTestPassages(selected);
       localStorage.setItem('moderate_passages', JSON.stringify(selected));
     }
@@ -350,20 +352,20 @@ export default function Moderate() {
       <nav className="w-full bg-white/80 backdrop-blur-md shadow-sm px-4 sm:px-10 lg:px-20 py-4 sm:py-5 flex justify-between items-center">
         <div className="text-xl sm:text-2xl font-black tracking-tight text-[#0096FF]">ReadFil</div>
         <a href="/" onClick={handleReturnHomeClick} className="font-semibold text-xs sm:text-sm uppercase tracking-wide hover:text-[#0096FF] transition-colors cursor-pointer">
-          Return Home
+          {t("nav.return_home")}
         </a>
       </nav>
 
       {!isTestReady ? (
         <main className="max-w-3xl mx-auto pt-20 sm:pt-32 px-4 sm:px-10 pb-12 sm:pb-20 text-center">
-          <h1 className="text-3xl sm:text-4xl font-extrabold mb-4 text-[#0096FF]">Moderate Microphone Check</h1>
-          <p className="text-gray-600 text-base sm:text-lg mb-8 sm:mb-12">Let us verify your audio quality before we begin.</p>
+          <h1 className="text-3xl sm:text-4xl font-extrabold mb-4 text-[#0096FF]">{t("eval.mod_mic_check")}</h1>
+          <p className="text-gray-600 text-base sm:text-lg mb-8 sm:mb-12">{t("eval.verify_audio")}</p>
 
           <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl border border-gray-100 flex flex-col items-center">
 
             {/* Visualizer Canvas */}
             <div className="w-full h-32 bg-gray-50 rounded-xl border border-gray-200 mb-8 overflow-hidden flex items-center justify-center">
-              {micStatus === 'idle' && <p className="text-gray-400 font-medium">Waveform will appear here</p>}
+              {micStatus === 'idle' && <p className="text-gray-400 font-medium">{t("eval.waveform_placeholder")}</p>}
               <canvas
                 ref={canvasRef}
                 width="600"
@@ -373,9 +375,9 @@ export default function Moderate() {
             </div>
 
             <p className="text-xl font-medium text-gray-700 mb-8">
-              {micStatus === 'idle' ? 'Click the microphone to record a test phrase.' :
-                micStatus === 'recording_test' ? 'Recording... Speak clearly, then click to stop.' :
-                  'Test complete! Listen to your playback.'}
+              {micStatus === 'idle' ? t("eval.click_mic") :
+                micStatus === 'recording_test' ? t("eval.recording_test") :
+                  t("eval.test_complete")}
             </p>
 
             {/* Test Controls */}
@@ -402,13 +404,13 @@ export default function Moderate() {
                       onClick={() => { setMicStatus('idle'); setTestAudioUrl(null); }}
                       className="w-full sm:w-auto px-6 py-3 rounded-full font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors text-center"
                     >
-                      Retest Mic
+                      {t("eval.retest_mic")}
                     </button>
                     <button
                       onClick={startActualTest}
                       className="w-full sm:w-auto bg-[#0096FF] hover:bg-blue-600 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-all transform hover:-translate-y-1 text-center"
                     >
-                      Proceed to Evaluation
+                      {t("eval.proceed_eval")}
                     </button>
                   </div>
                 </div>
@@ -420,12 +422,12 @@ export default function Moderate() {
       ) : (
         <main className="max-w-4xl mx-auto pt-12 sm:pt-20 px-4 sm:px-10 pb-12 sm:pb-20">
           <div className="text-center mb-8 sm:mb-12">
-            <h1 className="text-3xl sm:text-4xl font-extrabold mb-4 text-[#0096FF]">Moderate Evaluation</h1>
+            <h1 className="text-3xl sm:text-4xl font-extrabold mb-4 text-[#0096FF]">{t("eval.mod_eval_title")}</h1>
           </div>
 
           <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl border border-gray-100 mb-6 sm:mb-10 relative">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl sm:text-2xl font-bold text-[#0096FF]">Reading Material</h2>
+              <h2 className="text-xl sm:text-2xl font-bold text-[#0096FF]">{t("eval.reading_material")}</h2>
               <span className="text-sm font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
                 {currentIndex + 1} / {testPassages.length}
               </span>
@@ -443,7 +445,7 @@ export default function Moderate() {
                 "{testPassages[currentIndex]?.text}"
               </p>
               <span className={`mt-6 text-sm text-gray-400 italic transition-all duration-300 ${!isRecording && !hasRecorded && !isProcessing ? 'blur-sm select-none' : ''}`}>
-                Source: {testPassages[currentIndex]?.source}
+                {t("eval.source")} {testPassages[currentIndex]?.source}
               </span>
 
               {/* NEW: Live Timer */}
@@ -472,15 +474,15 @@ export default function Moderate() {
               </button>
             )}
             <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-600' : isProcessing ? 'text-[#005FA3] animate-pulse' : isSilence ? 'text-red-600' : 'text-gray-500'}`}>
-              {isRecording ? 'Recording Expert Audio...' :
-                isProcessing ? 'Processing... Please wait.' :
-                  isSilence ? 'No speech detected. Please speak clearly into the microphone.' :
-                    (hasRecorded ? 'Recording graded and saved!' : 'Click to begin')}
+              {isRecording ? t("eval.recording_expert") :
+                isProcessing ? t("eval.processing") :
+                  isSilence ? t("eval.no_speech") :
+                    (hasRecorded ? t("eval.graded") : t("eval.click_begin_alt"))}
             </p>
 
             {hasRecorded && !isProcessing && (
               <button onClick={nextPassage} className="mt-8 bg-[#005FA3] text-white font-bold py-4 px-10 rounded-full shadow-lg hover:bg-[#004A80] transition-all transform hover:-translate-y-1">
-                {currentIndex < testPassages.length - 1 ? 'Next Passage \u2192' : 'Complete Evaluation \u2192'}
+                {currentIndex < testPassages.length - 1 ? t("eval.next_passage_alt") : t("eval.finish_test_alt")}
               </button>
             )}
           </div>
@@ -499,7 +501,7 @@ export default function Moderate() {
             <div className="p-6 sm:p-8 pb-4 sm:pb-6 border-b border-gray-100">
               <div className="flex justify-between items-center mb-2">
                 <h3 className="text-2xl sm:text-3xl font-extrabold text-[#0096FF]">
-                  Return Home
+                  {t("return_modal.title")}
                 </h3>
                 <button
                   onClick={() => setShowConfirmModal(false)}
@@ -510,12 +512,12 @@ export default function Moderate() {
                   </svg>
                 </button>
               </div>
-              <p className="text-sm sm:text-base text-gray-500">Are you sure you want to leave?</p>
+              <p className="text-sm sm:text-base text-gray-500">{t("return_modal.leave_test_alt")}</p>
             </div>
 
             <div className="p-6 sm:p-8 text-center">
               <p className="text-base sm:text-lg text-gray-700 font-medium mb-6 sm:mb-8">
-                Your current test progress will be reset.
+                {t("return_modal.reset_progress_alt")}
               </p>
               <div className="flex gap-4">
                 <button
@@ -523,14 +525,14 @@ export default function Moderate() {
                   onClick={() => setShowConfirmModal(false)}
                   className="w-1/2 px-6 py-4 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
                 >
-                  Cancel
+                  {t("return_modal.cancel")}
                 </button>
                 <button
                   type="button"
                   onClick={confirmReturnHome}
                   className="w-1/2 px-6 py-4 rounded-xl font-bold text-white bg-[#0096FF] hover:bg-blue-600 transition-all transform hover:-translate-y-1 shadow-lg"
                 >
-                  Proceed
+                  {t("return_modal.proceed")}
                 </button>
               </div>
             </div>

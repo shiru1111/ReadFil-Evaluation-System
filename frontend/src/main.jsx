@@ -11,10 +11,12 @@ import ScrollToTop from './ScrollToTop.jsx' // <-- 1. Imported here
 import Results from './Results.jsx'
 import Simulation from './Simulation.jsx'
 import './index.css'
+import { LanguageProvider } from './contexts/LanguageContext'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <BrowserRouter>
+    <LanguageProvider>
+      <BrowserRouter>
       <ScrollToTop /> {/* <-- 2. Added here right above Routes */}
       <Routes>
         <Route path="/" element={<App />} />
@@ -27,5 +29,6 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/simulation" element={<Simulation />} />
       </Routes>
     </BrowserRouter>
+    </LanguageProvider>
   </React.StrictMode>,
 )
