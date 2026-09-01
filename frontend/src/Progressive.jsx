@@ -247,7 +247,7 @@ export default function Progressive() {
     formData.append('target_text', targetText);
 
     try {
-      const response = await fetch('/api/evaluate', {
+      const response = await fetch((import.meta.env.VITE_API_URL || '') + '/api/evaluate', {
         method: 'POST',
         body: formData,
       });

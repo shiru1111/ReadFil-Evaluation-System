@@ -10,6 +10,7 @@ import TermsAndConditions from './TermsAndConditions.jsx';
 import ScrollToTop from './ScrollToTop.jsx' // <-- 1. Imported here
 import Results from './Results.jsx'
 import Simulation from './Simulation.jsx'
+import AdminMode from './AdminMode.jsx'
 import './index.css'
 import { LanguageProvider } from './contexts/LanguageContext'
 
@@ -27,6 +28,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/terms" element={<TermsAndConditions />} />
         <Route path="/results" element={<Results />} />
         <Route path="/simulation" element={<Simulation />} />
+        <Route path="/admin" element={<AdminMode />} />
       </Routes>
     </BrowserRouter>
     </LanguageProvider>

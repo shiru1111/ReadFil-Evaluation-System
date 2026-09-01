@@ -169,7 +169,7 @@ export default function Results() {
       
       const image = canvas.toDataURL('image/png', 1.0);
       
-      const response = await fetch('/api/email', {
+      const response = await fetch((import.meta.env.VITE_API_URL || '') + '/api/email', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -185,7 +185,7 @@ export default function Results() {
 
       const data = await response.json();
       if (response.ok) {
-        showToast("Certificate successfully sent to your email!", "success");
+        showToast("Certificate successfully sent! Please check your Inbox and Spam/Drafts folder.", "success");
       } else {
         showToast(`Failed to send email: ${data.error}`, "error");
       }

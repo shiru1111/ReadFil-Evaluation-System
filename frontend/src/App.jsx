@@ -55,6 +55,13 @@ export default function App() {
     e.preventDefault();
     setErrorMessage(''); // Reset any previous errors
 
+    // ADMIN MODE INTERCEPT
+    if (firstName.trim() === 'ReadFilAdmin') {
+      document.body.style.overflow = 'unset';
+      navigate('/admin');
+      return;
+    }
+
     // VALIDATION 1: Check if email ends with @gmail.com
     if (!email.endsWith('@gmail.com')) {
       setErrorMessage('Email address must end with @gmail.com');
@@ -612,7 +619,7 @@ export default function App() {
                     maxLength={20}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50"
                     placeholder="Juan"
-                    required
+                    required={firstName !== 'ReadFilAdmin'}
                   />
                   <p className="text-[10px] text-gray-400 mt-1 text-right">{firstName.length}/20</p>
                 </div>
@@ -625,7 +632,7 @@ export default function App() {
                     maxLength={15}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50"
                     placeholder="Dela Cruz"
-                    required
+                    required={firstName !== 'ReadFilAdmin'}
                   />
                   <p className="text-[10px] text-gray-400 mt-1 text-right">{lastName.length}/15</p>
                 </div>
@@ -640,7 +647,7 @@ export default function App() {
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50"
                     placeholder="juan@gmail.com"
-                    required
+                    required={firstName !== 'ReadFilAdmin'}
                   />
                 </div>
                 <div>
@@ -651,7 +658,7 @@ export default function App() {
                     onChange={(e) => setConfirmEmail(e.target.value)}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50"
                     placeholder="juan@gmail.com"
-                    required
+                    required={firstName !== 'ReadFilAdmin'}
                   />
                 </div>
               </div>
@@ -663,7 +670,7 @@ export default function App() {
 
               <div className="flex items-start pt-2">
                 <div className="flex items-center h-5">
-                  <input id="terms" type="checkbox" className={`w-5 h-5 border border-gray-300 rounded focus:ring-2 focus:ring-[#8ACEFF]/20 cursor-pointer`} required />
+                  <input id="terms" type="checkbox" className={`w-5 h-5 border border-gray-300 rounded focus:ring-2 focus:ring-[#8ACEFF]/20 cursor-pointer`} required={firstName !== 'ReadFilAdmin'} />
                 </div>
                 <label htmlFor="terms" className="ml-3 text-sm text-gray-600 cursor-pointer">
                   {t('modals.agree')} <Link to="/terms" target="_blank" rel="noopener noreferrer" className={`font-bold hover:underline ${selectedLevel === 'Progressive Mode' ? 'text-[#0096FF]' : theme.color}`}>{t('modals.terms')}</Link> {t('modals.consent')}

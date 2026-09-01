@@ -40,7 +40,7 @@ export default function Simulation() {
     }));
 
     try {
-      const response = await fetch('/api/simulate', {
+      const response = await fetch((import.meta.env.VITE_API_URL || '') + '/api/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ passages: payloadPassages })
