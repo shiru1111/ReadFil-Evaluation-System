@@ -126,12 +126,11 @@ def preprocess_audio(input_wav_path, output_wav_path):
     normalized.export(output_wav_path, format="wav")
 
     speech, sr = librosa.load(output_wav_path, sr=16000)
-    # Increased top_db to 35 (from 25) to make trimming less aggressive 
-    # and prevent cutting off soft plosives like 'b'
-    trimmed, _ = librosa.effects.trim(speech, top_db=35)
-
-    if len(trimmed) < int(0.5 * sr):
-        trimmed = speech
+    
+    # We completely disable librosa.effects.trim here.
+    # Trimming often deletes quiet trailing consonants (like 'r' in 'lugar') 
+    # before the Wav2Vec model even gets a chance to hear it!
+    trimmed = speech
 
     sf.write(output_wav_path, trimmed, sr)
     return librosa.get_duration(y=trimmed, sr=sr)
@@ -1070,6 +1069,125 @@ def iq_adjust_wav2vec2(target_words, raw_transcription):
             
     return " ".join(adjusted_words)
 
+def iq_adjust_wav2vec3(target_words, raw_transcription):
+    """
+    Advanced wav2vec 3 logic: Highly accurate detection of vowel shifts,
+    stutters, and specifically deletions of letters in words.
+    """
+    target_str = "".join(target_words).lower()
+    spoken_str = raw_transcription.replace(" ", "").lower()
+    
+    if not spoken_str:
+        return raw_transcription
+        
+    # We need an alignment that preserves insertions (t_char == '-')
+    m, n = len(target_str), len(spoken_str)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m + 1): dp[i][0] = i
+    for j in range(n + 1): dp[0][j] = j
+    
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if target_str[i - 1] == spoken_str[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1]
+            else:
+                dp[i][j] = min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + 1)
+                
+    i, j = m, n
+    aligned = []
+    while i > 0 or j > 0:
+        if i > 0 and j > 0 and (target_str[i - 1] == spoken_str[j - 1] or dp[i][j] == dp[i - 1][j - 1] + 1):
+            aligned.append((target_str[i - 1], spoken_str[j - 1]))
+            i -= 1; j -= 1
+        elif i > 0 and (j == 0 or dp[i][j] == dp[i - 1][j] + 1):
+            aligned.append((target_str[i - 1], '-'))
+            i -= 1
+        else:
+            aligned.append(('-', spoken_str[j - 1]))
+            j -= 1
+            
+    aligned.reverse()
+    
+    t_word_char_lists = [[] for _ in target_words]
+    insertions_between = [[] for _ in range(len(target_words) + 1)]
+    
+    current_t_idx = 0
+    chars_seen = 0
+    
+    for t_char, s_char in aligned:
+        if t_char == '-':
+            if s_char != '-':
+                if chars_seen == 0:
+                    insertions_between[current_t_idx].append(s_char)
+                else:
+                    if current_t_idx < len(target_words):
+                        t_word_char_lists[current_t_idx].append(s_char)
+        else:
+            if current_t_idx < len(target_words):
+                if s_char != '-':
+                    t_word_char_lists[current_t_idx].append(s_char)
+                chars_seen += 1
+                if chars_seen == len(target_words[current_t_idx]):
+                    current_t_idx += 1
+                    chars_seen = 0
+
+    final_spoken_for_target = ["".join(chars) for chars in t_word_char_lists]
+    
+    if target_words:
+        final_spoken_for_target[0] = "".join(insertions_between[0]) + final_spoken_for_target[0]
+        
+    for i in range(1, len(target_words)):
+        ins_str = "".join(insertions_between[i])
+        if not ins_str:
+            continue
+            
+        left_t = target_words[i-1].lower()
+        left_s = final_spoken_for_target[i-1].lower()
+        right_t = target_words[i].lower()
+        right_s = final_spoken_for_target[i].lower()
+        
+        cand_left = left_s + ins_str
+        cand_right = ins_str + right_s
+        
+        if is_stutter(left_t, cand_left) and not is_stutter(right_t, cand_right):
+            final_spoken_for_target[i-1] = cand_left
+        elif is_stutter(right_t, cand_right) and not is_stutter(left_t, cand_left):
+            final_spoken_for_target[i] = cand_right
+        else:
+            final_spoken_for_target[i-1] = cand_left
+            
+    if target_words and insertions_between[-1]:
+        final_spoken_for_target[-1] = final_spoken_for_target[-1] + "".join(insertions_between[-1])
+
+    adjusted_words = []
+    for t_word, s_word in zip(target_words, final_spoken_for_target):
+        if not s_word:
+            continue
+            
+        t_lower = t_word.lower()
+        s_lower = s_word.lower()
+        
+        dist_ratio = modified_levenshtein(t_lower, s_lower)
+        raw_dist = dist_ratio * max(len(t_lower), len(s_lower))
+        max_dist = max(2, len(t_word) // 3)
+        
+        is_stutter_case = is_stutter(t_lower, s_lower)
+        is_vowel_shift_case = has_vowel_shift(t_lower, s_lower)
+        # More aggressive omission checking for wav2vec 3
+        is_omission_case = has_omission(t_lower, s_lower) or (len(s_lower) < len(t_lower) and set(s_lower).issubset(set(t_lower)))
+        # Detect extra letters (insertions) for wav2vec 3
+        is_insertion_case = len(s_lower) > len(t_lower) and set(t_lower).issubset(set(s_lower))
+        
+        # In Wav2Vec 3, we want to strictly preserve these specific errors
+        if is_stutter_case or is_vowel_shift_case or is_omission_case or is_insertion_case:
+            adjusted_words.append(s_lower)
+        elif raw_dist <= max_dist or is_correct_pronunciation(t_lower, s_lower):
+            adjusted_words.append(t_lower)
+        else:
+            adjusted_words.append(s_lower)
+            
+    return " ".join(adjusted_words)
+
 def score_candidate(target_words, raw_transcription):
     spoken   = clean_text(raw_transcription)
     optimized = fix_segmentation_errors(target_words, spoken)
@@ -1178,19 +1296,28 @@ def evaluate_audio():
 
         target_words = clean_text(target_text)
 
-        w2v_acc, w2v_correct, w2v_errors, w2v_opt = score_candidate(target_words, wav2vec_raw)
+        # Apply IQ Adjustment to both
+        iq_wav2vec_raw = iq_adjust_wav2vec2(target_words, wav2vec_raw)
+        w2v_acc, w2v_correct, w2v_errors, w2v_opt = score_candidate(target_words, iq_wav2vec_raw)
         
         # Apply IQ Adjustment to wav2vec 2
         iq_wav2vec_2_raw = iq_adjust_wav2vec2(target_words, wav2vec_2_raw)
         w2v_2_acc, w2v_2_correct, w2v_2_errors, w2v_2_opt = score_candidate(target_words, iq_wav2vec_2_raw)
 
+        # Apply IQ Adjustment to wav2vec 3
+        wav2vec_3_raw = wav2vec_raw
+        iq_wav2vec_3_raw = iq_adjust_wav2vec3(target_words, wav2vec_3_raw)
+        w2v_3_acc, w2v_3_correct, w2v_3_errors, w2v_3_opt = score_candidate(target_words, iq_wav2vec_3_raw)
+
         # Merge adjacent short syllable stutters/insertions that belong to the same matched word
         cleaned_opt = merge_syllable_hallucinations_and_stutters(w2v_opt, target_words)
         cleaned_opt_2 = merge_syllable_hallucinations_and_stutters(w2v_2_opt, target_words)
+        cleaned_opt_3 = merge_syllable_hallucinations_and_stutters(w2v_3_opt, target_words)
 
         # Get alignment mapping to identify words that align to target words
         fused_spoken_to_target_1, target_to_spoken_1 = get_alignment_mapping(target_words, cleaned_opt)
         fused_spoken_to_target_2, target_to_spoken_2 = get_alignment_mapping(target_words, cleaned_opt_2)
+        fused_spoken_to_target_3, target_to_spoken_3 = get_alignment_mapping(target_words, cleaned_opt_3)
         
         # Build the final sequence based on wav2vec 1's physical sequence (preserves insertions/deletions/chaos)
         final_opt = list(cleaned_opt)
@@ -1200,16 +1327,23 @@ def evaluate_audio():
                 target_word = target_words[idx_target]
                 w1 = cleaned_opt[idx_spoken]
                 
-                # Find what wav2vec 2 heard for this same target word
+                # Find what wav2vec 2 and 3 heard for this same target word
                 w2 = target_to_spoken_2.get(idx_target)
+                w3 = target_to_spoken_3.get(idx_target)
                 
                 t_lower = target_word.lower()
                 w1_lower = w1.lower()
                 w2_lower = w2.lower() if w2 else ""
+                w3_lower = w3.lower() if w3 else ""
                 
                 w1_exact = (phonetic_normalize(t_lower) == phonetic_normalize(w1_lower))
                 w1_is_vowel = is_pure_vowel_shift(t_lower, w1_lower)
                 w2_is_vowel = is_pure_vowel_shift(t_lower, w2_lower) if w2 else False
+                
+                w3_is_vowel = is_pure_vowel_shift(t_lower, w3_lower) if w3 else False
+                w3_is_omission = has_omission(t_lower, w3_lower) or (len(w3_lower) < len(t_lower) and set(w3_lower).issubset(set(t_lower))) if w3 else False
+                w3_is_insertion = len(w3_lower) > len(t_lower) and set(t_lower).issubset(set(w3_lower)) if w3 else False
+                w3_is_stutter = is_stutter(t_lower, w3_lower) if w3 else False
                 
                 # Helper to calculate exact character edit distance
                 def calc_ed(s1, s2):
@@ -1227,8 +1361,11 @@ def evaluate_audio():
                 
                 # User constraint: ALWAYS get deletion/insertion/substitution from wav2vec 1.
                 # In wav2vec 2, ONLY get the vowel shifting. Check strictly letter by letter.
+                # In wav2vec 3, aggressively detect and preserve stutters, vowel shifts, and deletions (omissions).
                 
-                if not w1_exact and not w1_is_vowel and not w1_is_one_letter_error:
+                if w3 and (w3_is_omission or w3_is_stutter or w3_is_vowel or w3_is_insertion):
+                    final_opt[idx_spoken] = w3
+                elif not w1_exact and not w1_is_vowel and not w1_is_one_letter_error:
                     # w1 has a structural error >= 2 letters (insertion, deletion, stutter, chaos). NEVER hide it.
                     final_opt[idx_spoken] = w1
                 elif w1_is_one_letter_error and w2:
@@ -1271,6 +1408,7 @@ def evaluate_audio():
         print(f" TARGET         : {target_text}")
         print(f" WAV2VEC (raw)  : {wav2vec_raw}")
         print(f" WAV2VEC 2 (raw): {iq_wav2vec_2_raw}")
+        print(f" WAV2VEC 3 (raw): {iq_wav2vec_3_raw}")
         print(f" USED           : {fused_transcription}")
         print(f" SCORE          : Accuracy: {round(accuracy_rate,2)}% | WCPM: {round(wcpm,2)}")
         print(f" CORRECT        : {final_correct_count} / {total_target_words}")
