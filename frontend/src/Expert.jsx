@@ -59,7 +59,7 @@ export default function Expert() {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 10);
+      const selected = shuffled.slice(0, 1);
       setTestPassages(selected);
       localStorage.setItem('expert_passages', JSON.stringify(selected));
     }
@@ -98,7 +98,7 @@ export default function Expert() {
       return () => clearTimeout(timer);
     } else if (isCountingDown && countdownValue === 0) {
       setIsCountingDown(false);
-      
+
       const startRecording = async () => {
         if (!mediaRecorderRef.current) {
           try {

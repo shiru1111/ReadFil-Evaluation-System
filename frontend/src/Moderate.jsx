@@ -59,7 +59,7 @@ export default function Moderate() {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 15);
+      const selected = shuffled.slice(0, 1);
       setTestPassages(selected);
       localStorage.setItem('moderate_passages', JSON.stringify(selected));
     }

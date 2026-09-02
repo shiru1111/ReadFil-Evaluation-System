@@ -60,13 +60,13 @@ export default function Progressive() {
     // Set the source and specific limits per level
     if (currentLevel === 'Beginner') {
       sourcePassages = [...beginnerPassages];
-      passageLimit = 25;
+      passageLimit = 5;
     } else if (currentLevel === 'Moderate') {
       sourcePassages = [...moderatePassages];
-      passageLimit = 15;
+      passageLimit = 3;
     } else if (currentLevel === 'Expert') {
       sourcePassages = [...expertPassages];
-      passageLimit = 10;
+      passageLimit = 1;
     }
 
     // Shuffle the passages randomly
@@ -108,7 +108,7 @@ export default function Progressive() {
       return () => clearTimeout(timer);
     } else if (isCountingDown && countdownValue === 0) {
       setIsCountingDown(false);
-      
+
       const startRecording = async () => {
         if (!mediaRecorderRef.current) {
           try {
