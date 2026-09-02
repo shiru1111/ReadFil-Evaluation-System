@@ -24,6 +24,12 @@ export default function App() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    // Clear any stale sessions if they land on the home page
+    localStorage.removeItem('user_firstName');
+    localStorage.removeItem('user_lastName');
+    localStorage.removeItem('user_email');
+    localStorage.removeItem('isAdmin');
+
     const handleScroll = () => {
       const scrollPosition = window.scrollY;
       const opacity = Math.max(1 - scrollPosition / 500, 0);
@@ -58,6 +64,7 @@ export default function App() {
     // ADMIN MODE INTERCEPT
     if (firstName.trim() === 'ReadFilAdmin') {
       document.body.style.overflow = 'unset';
+      localStorage.setItem('isAdmin', 'true');
       navigate('/admin');
       return;
     }

@@ -398,6 +398,9 @@ export default function Progressive() {
   };
 
   const confirmReturnHome = () => {
+    localStorage.removeItem('user_firstName');
+    localStorage.removeItem('user_lastName');
+    localStorage.removeItem('user_email');
     navigate('/');
   };
 

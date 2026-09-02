@@ -305,6 +305,9 @@ export default function Expert() {
     localStorage.removeItem('expert_passages');
     localStorage.removeItem('expert_currentIndex');
     localStorage.removeItem('expert_isTestReady');
+    localStorage.removeItem('user_firstName');
+    localStorage.removeItem('user_lastName');
+    localStorage.removeItem('user_email');
     navigate('/');
   };
 

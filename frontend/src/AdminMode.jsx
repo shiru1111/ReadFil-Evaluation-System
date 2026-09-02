@@ -219,7 +219,7 @@ export default function AdminMode() {
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans relative">
       <header className="bg-black text-white p-4 sm:p-6 flex justify-between items-center z-10 sticky top-0 shadow-md">
         <h1 className="text-xl sm:text-2xl font-black tracking-tight uppercase">Admin Demo Mode</h1>
-        <button onClick={() => navigate('/')} className="text-white hover:text-gray-300 transition-colors uppercase text-sm font-bold tracking-widest flex items-center gap-2">
+        <button onClick={() => { localStorage.removeItem('isAdmin'); navigate('/'); }} className="text-white hover:text-gray-300 transition-colors uppercase text-sm font-bold tracking-widest flex items-center gap-2">
           Exit Admin
         </button>
       </header>

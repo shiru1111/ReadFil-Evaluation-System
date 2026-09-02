@@ -297,6 +297,9 @@ export default function Beginner() {
     localStorage.removeItem('beginner_passages');
     localStorage.removeItem('beginner_currentIndex');
     localStorage.removeItem('beginner_isTestReady');
+    localStorage.removeItem('user_firstName');
+    localStorage.removeItem('user_lastName');
+    localStorage.removeItem('user_email');
     navigate('/');
   };
 

@@ -3,8 +3,9 @@ from flask_cors import CORS
 import os
 import sys
 
-# Ensure ffmpeg and ffprobe from /usr/bin are always in PATH for systemd/pydub
-os.environ["PATH"] += os.pathsep + "/usr/bin"
+# Apply Linux-specific ffmpeg paths only if running on a POSIX (Linux/Mac) system
+if os.name == 'posix':
+    os.environ["PATH"] += os.pathsep + "/usr/bin"
 
 import re
 import uuid
@@ -15,8 +16,8 @@ import soundfile as sf
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 from pydub import AudioSegment, effects
 
-# Force pydub to use the absolute path
-AudioSegment.converter = "/usr/bin/ffmpeg"
+if os.name == 'posix':
+    AudioSegment.converter = "/usr/bin/ffmpeg"
 
 from concurrent.futures import ThreadPoolExecutor
 

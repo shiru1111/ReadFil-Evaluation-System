@@ -7,10 +7,11 @@ import Moderate from './Moderate.jsx'
 import Expert from './Expert.jsx'
 import Progressive from './Progressive';
 import TermsAndConditions from './TermsAndConditions.jsx';
-import ScrollToTop from './ScrollToTop.jsx' // <-- 1. Imported here
+import ScrollToTop from './ScrollToTop.jsx'
 import Results from './Results.jsx'
 import Simulation from './Simulation.jsx'
 import AdminMode from './AdminMode.jsx'
+import ProtectedRoute from './ProtectedRoute.jsx'
 import './index.css'
 import { LanguageProvider } from './contexts/LanguageContext'
 
@@ -18,17 +19,21 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <LanguageProvider>
       <BrowserRouter>
-      <ScrollToTop /> {/* <-- 2. Added here right above Routes */}
+      <ScrollToTop />
       <Routes>
         <Route path="/" element={<App />} />
-        <Route path="/beginner" element={<Beginner />} />
-        <Route path="/moderate" element={<Moderate />} />
-        <Route path="/expert" element={<Expert />} />
-        <Route path="/progressive" element={<Progressive />} />
         <Route path="/terms" element={<TermsAndConditions />} />
-        <Route path="/results" element={<Results />} />
+        
+        {/* Protected User Routes */}
+        <Route path="/beginner" element={<ProtectedRoute><Beginner /></ProtectedRoute>} />
+        <Route path="/moderate" element={<ProtectedRoute><Moderate /></ProtectedRoute>} />
+        <Route path="/expert" element={<ProtectedRoute><Expert /></ProtectedRoute>} />
+        <Route path="/progressive" element={<ProtectedRoute><Progressive /></ProtectedRoute>} />
+        <Route path="/results" element={<ProtectedRoute><Results /></ProtectedRoute>} />
         <Route path="/simulation" element={<Simulation />} />
-        <Route path="/admin" element={<AdminMode />} />
+
+        {/* Protected Admin Route */}
+        <Route path="/admin" element={<ProtectedRoute adminOnly={true}><AdminMode /></ProtectedRoute>} />
       </Routes>
     </BrowserRouter>
     </LanguageProvider>

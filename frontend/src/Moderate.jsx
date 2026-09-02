@@ -311,6 +311,9 @@ export default function Moderate() {
     localStorage.removeItem('moderate_passages');
     localStorage.removeItem('moderate_currentIndex');
     localStorage.removeItem('moderate_isTestReady');
+    localStorage.removeItem('user_firstName');
+    localStorage.removeItem('user_lastName');
+    localStorage.removeItem('user_email');
     navigate('/');
   };
 

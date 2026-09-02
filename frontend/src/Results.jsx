@@ -204,6 +204,9 @@ export default function Results() {
     localStorage.removeItem('final_wcpm');
     localStorage.removeItem('evaluated_level');
     localStorage.removeItem('reading_logs');
+    localStorage.removeItem('user_firstName');
+    localStorage.removeItem('user_lastName');
+    localStorage.removeItem('user_email');
     navigate('/');
   };
 
