@@ -41,4 +41,7 @@ EXPERT_CORRECTIONS = {
     'tunaiynyang': 'tunay ngang',
     'saan niya': 'sa kaniya',
     'lihamg': 'liham',
+    'silaywalang': 'silay walang',
+    'mahihi ng': 'mahihinang',
+    'mahihing': 'mahihinang',
 }
