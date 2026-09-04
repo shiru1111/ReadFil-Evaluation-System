@@ -12,6 +12,7 @@ import Results from './Results.jsx'
 import Simulation from './Simulation.jsx'
 import AdminMode from './AdminMode.jsx'
 import ProtectedRoute from './ProtectedRoute.jsx'
+import NotFound from './NotFound.jsx'
 import './index.css'
 import { LanguageProvider } from './contexts/LanguageContext'
 
@@ -34,6 +35,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
         {/* Protected Admin Route */}
         <Route path="/admin" element={<ProtectedRoute adminOnly={true}><AdminMode /></ProtectedRoute>} />
+
+        {/* 404 Catch-All Route */}
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
     </LanguageProvider>

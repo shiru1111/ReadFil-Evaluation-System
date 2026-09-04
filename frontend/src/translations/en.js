@@ -219,7 +219,7 @@ export const en = {
     s1_p2: "These terms constitute a legally binding agreement between you (\"User\", \"You\") and the administrators of the Platform.",
     s2_title: "2. Data Collection and Processing",
     s2_p1: "In order to provide the core functionalities of the Platform, we require the collection, processing, and temporary storage of specific personal and biometric information. By proceeding, you explicitly consent to the collection of the following data:",
-    s2_l1: "Personal Identifiable Information (PII): Name, Email Address, and Phone Number (Optional).",
+    s2_l1: "Personal Identifiable Information (PII): Name and Email Address.",
     s2_l2: "Biometric Data: Direct audio recordings of your voice during your interaction with the Platform.",
     s3_title: "3. Purpose of Data Utilization",
     s3_p1: "All collected Data is strictly utilized for the sole purpose of speech processing, algorithmic evaluation, and statistical analysis. Your biometric data is fed securely through speech recognition models to calculate accuracy metrics and Word Error Rates (WER). Your PII is utilized exclusively for user identification and system auditing.",

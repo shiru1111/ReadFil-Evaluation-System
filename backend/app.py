@@ -67,6 +67,9 @@ from nlp_config import SYNONYM_PAIRS, ENCLITIC_Y_BASES, TAGALOG_PARTICLES, EXPER
 app = Flask(__name__)
 CORS(app)
 
+from error_handlers import register_error_handlers
+register_error_handlers(app)
+
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp_audio')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
@@ -127,10 +130,14 @@ def preprocess_audio(input_wav_path, output_wav_path):
 
     speech, sr = librosa.load(output_wav_path, sr=16000)
     
+    # Apply a little bit of noise cancellation
+    import noisereduce as nr
+    reduced_noise_speech = nr.reduce_noise(y=speech, sr=sr, prop_decrease=0.5)
+    
     # We completely disable librosa.effects.trim here.
     # Trimming often deletes quiet trailing consonants (like 'r' in 'lugar') 
     # before the Wav2Vec model even gets a chance to hear it!
-    trimmed = speech
+    trimmed = reduced_noise_speech
 
     sf.write(output_wav_path, trimmed, sr)
     return librosa.get_duration(y=trimmed, sr=sr)
@@ -262,7 +269,7 @@ def fix_segmentation_errors(target_words, spoken_words):
                 continue
 
         # P1: enclitic-y
-        if current.endswith('y') and len(current) > 3:
+        if current not in target_set and current.endswith('y') and len(current) > 3:
             base = current[:-1]
             if base in ENCLITIC_Y_BASES or base in target_set:
                 optimized.extend([base, 'ay'])
@@ -272,6 +279,13 @@ def fix_segmentation_errors(target_words, spoken_words):
         # P2: 2-word fuse
         if i < len(spoken_words) - 1:
             nxt = spoken_words[i + 1]
+            
+            # Enclitic-y reconstruction (e.g. "sila" + "ay" -> "silay")
+            if nxt == 'ay' and (current + 'y') in target_set:
+                optimized.append(current + 'y')
+                i += 2
+                continue
+                
             fused2 = current + nxt
             if fused2 in target_set:
                 optimized.append(fused2)
@@ -1359,11 +1373,34 @@ def evaluate_audio():
                     
                 w1_is_one_letter_error = (calc_ed(t_lower, w1_lower) == 1 and not w1_is_vowel)
                 
+                is_synonym = False
+                for pair in SYNONYM_PAIRS:
+                    if t_lower in pair and (w1_lower in pair or w2_lower in pair or w3_lower in pair):
+                        is_synonym = True
+                        break
+                
                 # User constraint: ALWAYS get deletion/insertion/substitution from wav2vec 1.
                 # In wav2vec 2, ONLY get the vowel shifting. Check strictly letter by letter.
                 # In wav2vec 3, aggressively detect and preserve stutters, vowel shifts, and deletions (omissions).
                 
-                if w3 and (w3_is_omission or w3_is_stutter or w3_is_vowel or w3_is_insertion):
+                is_expert_many_errors = (level == 'Expert' and w2v_errors >= 4)
+                is_expert_few_errors = (level == 'Expert' and 1 <= w2v_errors <= 3)
+                
+                c_s_ortho_match = (w1_lower.replace('c', 's') == t_lower.replace('c', 's'))
+                
+                if is_synonym or c_s_ortho_match:
+                    final_opt[idx_spoken] = target_word
+                elif is_expert_many_errors:
+                    # User requested: if 4 or more errors in Expert, just fallback to wav2vec 1
+                    final_opt[idx_spoken] = w1
+                elif is_expert_few_errors:
+                    # User requested: if 1-3 errors in Expert, choose the correct or most fit among the models
+                    candidates = [(calc_ed(t_lower, w1_lower), w1)]
+                    if w2: candidates.append((calc_ed(t_lower, w2_lower), w2))
+                    if w3: candidates.append((calc_ed(t_lower, w3_lower), w3))
+                    best_w = min(candidates, key=lambda x: x[0])[1]
+                    final_opt[idx_spoken] = best_w
+                elif w3 and (w3_is_omission or w3_is_stutter or w3_is_vowel or w3_is_insertion):
                     final_opt[idx_spoken] = w3
                 elif not w1_exact and not w1_is_vowel and not w1_is_one_letter_error:
                     # w1 has a structural error >= 2 letters (insertion, deletion, stutter, chaos). NEVER hide it.
