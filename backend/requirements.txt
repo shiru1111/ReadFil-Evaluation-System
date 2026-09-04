@@ -13,3 +13,4 @@ soundfile
 numpy
 waitress
 python-dotenv
+noisereduce

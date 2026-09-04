@@ -225,7 +225,7 @@ export default function Expert() {
     // Make sure you kept the currentTextRef fix here!
     const targetText = currentTextRef.current;
     formData.append('target_text', targetText);
-    formData.append('level', 'Expert');
+    formData.append('level', 'Expert'); // Enables Expert-only 1-letter auto-correction
 
     try {
       const response = await fetch((import.meta.env.VITE_API_URL || '') + '/api/evaluate', {

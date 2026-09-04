@@ -670,10 +670,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">{t('modals.phone')} <span className="text-gray-400 font-normal">{t('modals.optional')}</span></label>
-                <input type="tel" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50" placeholder="09XX XXX XXXX" />
-              </div>
+
 
               <div className="flex items-start pt-2">
                 <div className="flex items-center h-5">

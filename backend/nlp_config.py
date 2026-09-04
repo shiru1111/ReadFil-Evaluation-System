@@ -13,6 +13,10 @@ SYNONYM_PAIRS = [
     {'quezon', 'kezon'},
     {'suplay', 'suply', 'supply'},
     {'kweba', 'kuweba'},
+    {'my', 'may'},
+    {'kastila', 'kastina'},
+    {'prinsipe', 'principe', 'pincepe'},
+    {'maria', 'mariya'},
 ]
 
 ENCLITIC_Y_BASES = {

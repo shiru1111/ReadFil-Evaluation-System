@@ -219,7 +219,7 @@ export const tl = {
     s1_p2: "Ang mga tuntuning ito ay bumubuo ng isang ligal na may bisang kasunduan sa pagitan mo (\"User\", \"Ikaw\") at ng mga tagapangasiwa ng Platform.",
     s2_title: "2. Pagkolekta at Pagproseso ng Data",
     s2_p1: "Upang maibigay ang mga pangunahing tungkulin ng Platform, kinakailangan namin ang pagkolekta, pagproseso, at pansamantalang pag-imbak ng partikular na personal at biometric na impormasyon. Sa pagpapatuloy, tahasan kang pumapayag sa pagkolekta ng sumusunod na data:",
-    s2_l1: "Personal na Makikilalang Impormasyon (PII): Pangalan, Email Address, at Numero ng Telepono (Opsiyonal).",
+    s2_l1: "Personal na Makikilalang Impormasyon (PII): Pangalan at Email Address.",
     s2_l2: "Biometric Data: Mga direktang pagrekord ng audio ng iyong boses sa panahon ng iyong pakikipag-ugnayan sa Platform.",
     s3_title: "3. Layunin ng Paggamit ng Data",
     s3_p1: "Ang lahat ng nakolektang Data ay mahigpit na ginagamit para sa tanging layunin ng pagpoproseso ng pagsasalita, pagsusuring algoritmiko, at pagsusuring istatistikal. Ang iyong biometric data ay ligtas na ipinapasok sa pamamagitan ng mga modelo ng speech recognition upang makalkula ang mga sukatan ng katumpakan at Word Error Rates (WER). Ang iyong PII ay ginagamit nang eksklusibo para sa pagkakakilanlan ng user at pag-audit ng system.",
