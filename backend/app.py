@@ -154,6 +154,121 @@ def transcribe_wav2vec(wav_path):
     predicted_ids = torch.argmax(logits, dim=-1)
     return w2v_processor.batch_decode(predicted_ids)[0]
 
+TAGALOG_BASIC_NUMBERS = {
+    0: 'sero', 1: 'isa', 2: 'dalawa', 3: 'tatlo', 4: 'apat', 5: 'lima',
+    6: 'anim', 7: 'pito', 8: 'walo', 9: 'siyam', 10: 'sampu',
+    11: 'labing-isa', 12: 'labindalawa', 13: 'labintatlo', 14: 'labing-apat',
+    15: 'labinlima', 16: 'labing-anim', 17: 'labimpito', 18: 'labingwalo', 19: 'labinsiyam',
+    20: 'dalawampu', 30: 'tatlumpu', 40: 'apatnapu', 50: 'limampu',
+    60: 'animnapu', 70: 'pitumpu', 80: 'walumpu', 90: 'siyamnapu',
+    100: 'sandaan', 1000: 'sanlibo'
+}
+
+TAGALOG_ORDINALS = {
+    1: 'una', 2: 'pangalawa', 3: 'pangatlo', 4: 'pang-apat', 5: 'panlima',
+    6: 'pang-anim', 7: 'pampito', 8: 'pangwalo', 9: 'pansiyam', 10: 'pansampu'
+}
+
+def int_to_tagalog(n):
+    if n in TAGALOG_BASIC_NUMBERS:
+        return TAGALOG_BASIC_NUMBERS[n]
+    if 21 <= n <= 99:
+        tens = (n // 10) * 10
+        rem = n % 10
+        if rem == 0:
+            return TAGALOG_BASIC_NUMBERS.get(tens, str(n))
+        tens_word = TAGALOG_BASIC_NUMBERS.get(tens, '')
+        rem_word = TAGALOG_BASIC_NUMBERS.get(rem, '')
+        return f"{tens_word}'t {rem_word}"
+    if 100 <= n <= 999:
+        hundreds = n // 100
+        rem = n % 100
+        h_str = 'sandaan' if hundreds == 1 else f"{TAGALOG_BASIC_NUMBERS.get(hundreds, str(hundreds))} daan"
+        if rem == 0:
+            return h_str
+        return f"{h_str} at {int_to_tagalog(rem)}"
+    return str(n)
+
+def normalize_tagalog_numbers(text, target_words=None):
+    """
+    Converts numbers and digits into Tagalog words so STT outputs like '6', '2', '1'
+    are never kept as digits, but converted to 'anim', 'dalawa', 'isa', etc.
+    """
+    if not text:
+        return text
+
+    target_set = set(target_words) if target_words else set()
+
+    # English ordinals: 1st, 2nd, 3rd, 4th...
+    def repl_eng_ord(m):
+        n = int(m.group(1))
+        if n in TAGALOG_ORDINALS:
+            return TAGALOG_ORDINALS[n]
+        return f"ika-{int_to_tagalog(n)}"
+    text = re.sub(r'\b(\d+)(?:st|nd|rd|th)\b', repl_eng_ord, text, flags=re.IGNORECASE)
+
+    # ika-X: ika-6, ika-2
+    def repl_ika(m):
+        n = int(m.group(1))
+        return f"ika-{int_to_tagalog(n)}"
+    text = re.sub(r'\bika-(\d+)\b', repl_ika, text, flags=re.IGNORECASE)
+
+    # pang-X: pang-2, pang-6
+    def repl_pang(m):
+        n = int(m.group(1))
+        if n in TAGALOG_ORDINALS:
+            return TAGALOG_ORDINALS[n]
+        return f"pang-{int_to_tagalog(n)}"
+    text = re.sub(r'\bpang-(\d+)\b', repl_pang, text, flags=re.IGNORECASE)
+
+    # Digits with ligature: 2ng -> dalawang, 1ng -> isang
+    def repl_num_ng(m):
+        n = int(m.group(1))
+        w = int_to_tagalog(n)
+        if w.endswith(('a', 'e', 'i', 'o', 'u')):
+            return w + 'ng'
+        return w + ' na'
+    text = re.sub(r'\b(\d+)ng\b', repl_num_ng, text, flags=re.IGNORECASE)
+
+    # Standalone digits: 6 -> anim, 2 -> dalawa, 1 -> isa
+    def repl_digit(m):
+        n = int(m.group(1))
+        w = int_to_tagalog(n)
+        if target_set and w not in target_set:
+            alt_candidates = [TAGALOG_BASIC_NUMBERS.get(n)]
+            for cand in alt_candidates:
+                if cand and cand in target_set:
+                    return cand
+        return w
+
+    text = re.sub(r'\b(\d+)\b', repl_digit, text)
+    return text
+
+def transcribe_soniox(wav_path, target_words=None):
+    """
+    Transcribes audio using Soniox Cloud Speech-to-Text API.
+    Used exclusively for Moderate and Expert reading levels.
+    """
+    api_key = os.getenv("SONIOX_API_KEY")
+    if not api_key:
+        print("[SONIOX] Notice: SONIOX_API_KEY not set in .env. Falling back to local Wav2Vec.")
+        return None
+    try:
+        from soniox import SonioxClient
+        from soniox.types import CreateTranscriptionConfig
+        client = SonioxClient(api_key=api_key)
+        config = CreateTranscriptionConfig(language_hints=["tl"])
+        transcription = client.stt.transcribe(file=wav_path, config=config)
+        client.stt.wait(transcription.id)
+        transcript = client.stt.get_transcript(transcription.id)
+        text = transcript.text.strip() if transcript and transcript.text else ""
+        text = normalize_tagalog_numbers(text, target_words)
+        print(f"[SONIOX] Cloud transcription OK: '{text}'")
+        return text
+    except Exception as e:
+        print(f"[SONIOX] Error during cloud transcription: {e}. Falling back to local Wav2Vec.")
+        return None
+
 # =================================================================
 # TEXT NORMALIZATION
 # =================================================================
@@ -562,6 +677,37 @@ def letters_are_subset_of(target, spoken):
 
 
 
+def is_any_vowel_shift(word1, word2):
+    """
+    Detects vowel shifting across ALL vowels (a, e, i, o, u).
+    Returns True if word1 and word2 are identical except for one or more vowels.
+    E.g. 'binatang' vs 'benatang' (i <-> e)
+         'desisyon' vs 'disisyon' (e <-> i)
+         'umaga' vs 'omaga' (u <-> o)
+         'kamote' vs 'kamoti' (e <-> i)
+         'masarap' vs 'masurup' (a <-> u)
+    """
+    if not word1 or not word2:
+        return False
+    w1 = phonetic_normalize(word1)
+    w2 = phonetic_normalize(word2)
+    if w1 == w2:
+        return False
+        
+    if len(w1) == len(w2):
+        diffs = 0
+        for c1, c2 in zip(w1, w2):
+            if c1 != c2:
+                if c1 in VOWELS and c2 in VOWELS:
+                    diffs += 1
+                else:
+                    return False
+        return diffs > 0
+        
+    s1 = consonant_skeleton(w1)
+    s2 = consonant_skeleton(w2)
+    return (s1 == s2 and s1 != "" and w1 != w2)
+
 def is_correct_pronunciation(target, spoken):
     if not target or not spoken:
         return False
@@ -576,6 +722,10 @@ def is_correct_pronunciation(target, spoken):
     if len(spoken) > len(target) and set(target).issubset(set(spoken)):
         return False
         
+    # Vowel shiftings across any vowels are pronunciation errors (do NOT forgive)
+    if is_any_vowel_shift(target, spoken):
+        return False
+
     # Consonant skeleton gate: if the spoken word is missing key consonants
     # from the target, it cannot be a correct pronunciation.
     if not letters_are_subset_of(target, spoken):
@@ -625,6 +775,117 @@ def align_chars(target, spoken):
         result.append((target[len(result)], '-'))
         
     return result
+
+def align_chars_nw(s1, s2):
+    """
+    Needleman-Wunsch character-level alignment prioritizing vowel-to-vowel alignment.
+    Returns list of tuples (c1, c2) where c1 from s1 (or '-') and c2 from s2 (or '-').
+    """
+    m, n = len(s1), len(s2)
+    dp = [[0.0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m + 1): dp[i][0] = -1.0 * i
+    for j in range(n + 1): dp[0][j] = -1.0 * j
+    
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            c1, c2 = s1[i - 1], s2[j - 1]
+            if c1 == c2:
+                match = dp[i - 1][j - 1] + 2.0
+            elif c1 in 'aeiou' and c2 in 'aeiou':
+                match = dp[i - 1][j - 1] + 1.0  # Vowel match preference
+            else:
+                match = dp[i - 1][j - 1] - 1.0
+            delete = dp[i - 1][j] - 1.0
+            insert = dp[i][j - 1] - 1.0
+            dp[i][j] = max(match, delete, insert)
+            
+    i, j = m, n
+    aligned = []
+    while i > 0 or j > 0:
+        c1 = s1[i - 1] if i > 0 else '-'
+        c2 = s2[j - 1] if j > 0 else '-'
+        
+        if i > 0 and j > 0:
+            score = 2.0 if c1 == c2 else (1.0 if c1 in 'aeiou' and c2 in 'aeiou' else -1.0)
+            if abs(dp[i][j] - (dp[i - 1][j - 1] + score)) < 1e-6:
+                aligned.append((c1, c2))
+                i -= 1; j -= 1
+                continue
+        if i > 0 and abs(dp[i][j] - (dp[i - 1][j] - 1.0)) < 1e-6:
+            aligned.append((c1, '-'))
+            i -= 1
+        else:
+            aligned.append(('-', c2))
+            j -= 1
+            
+    aligned.reverse()
+    return aligned
+
+def transfer_vowel_shifts_from_w2v(target_word, soniox_word, w2v_word):
+    """
+    Checks Wav2Vec letter-by-letter against target word. If Wav2Vec heard a vowel shifting
+    (e.g., 'senro' has 'e' instead of 'i' in 'sino', or 'detro' has 'e' instead of 'i' in 'dito'),
+    transfers that vowel directly into the Soniox word.
+    """
+    if not target_word or not soniox_word or not w2v_word:
+        return soniox_word
+        
+    t = target_word.lower()
+    s = soniox_word.lower()
+    w = w2v_word.lower()
+
+    # Consonant gate: Ensure w2v has compatible consonants with target
+    # Prevents completely different/unrelated words from transferring vowels
+    t_consonants = [c for c in t if c not in 'aeiou']
+    w_consonants = [c for c in w if c not in 'aeiou']
+    if t_consonants:
+        common_cons = sum(1 for c in t_consonants if c in w_consonants)
+        if (common_cons / len(t_consonants)) < 0.5:
+            return soniox_word
+    
+    # 1. Align target to w2v letter-by-letter
+    t_w_aligned = align_chars_nw(t, w)
+    
+    # Map target char index -> w2v shifted vowel (strictly (e, i) and (o, u) only)
+    t_idx = 0
+    t_to_w2v_vowels = {}
+    for c_t, c_w in t_w_aligned:
+        if c_t != '-':
+            is_allowed_shift = (c_t in ('e', 'i') and c_w in ('e', 'i')) or (c_t in ('o', 'u') and c_w in ('o', 'u'))
+            if is_allowed_shift and c_t != c_w:
+                t_to_w2v_vowels[t_idx] = c_w
+            t_idx += 1
+            
+    if not t_to_w2v_vowels:
+        return soniox_word
+        
+    # 2. Align target to soniox letter-by-letter
+    t_s_aligned = align_chars_nw(t, s)
+    
+    # Map target char index -> soniox char index
+    t_idx = 0
+    s_idx = 0
+    t_to_s_idx = {}
+    for c_t, c_s in t_s_aligned:
+        curr_t = t_idx if c_t != '-' else None
+        curr_s = s_idx if c_s != '-' else None
+        if curr_t is not None and curr_s is not None:
+            t_to_s_idx[curr_t] = curr_s
+        if c_t != '-': t_idx += 1
+        if c_s != '-': s_idx += 1
+        
+    # 3. Apply w2v vowel shift to soniox word, preserving original casing
+    s_chars = list(soniox_word)
+    for t_i, w2v_vowel in t_to_w2v_vowels.items():
+        if t_i in t_to_s_idx:
+            s_i = t_to_s_idx[t_i]
+            orig_c = s_chars[s_i]
+            if orig_c.isupper():
+                s_chars[s_i] = w2v_vowel.upper()
+            else:
+                s_chars[s_i] = w2v_vowel.lower()
+            
+    return "".join(s_chars)
 
 def is_vowel(c):
     return c.lower() in 'aeiou'
@@ -1347,6 +1608,8 @@ def match_original_casing_and_punctuation(target_text, transcription):
         clean_trans = re.sub(dash_apos, "", word).lower()
         if clean_trans in token_map:
             trans_words[idx] = token_map[clean_trans]
+        elif idx < len(target_tokens) and target_tokens[idx] and target_tokens[idx][0].isupper():
+            trans_words[idx] = trans_words[idx].capitalize()
             
     return " ".join(trans_words)
 
@@ -1458,190 +1721,176 @@ def evaluate_audio():
         duration_seconds = preprocess_audio(wav_raw_path, wav_clean_path)
         print(f"[DEBUG] preprocess OK, duration={duration_seconds}")
 
-        wav2vec_raw = transcribe_wav2vec(wav_clean_path)
-        # Fix redundant duplicate ML inference call
-        wav2vec_2_raw = wav2vec_raw
-
         level = request.form.get('level', '')
-        if level and level.lower() == 'expert':
-            for wrong, right in EXPERT_CORRECTIONS.items():
-                wav2vec_raw = wav2vec_raw.replace(wrong, right)
-                wav2vec_2_raw = wav2vec_2_raw.replace(wrong, right)
-
-        # Check if no audio/speech was transcribed (empty or silent audio)
-        if not wav2vec_raw.strip() and not wav2vec_2_raw.strip():
-            return jsonify({
-                "error": "No speech detected. Please speak clearly into the microphone.",
-                "status": "empty"
-            }), 400
-
+        safe_level = level.lower() if level else ''
         target_words = clean_text(target_text)
 
-        # Apply IQ Adjustment to both
-        if level and level.lower() == 'beginner':
-            iq_wav2vec_raw = wav2vec_raw
-            iq_wav2vec_2_raw = wav2vec_2_raw
-            wav2vec_3_raw = wav2vec_raw
-            iq_wav2vec_3_raw = wav2vec_3_raw
+        # =============================================================
+        # BRANCH 1: MODERATE & EXPERT -> SONIOX CLOUD STT ONLY
+        # =============================================================
+        if safe_level in ['moderate', 'expert']:
+            print(f"[EVALUATION] {level.upper()} mode active: using Soniox Cloud STT ONLY...")
+            soniox_raw = transcribe_soniox(wav_clean_path, target_words)
+            
+            # Fallback only if Soniox fails or returns empty
+            if not soniox_raw or not soniox_raw.strip():
+                print(f"[EVALUATION] Soniox unavailable or empty, falling back to local Wav2Vec...")
+                active_raw = transcribe_wav2vec(wav_clean_path)
+                active_raw = normalize_tagalog_numbers(active_raw, target_words)
+                soniox_used = False
+            else:
+                active_raw = soniox_raw
+                soniox_used = True
+
+            if not active_raw.strip():
+                return jsonify({
+                    "error": "No speech detected. Please speak clearly into the microphone.",
+                    "status": "empty"
+                }), 400
+
+            active_raw = normalize_tagalog_numbers(active_raw, target_words)
+
+            w2v_expert_raw = ""
+            if safe_level == 'expert':
+                try:
+                    w2v_expert_raw = transcribe_wav2vec(wav_clean_path)
+                    print(f"[WAV2VEC] Expert acoustic check OK: '{w2v_expert_raw}'")
+                except Exception as e:
+                    print(f"[WAV2VEC] Expert acoustic transcription error: {e}")
+
+            if safe_level == 'expert':
+                for wrong, right in EXPERT_CORRECTIONS.items():
+                    active_raw = active_raw.replace(wrong, right)
+
+            spoken_words = clean_text(active_raw)
+            opt_words = fix_segmentation_errors(target_words, spoken_words)
+            cleaned_opt = merge_syllable_hallucinations_and_stutters(opt_words, target_words)
+
+            spoken_to_target, target_to_spoken = get_alignment_mapping(target_words, cleaned_opt)
+
+            # In Expert mode: Always use Soniox, but transfer acoustic vowel shifts letter-by-letter from Wav2Vec
+            if safe_level == 'expert' and w2v_expert_raw and w2v_expert_raw.strip():
+                w2v_words = clean_text(w2v_expert_raw)
+                w2v_to_target, target_to_w2v = get_alignment_mapping(target_words, w2v_words)
+                for idx_spoken, idx_target in spoken_to_target.items():
+                    if idx_target is not None and idx_target in target_to_w2v:
+                        w2v_word = target_to_w2v[idx_target]
+                        if w2v_word:
+                            target_word = target_words[idx_target]
+                            soniox_word = cleaned_opt[idx_spoken]
+                            transferred = transfer_vowel_shifts_from_w2v(target_word, soniox_word, w2v_word)
+                            if transferred != soniox_word:
+                                print(f"[EXPERT VOWEL SHIFT] Word '{target_word}': Soniox='{soniox_word}', W2V='{w2v_word}' -> Transferred='{transferred}'")
+                                cleaned_opt[idx_spoken] = transferred
+
+            final_opt = list(cleaned_opt)
+
+            for idx_spoken, idx_target in spoken_to_target.items():
+                if idx_target is not None:
+                    target_word = target_words[idx_target]
+                    w_spoken = cleaned_opt[idx_spoken]
+                    t_lower = target_word.lower()
+                    s_lower = w_spoken.lower()
+
+                    is_synonym = any(t_lower in pair and s_lower in pair for pair in SYNONYM_PAIRS)
+                    c_s_match = (t_lower.replace('c', 's') == s_lower.replace('c', 's'))
+                    is_exact = (phonetic_normalize(t_lower) == phonetic_normalize(s_lower))
+                    is_vowel = is_any_vowel_shift(t_lower, s_lower)
+
+                    # Do NOT auto-correct vowel shifts! Keep the spoken form (e.g. 'benatang', 'seno', 'deto')
+                    # so vowel shiftings are accurately detected and flagged!
+                    if is_vowel:
+                        final_opt[idx_spoken] = w_spoken
+                    elif is_synonym or c_s_match or is_exact:
+                        final_opt[idx_spoken] = target_word
+                    else:
+                        final_opt[idx_spoken] = w_spoken
+
+            if safe_level == 'expert':
+                final_opt = dedup_expert_fragment_doublings(final_opt, spoken_to_target, target_words)
+
+            fused_transcription = " ".join(final_opt)
+            fused_transcription = match_original_casing_and_punctuation(target_text, fused_transcription)
+
+            detected_stutters = detect_stutters(final_opt, target_words)
+            _, final_errors = needleman_wunsch_alignment(target_words, final_opt, None)
+            best_errors = final_errors
+
+            total_target_words = len(target_words)
+            final_correct_count = max(0, total_target_words - best_errors)
+            accuracy_rate = (final_correct_count / total_target_words * 100.0) if total_target_words > 0 else 0.0
+
+            duration_minutes = duration_seconds / 60.0
+            wcpm = (final_correct_count / duration_minutes) if duration_minutes > 0 else 0.0
+
+            print(f"\n{'='*70}")
+            print(f" TARGET         : {target_text}")
+            if soniox_used:
+                print(f" SONIOX (raw)   : {active_raw}")
+            else:
+                print(f" WAV2VEC (raw)  : {active_raw} (fallback)")
+            if safe_level == 'expert' and w2v_expert_raw and w2v_expert_raw.strip():
+                print(f" WAV2VEC (raw)  : {w2v_expert_raw}")
+            print(f" USED           : {fused_transcription}")
+            print(f" SCORE          : Accuracy: {round(accuracy_rate,2)}% | WCPM: {round(wcpm,2)}")
+            print(f" CORRECT        : {final_correct_count} / {total_target_words}")
+            print(f" DURATION       : {round(duration_seconds, 2)} seconds")
+            print(f"{'='*70}\n")
+
+        # =============================================================
+        # BRANCH 2: BEGINNER MODE -> WAV2VEC 1.0 ONLY (LOCAL, STRICT)
+        # =============================================================
         else:
+            wav2vec_raw = transcribe_wav2vec(wav_clean_path)
+            if not wav2vec_raw.strip():
+                return jsonify({
+                    "error": "No speech detected. Please speak clearly into the microphone.",
+                    "status": "empty"
+                }), 400
+
             iq_wav2vec_raw = wav2vec_raw
-            iq_wav2vec_2_raw = iq_adjust_wav2vec2(target_words, wav2vec_2_raw)
-            wav2vec_3_raw = wav2vec_raw
-            iq_wav2vec_3_raw = iq_adjust_wav2vec3(target_words, wav2vec_3_raw)
+            w2v_acc, w2v_correct, w2v_errors, w2v_opt = score_candidate(target_words, iq_wav2vec_raw, level)
+            cleaned_opt = merge_syllable_hallucinations_and_stutters(w2v_opt, target_words)
+            fused_spoken_to_target_1, _ = get_alignment_mapping(target_words, cleaned_opt)
 
-        w2v_acc, w2v_correct, w2v_errors, w2v_opt = score_candidate(target_words, iq_wav2vec_raw, level)
-        w2v_2_acc, w2v_2_correct, w2v_2_errors, w2v_2_opt = score_candidate(target_words, iq_wav2vec_2_raw, level)
-        w2v_3_acc, w2v_3_correct, w2v_3_errors, w2v_3_opt = score_candidate(target_words, iq_wav2vec_3_raw, level)
+            final_opt = list(cleaned_opt)
+            for idx_spoken, idx_target in fused_spoken_to_target_1.items():
+                if idx_target is not None:
+                    target_word = target_words[idx_target]
+                    w1 = cleaned_opt[idx_spoken]
+                    t_lower = target_word.lower()
+                    w1_lower = w1.lower()
+                    w1_exact = (phonetic_normalize(t_lower) == phonetic_normalize(w1_lower))
+                    is_synonym = any(t_lower in pair and w1_lower in pair for pair in SYNONYM_PAIRS)
+                    c_s_match = (w1_lower.replace('c', 's') == t_lower.replace('c', 's'))
 
-        # Merge adjacent short syllable stutters/insertions that belong to the same matched word
-        cleaned_opt = merge_syllable_hallucinations_and_stutters(w2v_opt, target_words)
-        cleaned_opt_2 = merge_syllable_hallucinations_and_stutters(w2v_2_opt, target_words)
-        cleaned_opt_3 = merge_syllable_hallucinations_and_stutters(w2v_3_opt, target_words)
-
-        # Get alignment mapping to identify words that align to target words
-        fused_spoken_to_target_1, target_to_spoken_1 = get_alignment_mapping(target_words, cleaned_opt)
-        fused_spoken_to_target_2, target_to_spoken_2 = get_alignment_mapping(target_words, cleaned_opt_2)
-        fused_spoken_to_target_3, target_to_spoken_3 = get_alignment_mapping(target_words, cleaned_opt_3)
-        
-        # Build the final sequence based on wav2vec 1's physical sequence (preserves insertions/deletions/chaos)
-        final_opt = list(cleaned_opt)
-        
-        for idx_spoken, idx_target in fused_spoken_to_target_1.items():
-            if idx_target is not None:
-                target_word = target_words[idx_target]
-                w1 = cleaned_opt[idx_spoken]
-                
-                # Find what wav2vec 2 and 3 heard for this same target word
-                w2 = target_to_spoken_2.get(idx_target)
-                w3 = target_to_spoken_3.get(idx_target)
-                
-                t_lower = target_word.lower()
-                w1_lower = w1.lower()
-                w2_lower = w2.lower() if w2 else ""
-                w3_lower = w3.lower() if w3 else ""
-                
-                w1_exact = (phonetic_normalize(t_lower) == phonetic_normalize(w1_lower))
-                w1_is_vowel = is_pure_vowel_shift(t_lower, w1_lower)
-                w2_is_vowel = is_pure_vowel_shift(t_lower, w2_lower) if w2 else False
-                
-                w3_is_vowel = is_pure_vowel_shift(t_lower, w3_lower) if w3 else False
-                w3_is_omission = (len(w3_lower) < len(t_lower)) if w3 else False
-                w3_is_insertion = (len(w3_lower) > len(t_lower)) if w3 else False
-                w3_is_stutter = is_stutter(t_lower, w3_lower) if w3 else False
-                w3_is_substitution = (len(w3_lower) == len(t_lower) and not w3_is_vowel and phonetic_normalize(t_lower) != phonetic_normalize(w3_lower)) if w3 else False
-                
-                # Helper to calculate exact character edit distance
-                def calc_ed(s1, s2):
-                    if len(s1) < len(s2): return calc_ed(s2, s1)
-                    if len(s2) == 0: return len(s1)
-                    prev = list(range(len(s2) + 1))
-                    for i, c1 in enumerate(s1):
-                        curr = [i + 1]
-                        for j, c2 in enumerate(s2):
-                            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (0 if c1 == c2 else 1)))
-                        prev = curr
-                    return prev[-1]
-                    
-                w1_is_stutter = is_stutter(t_lower, w1_lower)
-                w1_is_insertion = len(w1_lower) > len(t_lower) and set(t_lower).issubset(set(w1_lower))
-                w1_is_one_letter_error = (calc_ed(t_lower, w1_lower) == 1 and not w1_is_vowel and not w1_is_stutter and not w1_is_insertion)
-                
-                is_synonym = False
-                for pair in SYNONYM_PAIRS:
-                    if t_lower in pair and (w1_lower in pair or w2_lower in pair or w3_lower in pair):
-                        is_synonym = True
-                        break
-                
-                # User constraint: ALWAYS get deletion/insertion/substitution from wav2vec 1.
-                # In wav2vec 2, ONLY get the vowel shifting. Check strictly letter by letter.
-                # In wav2vec 3, accurately preserve stutters, insertions, deletions, substitutions, and vowel shifts.
-                safe_level = level.lower() if level else ''
-                is_expert_many_errors = (safe_level == 'expert' and w2v_errors >= 4)
-                is_expert_few_errors = (safe_level == 'expert' and 1 <= w2v_errors <= 3)
-                is_beginner = (safe_level == 'beginner' or safe_level == '')
-                
-                c_s_ortho_match = (w1_lower.replace('c', 's') == t_lower.replace('c', 's') or (w3_lower and w3_lower.replace('c', 's') == t_lower.replace('c', 's')))
-                
-                if is_synonym or c_s_ortho_match:
-                    final_opt[idx_spoken] = target_word
-                elif is_beginner:
-                    # User constraint: ALWAYS use wav2vec 1 for beginner to enforce strict detection.
-                    # It already has the proper spacing/segmentation from iq_adjust.
-                    if w1_exact:
+                    if is_synonym or c_s_match or w1_exact:
                         final_opt[idx_spoken] = target_word
                     else:
                         final_opt[idx_spoken] = w1
-                elif is_expert_many_errors:
-                    # User requested: if 4 or more errors in Expert, just fallback to wav2vec 1
-                    final_opt[idx_spoken] = w1
-                else:
-                    # Multi-model letter-by-letter consensus check across all 3 models:
-                    consensus = get_model_consensus_word(t_lower, w1_lower, w2_lower, w3_lower)
-                    
-                    if is_expert_few_errors:
-                        # User requirement: if 1-3 errors in Expert, follow wav2vec 2 (unless acoustic consensus agrees on an error)
-                        if consensus and consensus != t_lower:
-                            final_opt[idx_spoken] = consensus
-                        elif w2:
-                            final_opt[idx_spoken] = w2
-                        else:
-                            candidates = [(calc_ed(t_lower, w1_lower), w1)]
-                            if w3: candidates.append((calc_ed(t_lower, w3_lower), w3))
-                            best_w = min(candidates, key=lambda x: x[0])[1]
-                            final_opt[idx_spoken] = best_w
-                    else:
-                        # For Moderate / Progressive / other modes:
-                        if consensus and consensus != t_lower:
-                            final_opt[idx_spoken] = consensus
-                        elif w3 and (w3_is_omission or w3_is_stutter or w3_is_vowel or w3_is_insertion or w3_is_substitution):
-                            final_opt[idx_spoken] = w3
-                        elif not w1_exact and not w1_is_vowel and not w1_is_one_letter_error:
-                            final_opt[idx_spoken] = w1
-                        elif w1_is_one_letter_error and w2:
-                            final_opt[idx_spoken] = w2
-                        elif w2 and w2_is_vowel:
-                            final_opt[idx_spoken] = w2
-                        elif w1_is_vowel:
-                            final_opt[idx_spoken] = w1
-                        else:
-                            final_opt[idx_spoken] = target_word
 
-        if safe_level == 'expert':
-            final_opt = dedup_expert_fragment_doublings(final_opt, fused_spoken_to_target_1, target_words)
+            fused_transcription = " ".join(final_opt)
+            fused_transcription = match_original_casing_and_punctuation(target_text, fused_transcription)
 
-        fused_transcription = " ".join(final_opt)
-        # Match original casing, hyphens, and apostrophes from the target reference
-        fused_transcription = match_original_casing_and_punctuation(target_text, fused_transcription)
-        
-        detected_stutters = detect_stutters(final_opt, target_words)
+            detected_stutters = detect_stutters(final_opt, target_words)
+            _, final_errors = needleman_wunsch_alignment(target_words, final_opt, None)
+            best_errors = final_errors
 
-        # Recalculate errors on the final snapped/corrected output
-        _, final_errors = needleman_wunsch_alignment(target_words, final_opt, None)
-        best_errors = final_errors
+            total_target_words = len(target_words)
+            final_correct_count = max(0, total_target_words - best_errors)
+            accuracy_rate = (final_correct_count / total_target_words * 100.0) if total_target_words > 0 else 0.0
 
-        total_target_words  = len(target_words)
-        final_correct_count = max(0, total_target_words - best_errors)
+            duration_minutes = duration_seconds / 60.0
+            wcpm = (final_correct_count / duration_minutes) if duration_minutes > 0 else 0.0
 
-        accuracy_rate = 0.0
-        if total_target_words > 0:
-            accuracy_rate = (final_correct_count / total_target_words) * 100.0
-
-        duration_minutes = duration_seconds / 60.0
-        wcpm = 0.0
-        if duration_minutes > 0:
-            wcpm = final_correct_count / duration_minutes
-
-        # Terminal dashboard — always printed after every evaluation
-        print(f"\n{'='*70}")
-        print(f" TARGET         : {target_text}")
-        print(f" WAV2VEC (raw)  : {wav2vec_raw}")
-        print(f" WAV2VEC 2 (raw): {iq_wav2vec_2_raw}")
-        print(f" WAV2VEC 3 (raw): {iq_wav2vec_3_raw}")
-        print(f" USED           : {fused_transcription}")
-        print(f" SCORE          : Accuracy: {round(accuracy_rate,2)}% | WCPM: {round(wcpm,2)}")
-        print(f" CORRECT        : {final_correct_count} / {total_target_words}")
-        print(f" DURATION       : {round(duration_seconds, 2)} seconds")
-        print(f"{'='*70}\n")
+            print(f"\n{'='*70}")
+            print(f" TARGET         : {target_text}")
+            print(f" WAV2VEC (raw)  : {wav2vec_raw}")
+            print(f" USED           : {fused_transcription}")
+            print(f" SCORE          : Accuracy: {round(accuracy_rate,2)}% | WCPM: {round(wcpm,2)}")
+            print(f" CORRECT        : {final_correct_count} / {total_target_words}")
+            print(f" DURATION       : {round(duration_seconds, 2)} seconds")
+            print(f"{'='*70}\n")
 
         trace_data, _, _, _ = get_simulation_trace(target_words, final_opt)
 
