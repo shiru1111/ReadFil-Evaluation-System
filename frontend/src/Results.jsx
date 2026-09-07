@@ -79,20 +79,28 @@ export default function Results() {
   const highlightErrors = (target, heard, stutters = []) => {
     if (!heard) return <span className="text-gray-400 italic">No audio detected.</span>;
 
-    // Pure stripping. No hardcoded dictionary mapping. 
-    // We trust the backend's Two-Way Snapper to have formatted the words correctly.
-    const targetWords = target.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(' ');
-    const heardWords = heard.split(' ');
+    // Strip apostrophes/hyphens for word boundary integrity, then split across all whitespace (spaces, newlines, tabs)
+    const cleanTarget = target.toLowerCase().replace(/[-'\u2010-\u2015\ufe63\uff0d’‘`]/g, '');
+    const targetWords = cleanTarget.replace(/[^a-z0-9\s]/g, ' ').trim().split(/\s+/);
+    const heardWords = heard.trim().split(/\s+/);
     
+    // Tagalog vowel shift normalizer (e <-> i, o <-> u)
+    const normalizeVowels = (w) => w.toLowerCase().replace(/e/g, 'i').replace(/o/g, 'u');
+
     return heardWords.map((word, index) => {
-      const cleanWord = word.toLowerCase().replace(/[^a-z0-9\s]/g, '');
-      const isError = !targetWords.includes(cleanWord);
+      const cleanWord = word.toLowerCase().replace(/[-'\u2010-\u2015\ufe63\uff0d’‘`]/g, '').replace(/[^a-z0-9]/g, '');
+      if (!cleanWord) {
+        return <span key={index} className="text-gray-900">{word}{' '}</span>;
+      }
+      const isDirectMatch = targetWords.includes(cleanWord);
+      const isVowelShift = !isDirectMatch && targetWords.some(tw => normalizeVowels(tw) === normalizeVowels(cleanWord));
+      const isError = !isDirectMatch && !isVowelShift;
       const isStutter = stutters.includes(cleanWord);
 
       let styleClass = "text-gray-900";
       if (isStutter) {
         styleClass = "bg-orange-200 text-orange-900 font-extrabold px-1.5 py-0.5 rounded-md mx-0.5 shadow-sm";
-      } else if (isError) {
+      } else if (isError || isVowelShift) {
         styleClass = "bg-red-200 text-red-900 font-extrabold px-1.5 py-0.5 rounded-md mx-0.5 shadow-sm";
       }
 

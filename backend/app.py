@@ -708,21 +708,52 @@ def is_any_vowel_shift(word1, word2):
     s2 = consonant_skeleton(w2)
     return (s1 == s2 and s1 != "" and w1 != w2)
 
+def is_pure_vowel_shift(word1, word2):
+    """
+    Checks if word1 and word2 differ ONLY by valid Tagalog vowel shifts:
+    e <-> i and o <-> u
+    """
+    if not word1 or not word2:
+        return False
+    w1 = re.sub(r'[^a-z0-9]', '', str(word1).lower())
+    w2 = re.sub(r'[^a-z0-9]', '', str(word2).lower())
+    if w1 == w2:
+        return False
+    if len(w1) != len(w2):
+        return False
+    diff_count = 0
+    for c1, c2 in zip(w1, w2):
+        if c1 != c2:
+            is_valid_shift = (c1 in ('e', 'i') and c2 in ('e', 'i')) or \
+                             (c1 in ('o', 'u') and c2 in ('o', 'u'))
+            if not is_valid_shift:
+                return False
+            diff_count += 1
+    return diff_count > 0
+
 def is_correct_pronunciation(target, spoken):
     if not target or not spoken:
         return False
+    t_lower = target.lower()
+    s_lower = spoken.lower()
+    if any(t_lower in pair and s_lower in pair for pair in SYNONYM_PAIRS):
+        return True
     t_norm = phonetic_normalize(target)
     s_norm = phonetic_normalize(spoken)
     if t_norm == s_norm:
         return True
     
+    # Pure vowel shifts (e <-> i and o <-> u) are valid Tagalog pronunciations and should NOT flag as error:
+    if is_pure_vowel_shift(target, spoken):
+        return True
+
     # Stutters and insertions are never correct pronunciation
     if is_stutter(target, spoken):
         return False
     if len(spoken) > len(target) and set(target).issubset(set(spoken)):
         return False
         
-    # Vowel shiftings across any vowels are pronunciation errors (do NOT forgive)
+    # Non-standard vowel shiftings (e.g. a <-> u, a <-> i) are pronunciation errors
     if is_any_vowel_shift(target, spoken):
         return False
 
@@ -1179,19 +1210,6 @@ def has_omission(target, spoken):
         if all(c in it for c in s_norm):
             return True
     return False
-
-def is_pure_vowel_shift(word1, word2):
-    if len(word1) != len(word2):
-        return False
-    diff_count = 0
-    for c1, c2 in zip(word1, word2):
-        if c1 != c2:
-            is_vowel_shift = (c1 == 'e' and c2 == 'i') or (c1 == 'i' and c2 == 'e') or \
-                             (c1 == 'o' and c2 == 'u') or (c1 == 'u' and c2 == 'o')
-            if not is_vowel_shift:
-                return False
-            diff_count += 1
-    return diff_count > 0
 
 
 
@@ -1762,26 +1780,53 @@ def evaluate_audio():
                 for wrong, right in EXPERT_CORRECTIONS.items():
                     active_raw = active_raw.replace(wrong, right)
 
+            # Auto-convert only if on the reference target text:
+            target_lower_str = " ".join(target_words).lower()
+            if 'tiyago' in target_lower_str:
+                active_raw = re.sub(r'\btiago\b', 'Tiyago', active_raw, flags=re.IGNORECASE)
+                if w2v_expert_raw:
+                    w2v_expert_raw = re.sub(r'\btiago\b', 'tiyago', w2v_expert_raw, flags=re.IGNORECASE)
+            if 'atenas' in target_lower_str:
+                active_raw = re.sub(r'\b(?:athinas|atinas)\b', 'Atenas', active_raw, flags=re.IGNORECASE)
+                if w2v_expert_raw:
+                    w2v_expert_raw = re.sub(r'\b(?:athinas|atinas)\b', 'atenas', w2v_expert_raw, flags=re.IGNORECASE)
+
             spoken_words = clean_text(active_raw)
             opt_words = fix_segmentation_errors(target_words, spoken_words)
             cleaned_opt = merge_syllable_hallucinations_and_stutters(opt_words, target_words)
 
             spoken_to_target, target_to_spoken = get_alignment_mapping(target_words, cleaned_opt)
 
-            # In Expert mode: Always use Soniox, but transfer acoustic vowel shifts letter-by-letter from Wav2Vec
+            target_to_w2v = {}
+            # In Expert mode: Check if Soniox matches target text or if the user spoke gibberish
             if safe_level == 'expert' and w2v_expert_raw and w2v_expert_raw.strip():
-                w2v_words = clean_text(w2v_expert_raw)
-                w2v_to_target, target_to_w2v = get_alignment_mapping(target_words, w2v_words)
-                for idx_spoken, idx_target in spoken_to_target.items():
-                    if idx_target is not None and idx_target in target_to_w2v:
-                        w2v_word = target_to_w2v[idx_target]
-                        if w2v_word:
-                            target_word = target_words[idx_target]
-                            soniox_word = cleaned_opt[idx_spoken]
-                            transferred = transfer_vowel_shifts_from_w2v(target_word, soniox_word, w2v_word)
-                            if transferred != soniox_word:
-                                print(f"[EXPERT VOWEL SHIFT] Word '{target_word}': Soniox='{soniox_word}', W2V='{w2v_word}' -> Transferred='{transferred}'")
-                                cleaned_opt[idx_spoken] = transferred
+                soniox_matches = sum(1 for idx_s, idx_t in spoken_to_target.items() 
+                                     if idx_t is not None and is_correct_pronunciation(target_words[idx_t], cleaned_opt[idx_s]))
+                soniox_match_ratio = (soniox_matches / len(target_words)) if target_words else 0.0
+
+                # If Soniox overall match is low (< 50%), Soniox hallucinated on gibberish speech:
+                # Use Wav2Vec directly so the actual acoustic gibberish is displayed!
+                if soniox_match_ratio < 0.50:
+                    print(f"[EXPERT] Soniox is not matched on target text ({round(soniox_match_ratio*100, 1)}% < 50%). Using Wav2Vec to display gibberish!")
+                    active_raw = w2v_expert_raw
+                    spoken_words = clean_text(active_raw)
+                    cleaned_opt = spoken_words
+                    spoken_to_target, target_to_spoken = get_alignment_mapping(target_words, cleaned_opt)
+                else:
+                    # Soniox matches well overall:
+                    # 1) Transfer acoustic vowel shifts letter-by-letter from Wav2Vec
+                    w2v_words = clean_text(w2v_expert_raw)
+                    w2v_to_target, target_to_w2v = get_alignment_mapping(target_words, w2v_words)
+                    for idx_spoken, idx_target in spoken_to_target.items():
+                        if idx_target is not None and idx_target in target_to_w2v:
+                            w2v_word = target_to_w2v[idx_target]
+                            if w2v_word:
+                                target_word = target_words[idx_target]
+                                soniox_word = cleaned_opt[idx_spoken]
+                                transferred = transfer_vowel_shifts_from_w2v(target_word, soniox_word, w2v_word)
+                                if transferred != soniox_word:
+                                    print(f"[EXPERT VOWEL SHIFT] Word '{target_word}': Soniox='{soniox_word}', W2V='{w2v_word}' -> Transferred='{transferred}'")
+                                    cleaned_opt[idx_spoken] = transferred
 
             final_opt = list(cleaned_opt)
 
@@ -1804,7 +1849,11 @@ def evaluate_audio():
                     elif is_synonym or c_s_match or is_exact:
                         final_opt[idx_spoken] = target_word
                     else:
-                        final_opt[idx_spoken] = w_spoken
+                        # If Soniox word is not matched on target word, use Wav2Vec word to display gibberish
+                        if safe_level == 'expert' and target_to_w2v.get(idx_target):
+                            final_opt[idx_spoken] = target_to_w2v[idx_target]
+                        else:
+                            final_opt[idx_spoken] = w_spoken
 
             if safe_level == 'expert':
                 final_opt = dedup_expert_fragment_doublings(final_opt, spoken_to_target, target_words)
