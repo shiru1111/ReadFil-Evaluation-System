@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { beginnerPassages, moderatePassages, expertPassages } from './data/passages';
 import { useLanguage } from './contexts/LanguageContext';
+import SoundWaveBackground from './components/SoundWaveBackground';
 
 export default function Progressive() {
   const { t } = useLanguage();
@@ -118,6 +119,24 @@ export default function Progressive() {
               if (event.data.size > 0) audioChunksRef.current.push(event.data);
             };
             mediaRecorderRef.current.onstop = sendAudioToServer;
+
+            // Connect AnalyserNode for audio-reactive background during actual test
+            try {
+              if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+                audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+              }
+              if (audioContextRef.current.state === 'suspended') {
+                await audioContextRef.current.resume();
+              }
+              const analyser = audioContextRef.current.createAnalyser();
+              analyser.fftSize = 256;
+              analyser.smoothingTimeConstant = 0.8;
+              const source = audioContextRef.current.createMediaStreamSource(stream);
+              source.connect(analyser);
+              analyserRef.current = analyser;
+            } catch (e) {
+              console.warn("Could not attach audio analyser:", e);
+            }
           } catch (err) {
             console.error("Microphone access denied:", err);
             alert("Microphone connection lost. Please allow access.");
@@ -288,6 +307,24 @@ export default function Progressive() {
 
       mediaRecorderRef.current.onstop = sendAudioToServer;
 
+      // Connect AnalyserNode for audio-reactive background
+      try {
+        if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+          audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContextRef.current.state === 'suspended') {
+          await audioContextRef.current.resume();
+        }
+        const analyser = audioContextRef.current.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.8;
+        const source = audioContextRef.current.createMediaStreamSource(stream);
+        source.connect(analyser);
+        analyserRef.current = analyser;
+      } catch (e) {
+        console.warn("Could not attach audio analyser:", e);
+      }
+
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
 
       setIsTestReady(true);
@@ -407,8 +444,11 @@ export default function Progressive() {
   if (testPassages.length === 0) return null;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-white via-[#0096FF]/10 to-white text-black font-sans relative">
-      <nav className="w-full bg-white/80 backdrop-blur-md shadow-sm px-4 sm:px-10 lg:px-20 py-4 sm:py-5 flex justify-between items-center">
+    <div className="min-h-screen bg-transparent text-black font-sans relative overflow-x-hidden">
+      {/* Audio-Reactive Waving Background */}
+      <SoundWaveBackground analyserRef={analyserRef} isRecording={isRecording || micStatus === 'recording_test'} />
+
+      <nav className="w-full bg-white/75 backdrop-blur-md shadow-sm border-b border-white/50 px-4 sm:px-10 lg:px-20 py-4 sm:py-5 flex justify-between items-center relative z-10">
         <div className="text-xl sm:text-2xl font-black tracking-tight text-[#0096FF]">ReadFil</div>
         <a href="/" onClick={(e) => { e.preventDefault(); confirmReturnHome(); }} className="font-semibold text-xs sm:text-sm uppercase tracking-wide hover:text-[#0096FF] transition-colors cursor-pointer">
           {t("nav.return_home")}
@@ -416,11 +456,11 @@ export default function Progressive() {
       </nav>
 
       {!isTestReady ? (
-        <main className="max-w-3xl mx-auto pt-20 sm:pt-32 px-4 sm:px-10 pb-12 sm:pb-20 text-center">
+        <main className="max-w-3xl mx-auto pt-20 sm:pt-32 px-4 sm:px-10 pb-12 sm:pb-20 text-center relative z-10">
           <h1 className="text-3xl sm:text-4xl font-extrabold mb-4">{theme.title} {t("eval.mic_check")}</h1>
           <p className="text-gray-600 text-base sm:text-lg mb-8 sm:mb-12">{t("eval.prog_verify").replace("{level}", theme.title)}</p>
 
-          <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl border border-gray-100 flex flex-col items-center">
+          <div className="bg-white/90 backdrop-blur-md p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl shadow-sky-100/50 border border-white/80 flex flex-col items-center">
 
             {/* Visualizer Canvas */}
             <div className="w-full h-32 bg-gray-50 rounded-xl border border-gray-200 mb-8 overflow-hidden flex items-center justify-center">
@@ -442,11 +482,18 @@ export default function Progressive() {
             {/* Test Controls */}
             <div className="flex flex-col items-center gap-6">
               {micStatus !== 'playback_ready' ? (
-                <button
-                  onClick={handleMicTestToggle}
-                  className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all ${micStatus === 'recording_test' ? 'bg-red-500 hover:bg-red-600 animate-pulse scale-110' : `${theme.bg} ${theme.hover} hover:scale-105`
-                    }`}
-                >
+                <div className="relative flex items-center justify-center">
+                  {micStatus === 'recording_test' && (
+                    <>
+                      <span className="absolute w-32 h-32 rounded-full bg-red-400/30 animate-ping pointer-events-none"></span>
+                      <span className="absolute w-28 h-28 rounded-full bg-[#0096FF]/20 animate-pulse pointer-events-none"></span>
+                    </>
+                  )}
+                  <button
+                    onClick={handleMicTestToggle}
+                    className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all relative z-10 ${micStatus === 'recording_test' ? 'bg-red-500 hover:bg-red-600 animate-pulse scale-110' : `${theme.bg} ${theme.hover} hover:scale-105`
+                      }`}
+                  >
                   <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     {micStatus === 'recording_test' ? (
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
@@ -455,6 +502,7 @@ export default function Progressive() {
                     )}
                   </svg>
                 </button>
+              </div>
               ) : (
                 <div className="flex flex-col items-center gap-6 w-full">
                   <audio src={testAudioUrl} controls className="w-full max-w-md" />
@@ -478,13 +526,13 @@ export default function Progressive() {
           </div>
         </main>
       ) : (
-        <main className="max-w-4xl mx-auto pt-12 sm:pt-20 px-4 sm:px-10 pb-12 sm:pb-20">
+        <main className="max-w-4xl mx-auto pt-12 sm:pt-20 px-4 sm:px-10 pb-12 sm:pb-20 relative z-10">
           <div className="text-center mb-8 sm:mb-12">
             <h1 className={`text-3xl sm:text-4xl font-extrabold mb-2 ${theme.text}`}>{theme.title} {t("eval.prog_eval_title")}</h1>
             <p className="text-gray-500 font-bold uppercase tracking-widest text-xs sm:text-sm">{t("levels.progressive")}</p>
           </div>
 
-          <div className="bg-white p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl border border-gray-100 mb-6 sm:mb-10 relative">
+          <div className="bg-white/90 backdrop-blur-md p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl shadow-sky-100/50 border border-white/80 mb-6 sm:mb-10 relative">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl sm:text-2xl font-bold text-[#0096FF]">{t("eval.reading_material")}</h2>
               <span className="text-sm font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
@@ -519,19 +567,27 @@ export default function Progressive() {
 
           <div className="flex flex-col items-center justify-center">
             {!hasRecorded && (
-              <button
-                onClick={toggleRecording}
-                disabled={isProcessing || isCountingDown}
-                className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 ${isRecording ? 'bg-red-500 animate-pulse' : theme.bg} ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
-              >
-                <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  {isRecording ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
-                  ) : (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
-                  )}
-                </svg>
-              </button>
+              <div className="relative flex items-center justify-center">
+                {isRecording && (
+                  <>
+                    <span className="absolute w-36 h-36 rounded-full bg-red-400/30 animate-ping pointer-events-none"></span>
+                    <span className="absolute w-28 h-28 rounded-full bg-[#0096FF]/20 animate-pulse pointer-events-none"></span>
+                  </>
+                )}
+                <button
+                  onClick={toggleRecording}
+                  disabled={isProcessing || isCountingDown}
+                  className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 relative z-10 ${isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : theme.bg} ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
+                >
+                  <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    {isRecording ? (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+                    ) : (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+                    )}
+                  </svg>
+                </button>
+              </div>
             )}
 
             <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-600' : isProcessing ? 'text-[#005FA3] animate-pulse' : isSilence ? 'text-red-600' : 'text-gray-500'}`}>

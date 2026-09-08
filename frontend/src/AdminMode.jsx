@@ -467,7 +467,9 @@ export default function AdminMode() {
                               <td className="py-4 px-4 font-mono text-gray-900">{step.target}</td>
                               <td className="py-4 px-4 font-mono text-gray-900">
                                 {results.stutter_words?.includes(step.spoken) ? (
-                                  <span className="bg-orange-200 text-orange-900 font-extrabold px-2 py-1 rounded-md shadow-sm">{step.spoken}</span>
+                                   <span className="bg-orange-200 text-orange-900 font-extrabold px-2 py-1 rounded-md shadow-sm">{step.spoken}</span>
+                                ) : (!step.is_correct || step.distance > 0) && step.spoken !== '-' ? (
+                                  <span className="bg-red-100 text-red-800 font-bold px-1.5 py-0.5 rounded">{step.spoken}</span>
                                 ) : (
                                   step.spoken
                                 )}
@@ -478,7 +480,7 @@ export default function AdminMode() {
                                   results.stutter_words?.includes(step.spoken) ? 'bg-orange-200 text-orange-900' :
                                   step.type === 'insertion' ? 'bg-orange-100 text-orange-800' :
                                   step.type === 'deletion' ? 'bg-red-100 text-red-800' :
-                                  'bg-yellow-100 text-yellow-800'
+                                  'bg-red-100 text-red-800'
                                 }`}>
                                   {results.stutter_words?.includes(step.spoken) ? `STUTTER (${step.type.toUpperCase()})` : step.type.toUpperCase()}
                                 </span>

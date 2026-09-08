@@ -76,31 +76,116 @@ export default function Results() {
   // ==========================================
   // FIXED: Visual Error Highlighter Function
   // ==========================================
-  const highlightErrors = (target, heard, stutters = []) => {
+  const highlightErrors = (target, heard, stutters = [], trace = []) => {
     if (!heard) return <span className="text-gray-400 italic">No audio detected.</span>;
 
-    // Pure stripping. No hardcoded dictionary mapping. 
-    // We trust the backend's Two-Way Snapper to have formatted the words correctly.
-    const targetWords = target.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(' ');
-    const heardWords = heard.split(' ');
-    
+    const clean = (w) => (w || '').toLowerCase().replace(/[-'\u2010-\u2015\ufe63\uff0d’‘`]/g, '').replace(/[^a-z0-9]/g, '');
+    const heardWords = heard.trim().split(/\s+/);
+    const spokenSteps = (trace || []).filter(step => step && step.spoken && step.spoken !== '-');
+
+    const isPureVowelShift = (w1, w2) => {
+      if (!w1 || !w2) return false;
+      const s1 = (w1 || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const s2 = (w2 || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (s1 === s2 || s1.length !== s2.length) return false;
+      let diff = 0;
+      for (let k = 0; k < s1.length; k++) {
+        if (s1[k] !== s2[k]) {
+          const valid = (s1[k] === 'e' && s2[k] === 'i') || (s1[k] === 'i' && s2[k] === 'e') ||
+                        (s1[k] === 'o' && s2[k] === 'u') || (s1[k] === 'u' && s2[k] === 'o');
+          if (!valid) return false;
+          diff++;
+        }
+      }
+      return diff > 0;
+    };
+
+    // 1. Primary: Use trace data if available and aligned 1-to-1 with heard words
+    if (spokenSteps.length === heardWords.length && spokenSteps.length > 0) {
+      return heardWords.map((word, index) => {
+        const step = spokenSteps[index];
+        const cleanWord = clean(word);
+        const isStutter = (stutters || []).includes(cleanWord) || (step && (stutters || []).includes(clean(step.spoken)));
+        
+        // Genuine errors (substitutions, insertions, deletions)
+        const isError = step && (!step.is_correct || step.type === 'substitution' || step.type === 'insertion');
+        // Pure vowel shifts (e,i and o,u) highlight visually but are not errors
+        const isVowelShift = step && (step.is_vowel_shift || (step.distance > 0 && isPureVowelShift(step.target, step.spoken)));
+        const shouldHighlight = isError || isVowelShift;
+
+        let styleClass = "text-gray-900";
+        if (isStutter) {
+          styleClass = "bg-orange-200 text-orange-900 font-extrabold px-1.5 py-0.5 rounded-md mx-0.5 shadow-sm";
+        } else if (shouldHighlight) {
+          styleClass = "bg-red-200 text-red-900 font-extrabold px-1.5 py-0.5 rounded-md mx-0.5 shadow-sm";
+        }
+
+        return (
+          <span key={index} className={styleClass}>
+            {word}{' '}
+          </span>
+        );
+      });
+    }
+
+    // 2. Fallback: Position-aware Needleman-Wunsch sequence alignment (NEVER targetWords.includes)
+    const cleanTarget = (target || '').toLowerCase().replace(/[-'\u2010-\u2015\ufe63\uff0d’‘`]/g, '');
+    const targetWords = cleanTarget.replace(/[^a-z0-9\s]/g, ' ').trim().split(/\s+/).filter(Boolean);
+    const heardClean = heardWords.map(w => clean(w));
+
+    const m = targetWords.length;
+    const n = heardClean.length;
+    const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+    const ptr = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(''));
+
+    for (let i = 0; i <= m; i++) { dp[i][0] = -2 * i; ptr[i][0] = 'U'; }
+    for (let j = 0; j <= n; j++) { dp[0][j] = -2 * j; ptr[0][j] = 'L'; }
+
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        const isMatch = targetWords[i - 1] === heardClean[j - 1];
+        const isVShift = isPureVowelShift(targetWords[i - 1], heardClean[j - 1]);
+        const matchScore = dp[i - 1][j - 1] + (isMatch || isVShift ? 5 : -2);
+        const delScore = dp[i - 1][j] - 2;
+        const insScore = dp[i][j - 1] - 2;
+        const best = Math.max(matchScore, delScore, insScore);
+        dp[i][j] = best;
+        if (best === matchScore) ptr[i][j] = 'D';
+        else if (best === delScore) ptr[i][j] = 'U';
+        else ptr[i][j] = 'L';
+      }
+    }
+
+    let i = m, j = n;
+    const isWordHighlight = new Array(n).fill(true);
+    while (i > 0 || j > 0) {
+      if (ptr[i][j] === 'D') {
+        const isExactMatch = targetWords[i - 1] === heardClean[j - 1];
+        // Both genuine mismatches and pure vowel shifts highlight visually
+        isWordHighlight[j - 1] = !isExactMatch;
+        i--; j--;
+      } else if (ptr[i][j] === 'U') {
+        i--;
+      } else {
+        isWordHighlight[j - 1] = true;
+        j--;
+      }
+    }
+
     return heardWords.map((word, index) => {
-      const cleanWord = word.toLowerCase().replace(/[^a-z0-9\s]/g, '');
-      const isError = !targetWords.includes(cleanWord);
-      const isStutter = stutters.includes(cleanWord);
+      const cleanWord = clean(word);
+      const isStutter = (stutters || []).includes(cleanWord);
+      const shouldHighlight = isWordHighlight[index];
 
       let styleClass = "text-gray-900";
       if (isStutter) {
         styleClass = "bg-orange-200 text-orange-900 font-extrabold px-1.5 py-0.5 rounded-md mx-0.5 shadow-sm";
-      } else if (isError) {
+      } else if (shouldHighlight) {
         styleClass = "bg-red-200 text-red-900 font-extrabold px-1.5 py-0.5 rounded-md mx-0.5 shadow-sm";
       }
 
       return (
-        <span 
-          key={index} 
-          className={styleClass}
-        >
+        <span key={index} className={styleClass}>
           {word}{' '}
         </span>
       );
@@ -385,7 +470,7 @@ export default function Results() {
                         </span>
                         <div className={`p-6 rounded-sm border h-full shadow-inner ${hasErrors ? 'bg-red-50/30 border-red-100' : 'bg-gray-50 border-gray-100'}`}>
                           <p className="font-medium leading-relaxed text-lg italic leading-loose">
-                            {highlightErrors(log.target_text, log.transcription, log.stutter_words)}
+                            {highlightErrors(log.target_text, log.transcription, log.stutter_words, log.trace)}
                           </p>
                         </div>
                       </div>

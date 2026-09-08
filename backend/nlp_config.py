@@ -17,6 +17,10 @@ SYNONYM_PAIRS = [
     {'kastila', 'kastina'},
     {'prinsipe', 'principe', 'pincepe'},
     {'maria', 'mariya'},
+    {'tiago', 'tiyago'},
+    {'atenas', 'athinas', 'atinas', 'athenas'},
+    {'albania', 'albanya'},
+    {'kasamahang', 'Kkasamamahang'}
 ]
 
 ENCLITIC_Y_BASES = {
