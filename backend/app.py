@@ -29,7 +29,7 @@ from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 class SafeStream:
     def __init__(self, original_stream):
@@ -39,6 +39,7 @@ class SafeStream:
         try:
             if self.original_stream:
                 self.original_stream.write(data)
+                self.original_stream.flush()
         except OSError as e:
             if e.errno != 22:  # Swallow [Errno 22] Invalid argument
                 raise
@@ -64,6 +65,17 @@ sys.stderr = SafeStream(sys.stderr)
 
 # IMPORT OUR SMART DICTIONARIES
 from nlp_config import SYNONYM_PAIRS, ENCLITIC_Y_BASES, TAGALOG_PARTICLES, EXPERT_CORRECTIONS
+
+def check_is_synonym(w1, w2):
+    if not w1 or not w2:
+        return False
+    w1_low = str(w1).lower().strip()
+    w2_low = str(w2).lower().strip()
+    for pair in SYNONYM_PAIRS:
+        pair_low = {str(p).lower().strip() for p in pair}
+        if w1_low in pair_low and w2_low in pair_low:
+            return True
+    return False
 
 app = Flask(__name__)
 CORS(app)
@@ -244,14 +256,14 @@ def normalize_tagalog_numbers(text, target_words=None):
     text = re.sub(r'\b(\d+)\b', repl_digit, text)
     return text
 
-def transcribe_soniox(wav_path, target_words=None):
+def transcribe_resend(wav_path, target_words=None):
     """
-    Transcribes audio using Soniox Cloud Speech-to-Text API.
+    Transcribes audio using Resend Cloud Speech-to-Text API.
     Used exclusively for Moderate and Expert reading levels.
     """
-    api_key = os.getenv("SONIOX_API_KEY")
+    api_key = os.getenv("Resend_api_key") or os.getenv("RESEND_API_KEY") or os.getenv("SONIOX_API_KEY")
     if not api_key:
-        print("[SONIOX] Notice: SONIOX_API_KEY not set in .env. Falling back to local Wav2Vec.")
+        print("[RESEND] Notice: Resend_api_key not set in .env. Falling back to local Wav2Vec.")
         return None
     try:
         from soniox import SonioxClient
@@ -263,11 +275,14 @@ def transcribe_soniox(wav_path, target_words=None):
         transcript = client.stt.get_transcript(transcription.id)
         text = transcript.text.strip() if transcript and transcript.text else ""
         text = normalize_tagalog_numbers(text, target_words)
-        print(f"[SONIOX] Cloud transcription OK: '{text}'")
+        print(f"[RESEND] Cloud transcription OK: '{text}'")
         return text
     except Exception as e:
-        print(f"[SONIOX] Error during cloud transcription: {e}. Falling back to local Wav2Vec.")
+        print(f"[RESEND] Error during cloud transcription: {e}. Falling back to local Wav2Vec.")
         return None
+
+# Backwards compatibility alias
+transcribe_soniox = transcribe_resend
 
 # =================================================================
 # TEXT NORMALIZATION
@@ -734,39 +749,19 @@ def is_pure_vowel_shift(word1, word2):
 def is_correct_pronunciation(target, spoken):
     if not target or not spoken:
         return False
-    t_lower = target.lower()
-    s_lower = spoken.lower()
-    if any(t_lower in pair and s_lower in pair for pair in SYNONYM_PAIRS):
+    t_lower = str(target).lower().strip()
+    s_lower = str(spoken).lower().strip()
+    if t_lower == s_lower:
+        return True
+    if check_is_synonym(t_lower, s_lower):
         return True
     t_norm = phonetic_normalize(target)
     s_norm = phonetic_normalize(spoken)
     if t_norm == s_norm:
         return True
-    
-    # Pure vowel shifts (e <-> i and o <-> u) are valid Tagalog pronunciations and should NOT flag as error:
+    # Pure vowel shifts (strictly e <-> i and o <-> u) are valid Tagalog pronunciations and should NOT flag as error:
     if is_pure_vowel_shift(target, spoken):
         return True
-
-    # Stutters and insertions are never correct pronunciation
-    if is_stutter(target, spoken):
-        return False
-    if len(spoken) > len(target) and set(target).issubset(set(spoken)):
-        return False
-        
-    # Non-standard vowel shiftings (e.g. a <-> u, a <-> i) are pronunciation errors
-    if is_any_vowel_shift(target, spoken):
-        return False
-
-    # Consonant skeleton gate: if the spoken word is missing key consonants
-    # from the target, it cannot be a correct pronunciation.
-    if not letters_are_subset_of(target, spoken):
-        return False
-    dist = modified_levenshtein(target, spoken)
-    # Strict phonetic approximation — 0.15 threshold prevents borderline
-    # mismatches like o↔a in 5-char words (1/5=0.20) from passing.
-    if dist <= 0.15 and abs(len(target) - len(spoken)) <= 1:
-        return True
-            
     return False
 
 def align_chars(target, spoken):
@@ -852,17 +847,17 @@ def align_chars_nw(s1, s2):
     aligned.reverse()
     return aligned
 
-def transfer_vowel_shifts_from_w2v(target_word, soniox_word, w2v_word):
+def transfer_vowel_shifts_from_w2v(target_word, resend_word, w2v_word):
     """
     Checks Wav2Vec letter-by-letter against target word. If Wav2Vec heard a vowel shifting
     (e.g., 'senro' has 'e' instead of 'i' in 'sino', or 'detro' has 'e' instead of 'i' in 'dito'),
-    transfers that vowel directly into the Soniox word.
+    transfers that vowel directly into the Resend word.
     """
-    if not target_word or not soniox_word or not w2v_word:
-        return soniox_word
+    if not target_word or not resend_word or not w2v_word:
+        return resend_word
         
     t = target_word.lower()
-    s = soniox_word.lower()
+    s = resend_word.lower()
     w = w2v_word.lower()
 
     # Consonant gate: Ensure w2v has compatible consonants with target
@@ -872,7 +867,7 @@ def transfer_vowel_shifts_from_w2v(target_word, soniox_word, w2v_word):
     if t_consonants:
         common_cons = sum(1 for c in t_consonants if c in w_consonants)
         if (common_cons / len(t_consonants)) < 0.5:
-            return soniox_word
+            return resend_word
     
     # 1. Align target to w2v letter-by-letter
     t_w_aligned = align_chars_nw(t, w)
@@ -888,12 +883,12 @@ def transfer_vowel_shifts_from_w2v(target_word, soniox_word, w2v_word):
             t_idx += 1
             
     if not t_to_w2v_vowels:
-        return soniox_word
+        return resend_word
         
-    # 2. Align target to soniox letter-by-letter
+    # 2. Align target to resend letter-by-letter
     t_s_aligned = align_chars_nw(t, s)
     
-    # Map target char index -> soniox char index
+    # Map target char index -> resend char index
     t_idx = 0
     s_idx = 0
     t_to_s_idx = {}
@@ -905,8 +900,8 @@ def transfer_vowel_shifts_from_w2v(target_word, soniox_word, w2v_word):
         if c_t != '-': t_idx += 1
         if c_s != '-': s_idx += 1
         
-    # 3. Apply w2v vowel shift to soniox word, preserving original casing
-    s_chars = list(soniox_word)
+    # 3. Apply w2v vowel shift to resend word, preserving original casing
+    s_chars = list(resend_word)
     for t_i, w2v_vowel in t_to_w2v_vowels.items():
         if t_i in t_to_s_idx:
             s_i = t_to_s_idx[t_i]
@@ -917,6 +912,114 @@ def transfer_vowel_shifts_from_w2v(target_word, soniox_word, w2v_word):
                 s_chars[s_i] = w2v_vowel.lower()
             
     return "".join(s_chars)
+
+def normalize_vowels(s):
+    return s.replace('e', 'i').replace('o', 'u')
+
+def clean_word_chars(w):
+    if not w:
+        return ""
+    w = str(w).lower()
+    w = re.sub(r"[-'\u2010-\u2015\ufe63\uff0d’‘`]", '', w)
+    return w
+
+def resend_lacks_letter_and_w2v_has_it(target, resend, w2v):
+    """
+    Checks if Resend is lacking letters from the target text (e.g. dropped '-ng'
+    ligature or trailing/leading letters like 'pito' vs 'pitong'), but Wav2Vec
+    captured those missing letters.
+    """
+    if not target or not resend or not w2v:
+        return False
+
+    t_raw = clean_word_chars(target)
+    s_raw = clean_word_chars(resend)
+    w_raw = clean_word_chars(w2v)
+
+    if s_raw == t_raw:
+        return False
+    if len(s_raw) >= len(t_raw):
+        return False
+
+    t_v = normalize_vowels(t_raw)
+    s_v = normalize_vowels(s_raw)
+    w_v = normalize_vowels(w_raw)
+
+    is_lacking = False
+    diff_len = len(t_raw) - len(s_raw)
+
+    # 1. Trailing ligature -ng, -g, or -n (e.g. pito -> pitong, ibon -> ibong)
+    if (s_raw + 'ng' == t_raw or s_raw + 'g' == t_raw or s_raw + 'n' == t_raw or
+        s_v + 'ng' == t_v or s_v + 'g' == t_v or s_v + 'n' == t_v):
+        is_lacking = True
+    # 2. Target starts with resend (missing suffix of up to 3 chars)
+    elif (t_raw.startswith(s_raw) or t_v.startswith(s_v)) and diff_len <= 3:
+        is_lacking = True
+    # 3. Target ends with resend (missing prefix of up to 3 chars)
+    elif (t_raw.endswith(s_raw) or t_v.endswith(s_v)) and diff_len <= 3:
+        is_lacking = True
+    # 4. Target contains resend as subsequence (missing up to 2 chars inside)
+    elif (is_subsequence(s_raw, t_raw) or is_subsequence(s_v, t_v)) and diff_len <= 2:
+        is_lacking = True
+
+    if not is_lacking:
+        return False
+
+    # Check if Wav2Vec actually has the target word or the missing letter(s)
+    # A) Exact or vowel-normalized match with target
+    if w_raw == t_raw or w_v == t_v:
+        return True
+
+    # B) Especially trailing 'ng': target has 'ng', resend lacks 'ng', and w2v has 'ng'
+    if t_raw.endswith('ng') and not s_raw.endswith('ng') and w_raw.endswith('ng') and len(w_raw) > len(s_raw):
+        return True
+
+    # C) Missing trailing suffix captured by w2v
+    if t_raw.startswith(s_raw):
+        missing_suffix = t_raw[len(s_raw):]
+        if w_raw.endswith(missing_suffix) and len(w_raw) > len(s_raw):
+            return True
+
+    return False
+
+def should_append_trailing_s_from_w2v(target_word, current_word, w2v_word):
+    """
+    If Wav2Vec acoustically captured a trailing 's' at the end of the word,
+    append it even if it doesn't match the target text (e.g. target='nanginginig',
+    resend='nanginginig', w2v='nanhghjinigs' -> 'nanginginigs').
+    """
+    if not current_word or not w2v_word:
+        return False
+
+    # If the current word already ends with 's', nothing to add
+    if current_word.lower().endswith('s'):
+        return False
+
+    # If target text naturally ends with 's' (e.g. 'beses', 'Atenas', 'tapos', 'nais'),
+    # the target word already has 's', so do not append another 's'
+    if target_word and target_word.lower().endswith('s'):
+        return False
+
+    w2v_clean = w2v_word.lower().strip()
+    if len(w2v_clean) >= 2 and w2v_clean.endswith('s'):
+        t_clean = target_word.lower().strip() if target_word else ""
+        c_clean = current_word.lower().strip()
+
+        # Check if w2v shares prefix with target or current word
+        prefix_t = t_clean[:2] if len(t_clean) >= 2 else t_clean
+        prefix_c = c_clean[:2] if len(c_clean) >= 2 else c_clean
+
+        if (prefix_t and w2v_clean.startswith(prefix_t)) or (prefix_c and w2v_clean.startswith(prefix_c)):
+            return True
+
+        # Check stem distance to ensure w2v is referring to the same word
+        w2v_stem = w2v_clean[:-1]
+        if t_clean and modified_levenshtein(w2v_stem, t_clean) <= 0.45:
+            return True
+        if c_clean and modified_levenshtein(w2v_stem, c_clean) <= 0.45:
+            return True
+
+    return False
 
 def is_vowel(c):
     return c.lower() in 'aeiou'
@@ -1063,17 +1166,23 @@ def needleman_wunsch_alignment(target_words, spoken_words, vowel_shifted_targets
 
     for i in range(1, m + 1):
         for j in range(1, n + 1):
-            dist = modified_levenshtein(target_words[i - 1], spoken_words[j - 1])
-            is_correct = is_correct_pronunciation(target_words[i - 1], spoken_words[j - 1])
-            if vowel_shifted_targets and (i - 1) in vowel_shifted_targets:
-                is_correct = False
-            
-            if is_correct:
-                match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
-            elif is_stutter(target_words[i - 1], spoken_words[j - 1]) or has_vowel_shift(target_words[i - 1], spoken_words[j - 1]):
-                match_score = score[i - 1][j - 1] + (MATCH * 0.5)
+            t_w = target_words[i - 1]
+            s_w = spoken_words[j - 1]
+            t_low = t_w.lower()
+            s_low = s_w.lower()
+            w1_norm = phonetic_normalize(t_w)
+            w2_norm = phonetic_normalize(s_w)
+            is_zero_dist = (t_low == s_low) or check_is_synonym(t_low, s_low) or (w1_norm == w2_norm)
+
+            if is_zero_dist:
+                match_score = score[i - 1][j - 1] + MATCH
             else:
-                match_score = score[i - 1][j - 1] + MISMATCH
+                dist = modified_levenshtein(t_w, s_w)
+                if is_stutter(t_w, s_w) or has_vowel_shift(t_w, s_w) or dist <= 0.4:
+                    match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
+                else:
+                    match_score = score[i - 1][j - 1] + MISMATCH
+
             delete_score = score[i - 1][j] + GAP
             insert_score = score[i][j - 1] + GAP
             best_score   = max(match_score, delete_score, insert_score)
@@ -1744,20 +1853,23 @@ def evaluate_audio():
         target_words = clean_text(target_text)
 
         # =============================================================
-        # BRANCH 1: MODERATE & EXPERT -> SONIOX CLOUD STT ONLY
+        # BRANCH 1: MODERATE & EXPERT -> RESEND CLOUD STT ONLY
         # =============================================================
         if safe_level in ['moderate', 'expert']:
-            print(f"[EVALUATION] {level.upper()} mode active: using Soniox Cloud STT ONLY...")
-            soniox_raw = transcribe_soniox(wav_clean_path, target_words)
+            print(f"[EVALUATION] {level.upper()} mode active: using Resend Cloud STT ONLY...")
+            resend_raw = transcribe_resend(wav_clean_path, target_words)
+            soniox_raw = resend_raw
             
-            # Fallback only if Soniox fails or returns empty
-            if not soniox_raw or not soniox_raw.strip():
-                print(f"[EVALUATION] Soniox unavailable or empty, falling back to local Wav2Vec...")
+            # Fallback only if Resend fails or returns empty
+            if not resend_raw or not resend_raw.strip():
+                print(f"[EVALUATION] Resend unavailable or empty, falling back to local Wav2Vec...")
                 active_raw = transcribe_wav2vec(wav_clean_path)
                 active_raw = normalize_tagalog_numbers(active_raw, target_words)
+                resend_used = False
                 soniox_used = False
             else:
-                active_raw = soniox_raw
+                active_raw = resend_raw
+                resend_used = True
                 soniox_used = True
 
             if not active_raw.strip():
@@ -1769,12 +1881,12 @@ def evaluate_audio():
             active_raw = normalize_tagalog_numbers(active_raw, target_words)
 
             w2v_expert_raw = ""
-            if safe_level == 'expert':
+            if safe_level in ['moderate', 'expert']:
                 try:
                     w2v_expert_raw = transcribe_wav2vec(wav_clean_path)
-                    print(f"[WAV2VEC] Expert acoustic check OK: '{w2v_expert_raw}'")
+                    print(f"[WAV2VEC] Acoustic check OK: '{w2v_expert_raw}'")
                 except Exception as e:
-                    print(f"[WAV2VEC] Expert acoustic transcription error: {e}")
+                    print(f"[WAV2VEC] Acoustic transcription error: {e}")
 
             if safe_level == 'expert':
                 for wrong, right in EXPERT_CORRECTIONS.items():
@@ -1792,40 +1904,50 @@ def evaluate_audio():
                     w2v_expert_raw = re.sub(r'\b(?:athinas|atinas)\b', 'atenas', w2v_expert_raw, flags=re.IGNORECASE)
 
             spoken_words = clean_text(active_raw)
-            opt_words = fix_segmentation_errors(target_words, spoken_words)
+            if safe_level == 'expert':
+                opt_words = list(spoken_words)
+            else:
+                opt_words = fix_segmentation_errors(target_words, spoken_words)
             cleaned_opt = merge_syllable_hallucinations_and_stutters(opt_words, target_words)
 
             spoken_to_target, target_to_spoken = get_alignment_mapping(target_words, cleaned_opt)
 
             target_to_w2v = {}
-            # In Expert mode: Check if Soniox matches target text or if the user spoke gibberish
-            if safe_level == 'expert' and w2v_expert_raw and w2v_expert_raw.strip():
-                soniox_matches = sum(1 for idx_s, idx_t in spoken_to_target.items() 
-                                     if idx_t is not None and is_correct_pronunciation(target_words[idx_t], cleaned_opt[idx_s]))
-                soniox_match_ratio = (soniox_matches / len(target_words)) if target_words else 0.0
+            if w2v_expert_raw and w2v_expert_raw.strip():
+                w2v_words = clean_text(w2v_expert_raw)
+                _, target_to_w2v = get_alignment_mapping(target_words, w2v_words)
 
-                # If Soniox overall match is low (< 50%), Soniox hallucinated on gibberish speech:
-                # Use Wav2Vec directly so the actual acoustic gibberish is displayed!
-                if soniox_match_ratio < 0.50:
-                    print(f"[EXPERT] Soniox is not matched on target text ({round(soniox_match_ratio*100, 1)}% < 50%). Using Wav2Vec to display gibberish!")
+            # In Expert mode: Check if Resend matches target text or if the user spoke gibberish
+            if safe_level == 'expert' and w2v_expert_raw and w2v_expert_raw.strip():
+                # Check if Resend shares ANY matching letters with target text
+                target_chars_all = set("".join(target_words).lower())
+                resend_chars_all = set("".join(cleaned_opt).lower())
+                has_any_common_char = bool(target_chars_all & resend_chars_all)
+
+                resend_has_matched_letters = any(
+                    idx_t is not None and bool(set(target_words[idx_t].lower()) & set(cleaned_opt[idx_s].lower()))
+                    for idx_s, idx_t in spoken_to_target.items()
+                ) or has_any_common_char
+
+                # Only use Wav2Vec if Resend is completely unmatched (no matching letters at all / 99%+ different)
+                if not resend_has_matched_letters:
+                    print(f"[EXPERT] Resend has no matching letters on target text (complete mismatch). Using Wav2Vec to display gibberish!")
                     active_raw = w2v_expert_raw
                     spoken_words = clean_text(active_raw)
                     cleaned_opt = spoken_words
                     spoken_to_target, target_to_spoken = get_alignment_mapping(target_words, cleaned_opt)
                 else:
-                    # Soniox matches well overall:
+                    # Resend has matching letters: keep Resend!
                     # 1) Transfer acoustic vowel shifts letter-by-letter from Wav2Vec
-                    w2v_words = clean_text(w2v_expert_raw)
-                    w2v_to_target, target_to_w2v = get_alignment_mapping(target_words, w2v_words)
                     for idx_spoken, idx_target in spoken_to_target.items():
                         if idx_target is not None and idx_target in target_to_w2v:
                             w2v_word = target_to_w2v[idx_target]
                             if w2v_word:
                                 target_word = target_words[idx_target]
-                                soniox_word = cleaned_opt[idx_spoken]
-                                transferred = transfer_vowel_shifts_from_w2v(target_word, soniox_word, w2v_word)
-                                if transferred != soniox_word:
-                                    print(f"[EXPERT VOWEL SHIFT] Word '{target_word}': Soniox='{soniox_word}', W2V='{w2v_word}' -> Transferred='{transferred}'")
+                                resend_word = cleaned_opt[idx_spoken]
+                                transferred = transfer_vowel_shifts_from_w2v(target_word, resend_word, w2v_word)
+                                if transferred != resend_word:
+                                    print(f"[EXPERT VOWEL SHIFT] Word '{target_word}': Resend='{resend_word}', W2V='{w2v_word}' -> Transferred='{transferred}'")
                                     cleaned_opt[idx_spoken] = transferred
 
             final_opt = list(cleaned_opt)
@@ -1837,23 +1959,47 @@ def evaluate_audio():
                     t_lower = target_word.lower()
                     s_lower = w_spoken.lower()
 
-                    is_synonym = any(t_lower in pair and s_lower in pair for pair in SYNONYM_PAIRS)
+                    is_synonym = check_is_synonym(t_lower, s_lower)
                     c_s_match = (t_lower.replace('c', 's') == s_lower.replace('c', 's'))
                     is_exact = (phonetic_normalize(t_lower) == phonetic_normalize(s_lower))
                     is_vowel = is_any_vowel_shift(t_lower, s_lower)
 
-                    # Do NOT auto-correct vowel shifts! Keep the spoken form (e.g. 'benatang', 'seno', 'deto')
-                    # so vowel shiftings are accurately detected and flagged!
-                    if is_vowel:
-                        final_opt[idx_spoken] = w_spoken
-                    elif is_synonym or c_s_match or is_exact:
+                    # 1. NLP configuration (SYNONYM_PAIRS), c/s equivalence, or exact match have highest priority
+                    if is_synonym or c_s_match or is_exact:
                         final_opt[idx_spoken] = target_word
+                    # 2. Do NOT auto-correct vowel shifts! Keep the spoken form (e.g. 'benatang', 'seno', 'deto', 'ne', 'seya')
+                    # so vowel shiftings are accurately detected and flagged!
+                    elif is_vowel:
+                        final_opt[idx_spoken] = w_spoken
                     else:
-                        # If Soniox word is not matched on target word, use Wav2Vec word to display gibberish
-                        if safe_level == 'expert' and target_to_w2v.get(idx_target):
-                            final_opt[idx_spoken] = target_to_w2v[idx_target]
+                        # 3. If Resend lacks a letter for the target text, but Wav2Vec has it, USE Wav2Vec!
+                        # E.g., target="pitong", Resend="pito", Wav2Vec="pitong" -> Use "pitong" (especially trailing 'ng')
+                        w2v_word = target_to_w2v.get(idx_target) if target_to_w2v else None
+                        if w2v_word and resend_lacks_letter_and_w2v_has_it(target_word, w_spoken, w2v_word):
+                            recovered_word = target_word if phonetic_normalize(w2v_word.lower()) == phonetic_normalize(t_lower) else w2v_word
+                            print(f"[RECOVER LACKING LETTER] Target='{target_word}': Resend='{w_spoken}', W2V='{w2v_word}' -> Using '{recovered_word}'")
+                            final_opt[idx_spoken] = recovered_word
                         else:
-                            final_opt[idx_spoken] = w_spoken
+                            # 4. If the spoken word shares ANY letters with the target word (e.g., 'delemonyo' vs 'demonyo',
+                            # or 'ipinagpapatuloy' vs 'ipinagpatuloy'), still use Resend!
+                            # Only fall back to Wav2Vec if every letter of the word on Resend
+                            # does not match the target word at all (complete mismatch / gibberish).
+                            has_matched_letter = bool(set(t_lower) & set(s_lower))
+                            if has_matched_letter:
+                                final_opt[idx_spoken] = w_spoken
+                            else:
+                                if w2v_word:
+                                    final_opt[idx_spoken] = w2v_word
+                                else:
+                                    final_opt[idx_spoken] = w_spoken
+
+                    # 5. If Wav2Vec acoustically captured a trailing 's' at the end of the word, append it!
+                    # E.g. target="nanginginig", Resend="nanginginig", Wav2Vec="nanhghjinigs" -> Used="nanginginigs"
+                    w2v_word = target_to_w2v.get(idx_target) if target_to_w2v else None
+                    if w2v_word and should_append_trailing_s_from_w2v(target_word, final_opt[idx_spoken], w2v_word):
+                        s_char = 'S' if final_opt[idx_spoken].isupper() else 's'
+                        print(f"[ACOUSTIC TRAILING S] Target='{target_word}': Resend/Base='{final_opt[idx_spoken]}', W2V='{w2v_word}' -> Appended '{s_char}' => '{final_opt[idx_spoken] + s_char}'")
+                        final_opt[idx_spoken] = final_opt[idx_spoken] + s_char
 
             if safe_level == 'expert':
                 final_opt = dedup_expert_fragment_doublings(final_opt, spoken_to_target, target_words)
@@ -1874,11 +2020,11 @@ def evaluate_audio():
 
             print(f"\n{'='*70}")
             print(f" TARGET         : {target_text}")
-            if soniox_used:
-                print(f" SONIOX (raw)   : {active_raw}")
+            if resend_used:
+                print(f" RESEND (raw)   : {active_raw}")
             else:
                 print(f" WAV2VEC (raw)  : {active_raw} (fallback)")
-            if safe_level == 'expert' and w2v_expert_raw and w2v_expert_raw.strip():
+            if safe_level in ['moderate', 'expert'] and w2v_expert_raw and w2v_expert_raw.strip():
                 print(f" WAV2VEC (raw)  : {w2v_expert_raw}")
             print(f" USED           : {fused_transcription}")
             print(f" SCORE          : Accuracy: {round(accuracy_rate,2)}% | WCPM: {round(wcpm,2)}")
@@ -1910,7 +2056,7 @@ def evaluate_audio():
                     t_lower = target_word.lower()
                     w1_lower = w1.lower()
                     w1_exact = (phonetic_normalize(t_lower) == phonetic_normalize(w1_lower))
-                    is_synonym = any(t_lower in pair and w1_lower in pair for pair in SYNONYM_PAIRS)
+                    is_synonym = check_is_synonym(t_lower, w1_lower)
                     c_s_match = (w1_lower.replace('c', 's') == t_lower.replace('c', 's'))
 
                     if is_synonym or c_s_match or w1_exact:
@@ -1992,13 +2138,23 @@ def get_simulation_trace(target_words, spoken_words):
 
     for i in range(1, m + 1):
         for j in range(1, n + 1):
-            dist = modified_levenshtein(target_words[i - 1], spoken_words[j - 1])
-            if is_correct_pronunciation(target_words[i - 1], spoken_words[j - 1]):
-                match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
-            elif is_stutter(target_words[i - 1], spoken_words[j - 1]) or has_vowel_shift(target_words[i - 1], spoken_words[j - 1]):
-                match_score = score[i - 1][j - 1] + (MATCH * 0.5)
+            t_w = target_words[i - 1]
+            s_w = spoken_words[j - 1]
+            t_low = t_w.lower()
+            s_low = s_w.lower()
+            w1_norm = phonetic_normalize(t_w)
+            w2_norm = phonetic_normalize(s_w)
+            is_zero_dist = (t_low == s_low) or check_is_synonym(t_low, s_low) or (w1_norm == w2_norm)
+
+            if is_zero_dist:
+                match_score = score[i - 1][j - 1] + MATCH
             else:
-                match_score = score[i - 1][j - 1] + MISMATCH
+                dist = modified_levenshtein(t_w, s_w)
+                if is_stutter(t_w, s_w) or has_vowel_shift(t_w, s_w) or dist <= 0.4:
+                    match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
+                else:
+                    match_score = score[i - 1][j - 1] + MISMATCH
+
             delete_score = score[i - 1][j] + GAP
             insert_score = score[i][j - 1] + GAP
             best_score   = max(match_score, delete_score, insert_score)
@@ -2015,18 +2171,39 @@ def get_simulation_trace(target_words, spoken_words):
         if pointers[i][j] == 'D':
             t_word = target_words[i - 1]
             s_word = spoken_words[j - 1]
-            dist = modified_levenshtein(t_word, s_word)
+            t_low = t_word.lower()
+            s_low = s_word.lower()
             w1_norm = phonetic_normalize(t_word)
             w2_norm = phonetic_normalize(s_word)
-            max_len = max(len(w1_norm), len(w2_norm))
-            raw_dist = dist * max_len
-            is_correct = is_correct_pronunciation(t_word, s_word)
+            is_zero_dist = (t_low == s_low) or check_is_synonym(t_low, s_low) or (w1_norm == w2_norm)
+            is_v_shift = is_pure_vowel_shift(t_word, s_word)
+
+            if is_zero_dist:
+                raw_dist = 0.0
+                is_correct = True
+                step_type = "match"
+            elif is_v_shift:
+                dist = modified_levenshtein(t_word, s_word)
+                max_len = max(len(w1_norm), len(w2_norm))
+                raw_dist = round(dist * max_len, 1)
+                # Pure vowel shift (strictly e,i and o,u) is highlighted but NOT flagged as an error
+                is_correct = True
+                step_type = "match"
+            else:
+                dist = modified_levenshtein(t_word, s_word)
+                max_len = max(len(w1_norm), len(w2_norm))
+                raw_dist = round(dist * max_len, 1)
+                # Genuine errors (substitutions, missing letters) ARE flagged as error
+                is_correct = False
+                step_type = "substitution"
+
             trace.append({
-                "type": "match" if is_correct else "substitution",
+                "type": step_type,
                 "target": t_word,
                 "spoken": s_word,
-                "distance": round(raw_dist, 1),
-                "is_correct": is_correct
+                "distance": raw_dist,
+                "is_correct": is_correct,
+                "is_vowel_shift": is_v_shift
             })
             i -= 1; j -= 1
         elif pointers[i][j] == 'U':
