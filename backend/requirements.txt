@@ -8,10 +8,9 @@ librosa
 pydub
 pymongo
 gunicorn==21.2.0
-faster-whisper
 soundfile
 numpy
 waitress
 python-dotenv
 noisereduce
-soniox==2.9.0
+httpx

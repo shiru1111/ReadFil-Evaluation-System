@@ -261,14 +261,13 @@ def transcribe_resend(wav_path, target_words=None):
     Transcribes audio using Resend Cloud Speech-to-Text API.
     Used exclusively for Moderate and Expert reading levels.
     """
-    api_key = os.getenv("Resend_api_key") or os.getenv("RESEND_API_KEY") or os.getenv("SONIOX_API_KEY")
+    api_key = os.getenv("Resend_api_key") or os.getenv("RESEND_API_KEY")
     if not api_key:
         print("[RESEND] Notice: Resend_api_key not set in .env. Falling back to local Wav2Vec.")
         return None
     try:
-        from soniox import SonioxClient
-        from soniox.types import CreateTranscriptionConfig
-        client = SonioxClient(api_key=api_key)
+        from resend_stt import ResendSTTClient, CreateTranscriptionConfig
+        client = ResendSTTClient(api_key=api_key)
         config = CreateTranscriptionConfig(language_hints=["tl"])
         transcription = client.stt.transcribe(file=wav_path, config=config)
         client.stt.wait(transcription.id)
@@ -280,9 +279,6 @@ def transcribe_resend(wav_path, target_words=None):
     except Exception as e:
         print(f"[RESEND] Error during cloud transcription: {e}. Falling back to local Wav2Vec.")
         return None
-
-# Backwards compatibility alias
-transcribe_soniox = transcribe_resend
 
 # =================================================================
 # TEXT NORMALIZATION
@@ -1106,41 +1102,69 @@ def get_model_consensus_word(target_word, w1, w2, w3):
 
 
 def modified_levenshtein(word1, word2):
+    """
+    MODIFIED LEVENSHTEIN DISTANCE (MLD) - "The Phonics Expert"
+    ----------------------------------------------------------
+    Panel Explanation:
+    Standard Levenshtein treats every letter substitution equally (cost = 1.0).
+    However, Filipino phonology naturally exhibits regional accent variations
+    (e.g., Bisaya and Batangueño interchanging e/i and o/u, or d/r allophones).
+    
+    This function acts as 'The Phonics Expert':
+    - Exact letter match: Cost 0.0 (no penalty)
+    - Filipino accent / vowel shift: Cost 0.3 (lenient penalty)
+    - Genuine error / gibberish: Cost 1.0 (strict penalty)
+    
+    Returns: A normalized distance from 0.0 (identical) to 1.0 (completely different),
+    which 'The Lead Teacher' (Needleman-Wunsch) uses with a 0.4 threshold.
+    """
+    # Step 1: Pre-clean and phonetically standardize both words
     w1 = phonetic_normalize(word1)
     w2 = phonetic_normalize(word2)
     m, n = len(w1), len(w2)
+
+    # Step 2: Setup Dynamic Programming (DP) letter-by-letter grid
+    # dp[i][j] stores the minimum edit cost between w1[0..i-1] and w2[0..j-1]
     dp = [[0.0] * (n + 1) for _ in range(m + 1)]
 
-    for i in range(m + 1): dp[i][0] = float(i)
-    for j in range(n + 1): dp[0][j] = float(j)
+    # Step 3: Base cases - cost of deleting or inserting letters
+    for i in range(m + 1): dp[i][0] = float(i)  # Deletions
+    for j in range(n + 1): dp[0][j] = float(j)  # Insertions
 
+    # Step 4: Fill the DP matrix letter by letter
     for i in range(1, m + 1):
         for j in range(1, n + 1):
             if w1[i - 1] == w2[j - 1]:
+                # Exact match: Cost 0.0 (no penalty)
                 dp[i][j] = dp[i - 1][j - 1]
             else:
                 c1, c2 = w1[i - 1], w2[j - 1]
                 
-                # Check for standard Tagalog vowel shifts (e.g., e <-> i, o <-> u)
-                # which are common regional accent variations (such as Bisaya or Batangueño)
+                # Check for regional Filipino vowel shifts (e.g., e <-> i, o <-> u)
+                # Commonly heard in Bisaya and Batangueño regional accents
                 is_vowel_shift = (c1 == 'e' and c2 == 'i') or (c1 == 'i' and c2 == 'e') or \
                                  (c1 == 'o' and c2 == 'u') or (c1 == 'u' and c2 == 'o')
                 
-                # Check for other Tagalog consonant/phonetic variations
+                # Check for Filipino consonant/allophonic variations (e.g., d <-> r, l <-> r, p <-> b)
                 is_consonant_shift = (c1 == 'd' and c2 == 'r') or (c1 == 'r' and c2 == 'd') or \
                                      (c1 == 'l' and c2 == 'r') or (c1 == 'r' and c2 == 'l') or \
                                      (c1 == 'p' and c2 == 'b') or (c1 == 'b' and c2 == 'p')
                 
+                # Assign penalty: lenient for dialectal accents, strict for errors
                 if is_vowel_shift or is_consonant_shift:
-                    cost = 0.3  # Apply minimum penalization for valid Tagalog phonetic shifts
+                    cost = 0.3  # Lenient penalty for valid Filipino phonetic variations
                 else:
-                    cost = 1.0  # Apply standard substitution penalty for general mismatches
+                    cost = 1.0  # Strict penalty for genuine mispronunciation or gibberish
+                
+                # Step 5: Pick the cheapest path (Insertion, Deletion, or Substitution)
                 dp[i][j] = min(
-                    dp[i - 1][j] + 1.0,
-                    dp[i][j - 1] + 1.0,
-                    dp[i - 1][j - 1] + cost
+                    dp[i - 1][j] + 1.0,         # Deletion
+                    dp[i][j - 1] + 1.0,         # Insertion
+                    dp[i - 1][j - 1] + cost     # Substitution (lenient 0.3 or strict 1.0)
                 )
 
+    # Step 6: Normalize by dividing total penalty by the length of the longer word
+    # Produces a normalized distance: 0.0 = perfect match, 1.0 = completely different
     max_len = max(len(w1), len(w2))
     if max_len == 0: return 0.0
     return dp[m][n] / float(max_len)
@@ -1858,7 +1882,6 @@ def evaluate_audio():
         if safe_level in ['moderate', 'expert']:
             print(f"[EVALUATION] {level.upper()} mode active: using Resend Cloud STT ONLY...")
             resend_raw = transcribe_resend(wav_clean_path, target_words)
-            soniox_raw = resend_raw
             
             # Fallback only if Resend fails or returns empty
             if not resend_raw or not resend_raw.strip():
@@ -1866,11 +1889,9 @@ def evaluate_audio():
                 active_raw = transcribe_wav2vec(wav_clean_path)
                 active_raw = normalize_tagalog_numbers(active_raw, target_words)
                 resend_used = False
-                soniox_used = False
             else:
                 active_raw = resend_raw
                 resend_used = True
-                soniox_used = True
 
             if not active_raw.strip():
                 return jsonify({
