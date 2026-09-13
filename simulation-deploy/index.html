@@ -905,34 +905,9 @@
             color: #38bdf8;
         }
 
-        /* Floating Side Calculator Launcher (Right Gutter) */
+        /* Floating Side Calculator Launcher (Hidden to prevent blocking UI/screen) */
         .floating-calc-trigger {
-            position: fixed;
-            right: 24px;
-            top: 52%;
-            transform: translateY(-50%);
-            background: #1e293b;
-            border: 2px solid #38bdf8;
-            color: #f8fafc;
-            padding: 12px 18px;
-            border-radius: 12px;
-            font-size: 15px;
-            font-weight: 700;
-            cursor: pointer;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 14px rgba(56, 189, 248, 0.35);
-            z-index: 1000;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            user-select: none;
-        }
-        .floating-calc-trigger:hover {
-            background: #0284c7;
-            border-color: #7dd3fc;
-            color: #ffffff;
-            transform: translateY(-50%) scale(1.06);
-            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7), 0 0 20px rgba(56, 189, 248, 0.55);
+            display: none !important;
         }
         .floating-calc-trigger:active {
             transform: translateY(-50%) scale(0.97);
@@ -1821,12 +1796,17 @@
 
             <!-- STEP-BY-STEP FORMULA COMPUTATION BREAKDOWN (CLEAR & DEFENSE-READY) -->
             <div style="background: #0b1120; border: 1.5px solid #334155; border-radius: 10px; padding: 22px; margin-top: 20px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px; margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
                     <div style="display: flex; align-items: center; gap: 8px;">
                         <span style="background: #0284c7; color: white; font-weight: 800; font-size: 11px; padding: 3px 8px; border-radius: 4px; text-transform: uppercase;">Step-by-Step Formulas</span>
                         <h4 style="margin: 0; font-size: 17px; color: #f8fafc;">Mathematical Computation to Composite Final Score</h4>
                     </div>
-                    <span style="font-size: 12px; color: #94a3b8;">Phil-IRI & Speech Recognition Standard</span>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 12px; color: #94a3b8;">Phil-IRI & Speech Recognition Standard</span>
+                        <button type="button" onclick="toggleMiniCalculator()" style="background: #1e293b; border: 1px solid #38bdf8; color: #38bdf8; font-size: 12px; font-weight: 700; padding: 4px 12px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;" title="Open Mini Calculator">
+                            🧮 Calculator
+                        </button>
+                    </div>
                 </div>
 
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
@@ -1973,11 +1953,6 @@
     </div>
 </div>
 
-<!-- FLOATING SIDE CALCULATOR LAUNCHER BUTTON -->
-<button type="button" class="floating-calc-trigger" onclick="toggleMiniCalculator()" title="Open mini calculator for adding, subtracting, and dividing matrix values">
-    <span style="font-size: 18px; line-height: 1;">🧮</span>
-    <span>Calculator</span>
-</button>
 
 <!-- FLOATING MINI CALCULATOR WIDGET -->
 <div id="miniCalcWidget" class="mini-calc-widget">
