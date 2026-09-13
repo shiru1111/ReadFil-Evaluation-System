@@ -1,0 +1,3618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wav2Vec 2.0 & Speech Recognition Simulation</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 30px 20px;
+            background-color: #0f172a;
+            color: #e2e8f0;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 1020px;
+            background: #1e293b;
+            padding: 34px;
+            border-radius: 14px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+            border: 1px solid #334155;
+        }
+        h2 {
+            margin-top: 0;
+            color: #f8fafc;
+            border-bottom: 2px solid #334155;
+            padding-bottom: 14px;
+            font-size: 26px;
+        }
+        label {
+            font-weight: 600;
+            display: block;
+            margin-top: 18px;
+            margin-bottom: 6px;
+            color: #94a3b8;
+        }
+        textarea {
+            width: 100%;
+            height: 75px;
+            padding: 12px;
+            font-size: 14px;
+            background-color: #0f172a;
+            color: #f8fafc;
+            border: 1px solid #475569;
+            border-radius: 8px;
+            resize: vertical;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        textarea:focus {
+            border-color: #38bdf8;
+        }
+        .wcpm-card {
+            margin-top: 20px;
+            padding: 16px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+        }
+        .toggle-group {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 14px;
+        }
+        .toggle-label {
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #cbd5e1;
+        }
+        .inline-input-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        input[type="number"] {
+            padding: 8px 12px;
+            width: 100px;
+            background: #1e293b;
+            color: #38bdf8;
+            border: 1px solid #475569;
+            border-radius: 6px;
+            font-size: 15px;
+            font-weight: bold;
+            outline: none;
+        }
+        .btn-random {
+            background-color: #4f46e5;
+            color: #ffffff;
+            border: none;
+            padding: 9px 16px;
+            font-size: 14px;
+            font-weight: 500;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .btn-random:hover {
+            background-color: #4338ca;
+        }
+        .btn-run {
+            width: 100%;
+            margin-top: 22px;
+            background: linear-gradient(135deg, #0284c7, #2563eb);
+            color: white;
+            border: none;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+        }
+        .btn-run:hover {
+            opacity: 0.95;
+            transform: translateY(-1px);
+        }
+
+        /* --- STAGE SIMULATION PANEL --- */
+        #simViewer {
+            display: none;
+            margin-top: 30px;
+            background: #090d16;
+            border: 1px solid #1e293b;
+            border-radius: 10px;
+            padding: 24px;
+        }
+        .step-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #1e293b;
+            padding-bottom: 12px;
+            margin-bottom: 18px;
+        }
+        .step-badge {
+            background: #38bdf8;
+            color: #0f172a;
+            font-weight: bold;
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            text-transform: uppercase;
+        }
+        .step-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #f8fafc;
+            margin: 0;
+        }
+        .step-desc {
+            color: #94a3b8;
+            font-size: 14px;
+            line-height: 1.6;
+            min-height: 48px;
+        }
+        .canvas-box {
+            background: #020617;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            margin: 15px 0;
+        }
+        .layer-highlight {
+            transition: all 0.4s ease;
+            opacity: 0.3;
+        }
+        .layer-highlight.active {
+            opacity: 1 !important;
+            filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.9));
+        }
+        .layer-highlight.active-teal {
+            opacity: 1 !important;
+            filter: drop-shadow(0 0 12px rgba(45, 212, 191, 0.9));
+        }
+        .layer-highlight.active-amber {
+            opacity: 1 !important;
+            filter: drop-shadow(0 0 12px rgba(251, 191, 36, 0.9));
+        }
+        .layer-highlight.active-green {
+            opacity: 1 !important;
+            filter: drop-shadow(0 0 12px rgba(52, 211, 153, 0.9));
+        }
+
+        /* Architecture Mini-Map Box */
+        .arch-minimap-card {
+            background: #070a13;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 20px;
+            position: relative;
+        }
+        .minimap-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding: 0 6px;
+        }
+        .minimap-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            font-weight: 700;
+            color: #64748b;
+            letter-spacing: 0.5px;
+        }
+        .current-pointer-badge {
+            background: rgba(56, 189, 248, 0.15);
+            border: 1px solid #38bdf8;
+            color: #38bdf8;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 20px;
+            animation: pulseGlow 1.5s infinite alternate;
+        }
+        @keyframes pulseGlow {
+            0% { box-shadow: 0 0 4px rgba(56, 189, 248, 0.3); }
+            100% { box-shadow: 0 0 14px rgba(56, 189, 248, 0.8); }
+        }
+
+        /* Detail Stage View */
+        .stage-detail-box {
+            background: #020617;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            min-height: 220px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            margin-top: 10px;
+        }
+        .speech-quote {
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            color: #38bdf8;
+            font-size: 14px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
+        .wave-container {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            height: 110px;
+            width: 95%;
+            justify-content: center;
+        }
+        .wave-bar {
+            width: 5px;
+            background: linear-gradient(180deg, #38bdf8, #818cf8);
+            border-radius: 4px;
+            animation: pulseWave 1.2s infinite ease-in-out alternate;
+        }
+        @keyframes pulseWave {
+            0% { height: 15%; opacity: 0.3; }
+            100% { height: 95%; opacity: 1; }
+        }
+        .chunks-container {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 95%;
+        }
+        .chunk-card {
+            background: #1e293b;
+            border: 1px solid #38bdf8;
+            border-radius: 8px;
+            padding: 10px 14px;
+            text-align: center;
+            animation: chunkPop 0.5s ease-out;
+        }
+        .chunk-word {
+            color: #f8fafc;
+            font-weight: 700;
+            font-size: 16px;
+        }
+        .chunk-sub {
+            color: #38bdf8;
+            font-size: 11px;
+            margin-top: 4px;
+            font-family: monospace;
+        }
+        @keyframes chunkPop {
+            0% { transform: scale(0.7); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* Transformer Dynamic Word Self-Attention */
+        .attention-network {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            width: 100%;
+            align-items: center;
+        }
+        .attention-words-row {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .attn-word-box {
+            background: #1e293b;
+            border: 1px solid #6366f1;
+            padding: 8px 16px;
+            border-radius: 6px;
+            color: #c7d2fe;
+            font-weight: 600;
+            font-size: 14px;
+            position: relative;
+        }
+        .attn-word-box.context {
+            border-color: #38bdf8;
+            background: rgba(56, 189, 248, 0.15);
+            color: #e0f2fe;
+        }
+        .attention-connectors {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            height: 35px;
+            width: 80%;
+            justify-content: space-around;
+        }
+        .attn-beam {
+            width: 2px;
+            height: 100%;
+            background: linear-gradient(180deg, #6366f1, #38bdf8);
+            animation: beamPulse 0.8s infinite alternate;
+        }
+        @keyframes beamPulse {
+            0% { opacity: 0.2; transform: scaleY(0.4); }
+            100% { opacity: 1; transform: scaleY(1); }
+        }
+
+        /* CTC Token Output */
+        .ctc-grid {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 95%;
+        }
+        .ctc-char {
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid #10b981;
+            color: #6ee7b7;
+            font-weight: bold;
+            font-size: 16px;
+            padding: 8px 14px;
+            border-radius: 6px;
+            animation: popIn 0.3s ease-out;
+        }
+        @keyframes popIn {
+            0% { transform: scale(0.3); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .step-nav {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 18px;
+        }
+        .nav-btn {
+            background: #334155;
+            color: #f8fafc;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .nav-btn:hover {
+            background: #475569;
+        }
+        .nav-btn-primary {
+            background: #0284c7;
+        }
+        .nav-btn-primary:hover {
+            background: #0369a1;
+        }
+
+        /* Results Output */
+        #results {
+            display: none;
+            margin-top: 30px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 24px;
+        }
+        .handoff-banner {
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid #0284c7;
+            border-radius: 8px;
+            padding: 14px 18px;
+            margin-bottom: 20px;
+        }
+        .handoff-banner strong {
+            color: #38bdf8;
+            font-size: 15px;
+        }
+        .handoff-transcript {
+            font-family: monospace;
+            background: #020617;
+            padding: 6px 12px;
+            border-radius: 6px;
+            color: #f8fafc;
+            margin-top: 8px;
+            display: inline-block;
+            font-size: 15px;
+            border: 1px solid #1e293b;
+        }
+        .rules-reference-card {
+            background: #020617;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 20px 0;
+            font-size: 13px;
+        }
+        .rules-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            margin-top: 10px;
+        }
+        .rule-item {
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            padding: 10px;
+            border-radius: 6px;
+        }
+        .rule-title {
+            font-weight: bold;
+            color: #38bdf8;
+            margin-bottom: 4px;
+        }
+        .rule-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-perfect { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid #059669; }
+        .badge-regional { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid #d97706; }
+        .badge-error { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid #dc2626; }
+        .score-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 14px;
+            margin: 20px 0;
+        }
+        .score-box {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 18px 14px;
+            text-align: center;
+        }
+        .score-box span {
+            display: block;
+            font-size: 13px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .score-box strong {
+            font-size: 32px;
+            color: #f8fafc;
+            display: block;
+            margin-top: 6px;
+            font-weight: 800;
+        }
+        .aligned-table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 14px;
+            font-size: 16px;
+        }
+        .aligned-table th {
+            background: #1e293b;
+            padding: 12px 16px;
+            text-align: left;
+            border: 1px solid #334155;
+            color: #94a3b8;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 700;
+        }
+        .aligned-table td {
+            border: 1px solid #334155;
+            padding: 14px 16px;
+            transition: all 0.3s ease;
+            font-size: 16px;
+        }
+        .row-revealed {
+            animation: rowSlideIn 0.5s ease-out;
+            background: rgba(15, 23, 42, 0.6);
+        }
+        .row-current-highlight {
+            background: rgba(56, 189, 248, 0.15) !important;
+            box-shadow: inset 0 0 10px rgba(56, 189, 248, 0.4);
+        }
+        @keyframes rowSlideIn {
+            0% { opacity: 0; transform: translateY(-8px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Interactive Alignment Step Card */
+        .align-stepper-card {
+            background: #020617;
+            border: 1px solid #0284c7;
+            border-radius: 8px;
+            padding: 18px;
+            margin: 20px 0;
+            box-shadow: 0 4px 20px rgba(2, 132, 199, 0.15);
+        }
+        .align-stepper-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #1e293b;
+            padding-bottom: 10px;
+            margin-bottom: 14px;
+        }
+        .compare-display-box {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 15px;
+            align-items: center;
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        .word-target-badge {
+            background: rgba(56, 189, 248, 0.15);
+            border: 1px solid #0284c7;
+            border-radius: 6px;
+            padding: 10px;
+        }
+        .word-spoken-badge {
+            background: rgba(168, 85, 247, 0.15);
+            border: 1px solid #9333ea;
+            border-radius: 6px;
+            padding: 10px;
+        }
+        .compare-word-text {
+            font-size: 20px;
+            font-weight: 700;
+            color: #f8fafc;
+            display: block;
+        }
+        .compare-vs {
+            font-size: 16px;
+            font-weight: 700;
+            color: #64748b;
+        }
+        .stepper-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 12px;
+        }
+        .step-btn {
+            background: #1e293b;
+            color: #f8fafc;
+            border: 1px solid #334155;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .step-btn:hover { background: #334155; }
+        .step-btn-primary { background: #0284c7; border-color: #0284c7; }
+        .step-btn-primary:hover { background: #0369a1; }
+
+        /* 2D NEEDLEMAN-WUNSCH DP GRID MATRIX STYLES */
+        .dp-matrix-container {
+            overflow-x: auto;
+            background: #020617;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+        .dp-table {
+            border-collapse: separate;
+            border-spacing: 5px;
+            margin: 0 auto;
+        }
+        .dp-table th {
+            padding: 10px 14px;
+            text-align: center;
+            font-size: 15px;
+            font-weight: 700;
+        }
+        .dp-header-spoken {
+            background: #1e293b;
+            color: #cbd5e1;
+            border: 1px solid #334155;
+            border-radius: 6px;
+        }
+        .dp-header-target {
+            background: #1e293b;
+            color: #f1f5f9;
+            border: 1px solid #475569;
+            border-radius: 6px;
+        }
+        .dp-cell {
+            width: 72px;
+            height: 52px;
+            text-align: center;
+            vertical-align: middle;
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 17px;
+            font-weight: bold;
+            color: #94a3b8;
+            transition: all 0.2s ease;
+            position: relative;
+            cursor: pointer;
+            user-select: none;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: rgba(56, 189, 248, 0.2);
+        }
+        .dp-cell.filled {
+            color: #f8fafc;
+            border-color: #334155;
+            background: #1e293b;
+        }
+        .dp-cell.path-winner {
+            background: rgba(16, 185, 129, 0.2) !important;
+            border: 2px solid #10b981 !important;
+            color: #34d399 !important;
+            font-size: 18px !important;
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.35);
+        }
+        .dp-cell .pointer-arrow {
+            font-size: 12px;
+            position: absolute;
+            top: 2px;
+            left: 4px;
+            color: #94a3b8;
+        }
+        .dp-cell.path-winner .pointer-arrow {
+            color: #34d399;
+            font-weight: bold;
+        }
+        .step-btn-primary:hover { background: #0369a1; }
+        .step-btn-auto { background: #334155; border-color: #475569; color: #f8fafc; }
+        .step-btn-auto:hover { background: #475569; }
+
+        /* 4-Box Dynamic Programming Calculation Highlight - Minimal Palette */
+        .dp-cell.calc-dimmed {
+            opacity: 0.3;
+        }
+        .dp-cell.calc-target-cell {
+            background: #1e293b !important;
+            border: 2.5px solid #38bdf8 !important;
+            color: #ffffff !important;
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.4) !important;
+            transform: scale(1.06);
+            z-index: 25;
+        }
+        .dp-cell.calc-diag-cell,
+        .dp-cell.calc-top-cell,
+        .dp-cell.calc-left-cell {
+            background: #0f172a !important;
+            border: 2px dashed #94a3b8 !important;
+            color: #e2e8f0 !important;
+            transform: scale(1.03);
+            z-index: 20;
+        }
+
+        /* 4-Box Inspector Card Styles - Minimal Theme */
+        .calc-4box-card {
+            background: #0b1120;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 18px 20px;
+            margin-top: 14px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            animation: fadeIn 0.2s ease-in-out;
+        }
+        .calc-quad-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 14px;
+        }
+        @media (max-width: 768px) {
+            .calc-quad-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .calc-mini-box {
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 14px;
+            position: relative;
+            transition: all 0.2s;
+        }
+        .calc-mini-box.winner {
+            border-color: #10b981 !important;
+            background: rgba(16, 185, 129, 0.08) !important;
+        }
+        .calc-mini-box.target {
+            border-color: #38bdf8 !important;
+            background: rgba(56, 189, 248, 0.06) !important;
+        }
+        .calc-mini-box .box-tag {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            display: inline-block;
+            margin-bottom: 8px;
+            background: #1e293b;
+            color: #94a3b8;
+            border: 1px solid #334155;
+        }
+
+        /* Floating Mini Calculator Widget */
+        .mini-calc-widget {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            width: 280px;
+            background: #0b1120;
+            border: 1.5px solid #334155;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(56, 189, 248, 0.15);
+            z-index: 9999;
+            overflow: hidden;
+            display: none;
+            flex-direction: column;
+            animation: fadeIn 0.2s ease-in-out;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .mini-calc-header {
+            background: #0f172a;
+            border-bottom: 1px solid #1e293b;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            user-select: none;
+        }
+        .mini-calc-screen {
+            padding: 12px 14px 10px 14px;
+            background: #060913;
+            border-bottom: 1px solid #1e293b;
+            text-align: right;
+        }
+        .mini-calc-history {
+            font-size: 12px;
+            color: #64748b;
+            min-height: 16px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-family: monospace;
+        }
+        .mini-calc-display {
+            font-size: 26px;
+            font-weight: 700;
+            color: #f1f5f9;
+            font-family: monospace;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-top: 2px;
+        }
+        .mini-calc-keypad {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+            padding: 12px;
+            background: #0b1120;
+        }
+        .mini-calc-btn {
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: #e2e8f0;
+            border-radius: 6px;
+            font-size: 15px;
+            font-weight: 600;
+            padding: 10px 0;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+        }
+        .mini-calc-btn:hover {
+            background: #334155;
+            color: #ffffff;
+            border-color: #64748b;
+        }
+        .mini-calc-btn:active {
+            transform: scale(0.96);
+        }
+        .mini-calc-btn.btn-op {
+            background: #1e293b;
+            color: #38bdf8;
+            border-color: #0284c7;
+            font-weight: 700;
+        }
+        .mini-calc-btn.btn-op:hover {
+            background: #0284c7;
+            color: #ffffff;
+        }
+        .mini-calc-btn.btn-action {
+            background: #1e293b;
+            color: #f87171;
+            border-color: #ef4444;
+        }
+        .mini-calc-btn.btn-action:hover {
+            background: #ef4444;
+            color: #ffffff;
+        }
+        .mini-calc-btn.btn-equals {
+            background: #10b981;
+            color: #022c22;
+            border-color: #059669;
+            font-weight: 800;
+            font-size: 18px;
+        }
+        .mini-calc-btn.btn-equals:hover {
+            background: #34d399;
+            color: #022c22;
+        }
+        .btn-calc-launcher {
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: #f1f5f9;
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s;
+        }
+        .btn-calc-launcher:hover {
+            background: #334155;
+            border-color: #38bdf8;
+            color: #38bdf8;
+        }
+
+        /* Floating Side Calculator Launcher (Right Gutter) */
+        .floating-calc-trigger {
+            position: fixed;
+            right: 24px;
+            top: 52%;
+            transform: translateY(-50%);
+            background: #1e293b;
+            border: 2px solid #38bdf8;
+            color: #f8fafc;
+            padding: 12px 18px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 14px rgba(56, 189, 248, 0.35);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            user-select: none;
+        }
+        .floating-calc-trigger:hover {
+            background: #0284c7;
+            border-color: #7dd3fc;
+            color: #ffffff;
+            transform: translateY(-50%) scale(1.06);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7), 0 0 20px rgba(56, 189, 248, 0.55);
+        }
+        .floating-calc-trigger:active {
+            transform: translateY(-50%) scale(0.97);
+        }
+        @media (max-width: 1200px) {
+            .floating-calc-trigger {
+                right: 12px;
+                padding: 10px 14px;
+                font-size: 13px;
+            }
+        }
+
+        /* Real Math Equation & Fraction Visualizer Styles */
+        .math-equation-card {
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 16px 18px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .math-eq-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 15px;
+            color: #cbd5e1;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            flex-wrap: wrap;
+            margin: 10px 0;
+        }
+        .math-frac {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            vertical-align: middle;
+            text-align: center;
+            padding: 0 4px;
+        }
+        .math-frac-num {
+            border-bottom: 1.5px solid #94a3b8;
+            padding-bottom: 2px;
+            font-weight: 700;
+            color: #f1f5f9;
+            width: 100%;
+            text-align: center;
+        }
+        .math-frac-den {
+            padding-top: 2px;
+            font-weight: 700;
+            color: #94a3b8;
+            width: 100%;
+            text-align: center;
+        }
+        .math-eq-symbol {
+            font-weight: bold;
+            color: #64748b;
+            font-size: 16px;
+        }
+        .math-result-badge {
+            font-size: 26px;
+            font-weight: 900;
+            font-family: monospace;
+            line-height: 1;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .status-match {
+            background-color: rgba(16, 185, 129, 0.2);
+            color: #34d399;
+            border: 1px solid #059669;
+        }
+        .status-mismatch {
+            background-color: rgba(239, 68, 68, 0.2);
+            color: #f87171;
+            border: 1px solid #dc2626;
+        }
+
+        /* Clickable MLD Badges & Cells */
+        .mld-clickable-cell {
+            cursor: pointer;
+        }
+        .mld-clickable-cell:hover {
+            border-color: #38bdf8 !important;
+            box-shadow: 0 0 14px rgba(56, 189, 248, 0.8);
+            transform: scale(1.08);
+            z-index: 10;
+        }
+        .btn-mld-badge {
+            background: rgba(56, 189, 248, 0.15);
+            border: 1px solid #0284c7;
+            color: #38bdf8;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .btn-mld-badge:hover {
+            background: #0284c7;
+            color: #ffffff;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+            transform: translateY(-1px);
+        }
+        .btn-inspect-mld {
+            background: #0284c7;
+            color: #ffffff;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-inspect-mld:hover {
+            background: #0369a1;
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+            transform: translateY(-1px);
+        }
+
+        /* Modal Styles for MLD Letter-by-Letter View */
+        .mld-modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(5px);
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .mld-modal-card {
+            background: #0f172a;
+            border: 2px solid #0284c7;
+            border-radius: 12px;
+            max-width: 780px;
+            width: 100%;
+            max-height: 88vh;
+            overflow-y: auto;
+            padding: 24px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.75);
+            position: relative;
+            animation: modalPop 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes modalPop {
+            0% { opacity: 0; transform: scale(0.92); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        .btn-close-modal {
+            background: #1e293b;
+            color: #94a3b8;
+            border: 1px solid #334155;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            font-size: 16px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-close-modal:hover {
+            background: #ef4444;
+            color: white;
+            border-color: #ef4444;
+        }
+        .mld-metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .mld-metric-box {
+            background: #090d16;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 10px 12px;
+            text-align: center;
+        }
+        .mld-metric-box span {
+            font-size: 11px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            font-weight: 600;
+            display: block;
+        }
+        .mld-metric-box strong {
+            font-size: 18px;
+            color: #f8fafc;
+            display: block;
+            margin-top: 4px;
+        }
+        .char-cell {
+            width: 44px;
+            height: 38px;
+            text-align: center;
+            vertical-align: middle;
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 13px;
+            font-weight: bold;
+            color: #94a3b8;
+            position: relative;
+        }
+        .char-cell.path-winner {
+            background: rgba(16, 185, 129, 0.25) !important;
+            border: 1.5px solid #10b981 !important;
+            color: #34d399 !important;
+            box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+        }
+        .char-cell.path-winner .pointer-arrow {
+            color: #34d399;
+            font-weight: bold;
+        }
+        .char-cell {
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.2s;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: rgba(56, 189, 248, 0.2);
+        }
+        .char-cell.calc-dimmed {
+            opacity: 0.3;
+        }
+        .char-cell.calc-target-cell {
+            background: #1e293b !important;
+            border: 2px solid #38bdf8 !important;
+            color: #ffffff !important;
+            box-shadow: 0 0 8px rgba(56, 189, 248, 0.4) !important;
+            transform: scale(1.08);
+            z-index: 25;
+        }
+        .char-cell.calc-diag-cell,
+        .char-cell.calc-top-cell,
+        .char-cell.calc-left-cell {
+            background: #0f172a !important;
+            border: 1.5px dashed #94a3b8 !important;
+            color: #e2e8f0 !important;
+            z-index: 20;
+        }
+
+        /* ==========================================================================
+           COMPREHENSIVE SMART RESPONSIVENESS (ANDROID & MOBILE CP OPTIMIZED)
+           ========================================================================== */
+        .mobile-swipe-hint {
+            display: none;
+            background: rgba(56, 189, 248, 0.08);
+            border: 1px dashed #0284c7;
+            color: #38bdf8;
+            padding: 7px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            text-align: center;
+            margin-top: 8px;
+            margin-bottom: 4px;
+        }
+
+        .algo-rules-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+            gap: 16px;
+        }
+
+        @media (max-width: 900px) {
+            .container {
+                max-width: 100%;
+                padding: 24px 18px;
+                border-radius: 10px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            html, body {
+                overflow-x: hidden;
+                width: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            body {
+                padding-bottom: 70px; /* Leave space so bottom floating calculator never obscures buttons */
+            }
+            .container {
+                padding: 16px 12px;
+                border-radius: 0;
+                border-left: none;
+                border-right: none;
+                border-top: none;
+                box-shadow: none;
+            }
+            h2 {
+                font-size: 20px;
+                padding-bottom: 10px;
+            }
+            textarea {
+                font-size: 16px; /* Prevents auto-zoom in mobile browsers */
+                padding: 10px;
+                height: 72px;
+            }
+            .wcpm-card {
+                padding: 12px;
+                margin-top: 14px;
+            }
+            .toggle-group {
+                flex-direction: column;
+                gap: 8px;
+                margin-bottom: 10px;
+            }
+            .inline-input-group {
+                gap: 8px;
+            }
+            input[type="number"] {
+                width: 85px;
+                padding: 8px 10px;
+                font-size: 14px;
+            }
+            .btn-run {
+                padding: 13px;
+                font-size: 15px;
+                margin-top: 16px;
+                min-height: 46px;
+            }
+
+            /* Step-by-Step Simulation Viewer */
+            #simViewer {
+                padding: 14px 10px;
+                margin-top: 20px;
+            }
+            .step-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 6px;
+            }
+            .step-title {
+                font-size: 16px;
+            }
+            .arch-minimap-card {
+                padding: 10px 8px;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            .step-nav {
+                display: flex;
+                gap: 8px;
+            }
+            .nav-btn {
+                flex: 1;
+                padding: 12px 8px;
+                font-size: 14px;
+                text-align: center;
+                justify-content: center;
+                min-height: 44px;
+            }
+
+            /* Handoff banner & Algorithm Comparison */
+            .handoff-banner {
+                padding: 14px 12px;
+                margin-bottom: 18px;
+            }
+            .algo-rules-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+
+            /* 2D Needleman-Wunsch Alignment Matrix */
+            .mobile-swipe-hint {
+                display: block;
+            }
+            .dp-matrix-container {
+                padding: 10px 6px;
+                margin: 10px 0;
+                border-radius: 6px;
+                -webkit-overflow-scrolling: touch;
+                touch-action: pan-x pan-y;
+            }
+            .dp-table {
+                border-spacing: 3px;
+            }
+            .dp-cell {
+                width: 58px;
+                height: 48px;
+                font-size: 15px;
+            }
+            .dp-table th {
+                padding: 8px 8px;
+                font-size: 13px;
+            }
+
+            /* 4-Box Calculation Inspector Box */
+            .calc-4box-card {
+                padding: 14px 12px;
+                margin-top: 12px;
+            }
+            .calc-quad-grid {
+                grid-template-columns: 1fr !important;
+                gap: 10px;
+            }
+            .calc-mini-box {
+                padding: 12px 14px !important;
+            }
+
+            /* Score Grid (Summary Cards) - 2 columns on mobile phones */
+            .score-grid {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 8px !important;
+            }
+            .score-box {
+                padding: 10px 8px !important;
+            }
+            .score-box span {
+                font-size: 11px !important;
+            }
+            .score-box strong {
+                font-size: 20px !important;
+            }
+
+            /* Math Equation Breakdown */
+            .math-equation-card {
+                padding: 14px 12px;
+            }
+            .math-eq-row {
+                font-size: 13px;
+                gap: 6px;
+            }
+            .math-result-badge {
+                font-size: 20px;
+            }
+
+            /* Floating Side Calculator Launcher (Bottom Right FAB on Mobile / Android) */
+            .floating-calc-trigger {
+                top: auto !important;
+                bottom: 18px !important;
+                right: 16px !important;
+                transform: none !important;
+                padding: 10px 18px !important;
+                border-radius: 50px !important;
+                font-size: 14px !important;
+                box-shadow: 0 6px 20px rgba(0, 0, 0, 0.75), 0 0 14px rgba(56, 189, 248, 0.5) !important;
+                z-index: 9999 !important;
+            }
+            .floating-calc-trigger:hover {
+                transform: scale(1.04) !important;
+            }
+
+            /* Mini Calculator Widget on Mobile */
+            .mini-calc-widget {
+                width: calc(100vw - 28px) !important;
+                max-width: 320px !important;
+                border-radius: 14px !important;
+                z-index: 10001 !important;
+            }
+            .mini-calc-screen {
+                padding: 10px 12px;
+            }
+            .mini-calc-display {
+                font-size: 24px;
+            }
+            .mini-calc-keypad {
+                padding: 10px;
+                gap: 6px;
+            }
+            .mini-calc-btn {
+                padding: 12px 0;
+                font-size: 16px;
+            }
+
+            /* MLD Modal on Mobile */
+            .mld-modal-overlay {
+                padding: 8px !important;
+            }
+            .mld-modal-card {
+                padding: 16px 12px !important;
+                max-height: 94vh !important;
+                border-radius: 10px !important;
+            }
+            .mld-metrics-grid {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 8px !important;
+            }
+            .char-cell {
+                width: 38px;
+                height: 34px;
+                font-size: 12px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .dp-cell {
+                width: 50px;
+                height: 42px;
+                font-size: 14px;
+            }
+            .dp-table th {
+                padding: 6px 6px;
+                font-size: 12px;
+            }
+            .char-cell {
+                width: 34px;
+                height: 30px;
+                font-size: 11px;
+            }
+            .math-eq-row {
+                font-size: 12px;
+            }
+            .math-result-badge {
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Speech Recognition Simulation</h2>
+
+    <!-- Target Text -->
+    <label for="targetText">Target Text</label>
+    <textarea id="targetText">kamusta ang mga bata</textarea>
+
+    <!-- Spoken Text -->
+    <label for="spokenText">Spoken Text (Wav2Vec / Transcribed)</label>
+    <textarea id="spokenText">kamusta ang mga batas</textarea>
+
+    <!-- WCPM Mode Box -->
+    <div class="wcpm-card">
+        <label style="margin-top: 0;">WCPM Configuration</label>
+        <div class="toggle-group">
+            <label class="toggle-label">
+                <input type="radio" name="wcpmMode" value="manual" checked onchange="toggleWcpmMode()"> Manual WCPM
+            </label>
+            <label class="toggle-label">
+                <input type="radio" name="wcpmMode" value="random" onchange="toggleWcpmMode()"> Randomized / Estimated
+            </label>
+        </div>
+
+        <div id="manualWcpmContainer" class="inline-input-group">
+            <span style="font-size: 14px; color: #94a3b8;">Enter WCPM:</span>
+            <input type="number" id="manualWcpm" value="95" min="0" max="300">
+        </div>
+
+        <div id="randomWcpmContainer" class="inline-input-group" style="display: none;">
+            <button type="button" class="btn-random" onclick="generateRandomWcpm()">?? Generate Random WCPM</button>
+            <span style="font-size: 14px; color: #94a3b8;">Generated WCPM:</span>
+            <input type="number" id="generatedWcpm" value="--" readonly>
+            <span id="genDetails" style="font-size: 13px; color: #38bdf8;"></span>
+        </div>
+    </div>
+
+    <!-- Start Step-by-Step Simulation -->
+    <button type="button" class="btn-run" onclick="startWav2VecSimulation()">? Start Wav2Vec 2.0 Simulation</button>
+
+    <!-- STEP-BY-STEP SIMULATION VIEWER -->
+    <div id="simViewer">
+        <div class="step-header">
+            <div>
+                <span class="step-badge" id="stepBadge">Step 1 of 4</span>
+                <h3 class="step-title" id="stepTitle">Raw Waveform X (16kHz)</h3>
+            </div>
+            <span style="font-size: 12px; color: #64748b;">Acoustic Feature Pipeline</span>
+        </div>
+
+        <div class="step-desc" id="stepDesc">
+            Speech audio is sampled at 16kHz into continuous acoustic amplitudes.
+        </div>
+
+        <!-- 1. ARCHITECTURE MINI-MAP / ROADMAP -->
+        <div class="arch-minimap-card">
+            <div class="minimap-header">
+                <span class="minimap-title">Wav2Vec 2.0 Architectural Map</span>
+                <span class="current-pointer-badge" id="currentPointerBadge">📍 (We are currently here: Raw Waveform X)</span>
+            </div>
+
+            <svg viewBox="0 0 780 230" style="width: 100%; max-width: 780px; height: auto;">
+                <defs>
+                    <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+                        <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748b" />
+                    </marker>
+                </defs>
+
+                <!-- LAYER 4: Output Y (Tokens) -->
+                <g id="layerY" class="layer-highlight">
+                    <text x="30" y="24" fill="#94a3b8" font-size="11" font-weight="bold">Output Y</text>
+                    <text x="175" y="32" fill="#64748b" font-size="9">↑ FC</text>
+                    
+                    <rect id="yBox0" x="180" y="10" width="35" height="18" rx="3" fill="#a7f3d0" stroke="#059669" stroke-width="1"/>
+                    <text id="yTxt0" x="197" y="23" fill="#065f46" font-size="9" font-weight="bold" text-anchor="middle">ka</text>
+
+                    <rect id="yBox1" x="265" y="10" width="35" height="18" rx="3" fill="#a7f3d0" stroke="#059669" stroke-width="1"/>
+                    <text id="yTxt1" x="282" y="23" fill="#065f46" font-size="9" font-weight="bold" text-anchor="middle">mus</text>
+
+                    <rect id="yBox2" x="350" y="10" width="35" height="18" rx="3" fill="#a7f3d0" stroke="#059669" stroke-width="1"/>
+                    <text id="yTxt2" x="367" y="23" fill="#065f46" font-size="9" font-weight="bold" text-anchor="middle">ta</text>
+
+                    <rect id="yBox3" x="435" y="10" width="35" height="18" rx="3" fill="#a7f3d0" stroke="#059669" stroke-width="1"/>
+                    <text id="yTxt3" x="452" y="23" fill="#065f46" font-size="9" font-weight="bold" text-anchor="middle">ang</text>
+
+                    <rect id="yBox4" x="520" y="10" width="35" height="18" rx="3" fill="#a7f3d0" stroke="#059669" stroke-width="1"/>
+                    <text id="yTxt4" x="537" y="23" fill="#065f46" font-size="9" font-weight="bold" text-anchor="middle">mga</text>
+
+                    <rect id="yBox5" x="605" y="10" width="35" height="18" rx="3" fill="#a7f3d0" stroke="#059669" stroke-width="1"/>
+                    <text id="yTxt5" x="622" y="23" fill="#065f46" font-size="9" font-weight="bold" text-anchor="middle">batas</text>
+
+                    <line x1="197" y1="44" x2="197" y2="30" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="282" y1="44" x2="282" y2="30" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="367" y1="44" x2="367" y2="30" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="452" y1="44" x2="452" y2="30" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="537" y1="44" x2="537" y2="30" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="622" y1="44" x2="622" y2="30" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                </g>
+
+                <!-- LAYER 3: Context Representations C & Transformer -->
+                <g id="layerC" class="layer-highlight">
+                    <text x="20" y="58" fill="#94a3b8" font-size="11" font-weight="bold">Context C</text>
+
+                    <rect x="182" y="46" width="30" height="18" rx="3" fill="#0d9488" stroke="#2dd4bf" stroke-width="1"/>
+                    <text x="197" y="59" fill="#f0fdfa" font-size="9" font-weight="bold" text-anchor="middle">C₁</text>
+
+                    <rect x="267" y="46" width="30" height="18" rx="3" fill="#0d9488" stroke="#2dd4bf" stroke-width="1"/>
+                    <text x="282" y="59" fill="#f0fdfa" font-size="9" font-weight="bold" text-anchor="middle">C₂</text>
+
+                    <rect x="352" y="46" width="30" height="18" rx="3" fill="#0d9488" stroke="#2dd4bf" stroke-width="1"/>
+                    <text x="367" y="59" fill="#f0fdfa" font-size="9" font-weight="bold" text-anchor="middle">C₃</text>
+
+                    <rect x="437" y="46" width="30" height="18" rx="3" fill="#0d9488" stroke="#2dd4bf" stroke-width="1"/>
+                    <text x="452" y="59" fill="#f0fdfa" font-size="9" font-weight="bold" text-anchor="middle">C₄</text>
+
+                    <rect x="522" y="46" width="30" height="18" rx="3" fill="#0d9488" stroke="#2dd4bf" stroke-width="1"/>
+                    <text x="537" y="59" fill="#f0fdfa" font-size="9" font-weight="bold" text-anchor="middle">C₅</text>
+
+                    <rect x="607" y="46" width="30" height="18" rx="3" fill="#0d9488" stroke="#2dd4bf" stroke-width="1"/>
+                    <text x="622" y="59" fill="#f0fdfa" font-size="9" font-weight="bold" text-anchor="middle">C₆</text>
+
+                    <rect x="155" y="80" width="510" height="28" rx="3" fill="#b45309" stroke="#f59e0b" stroke-width="1.5"/>
+                    <text x="410" y="98" fill="#fef3c7" font-size="12" font-weight="bold" text-anchor="middle">Transformer Context Network (Self-Attention)</text>
+
+                    <line x1="197" y1="80" x2="197" y2="67" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="282" y1="80" x2="282" y2="67" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="367" y1="80" x2="367" y2="67" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="452" y1="80" x2="452" y2="67" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="537" y1="80" x2="537" y2="67" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="622" y1="80" x2="622" y2="67" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                </g>
+
+                <!-- Arrows Z to Transformer -->
+                <g id="arrowsZtoT">
+                    <line x1="197" y1="138" x2="197" y2="111" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="282" y1="138" x2="282" y2="111" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="367" y1="138" x2="367" y2="111" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="452" y1="138" x2="452" y2="111" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="537" y1="138" x2="537" y2="111" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                    <line x1="622" y1="138" x2="622" y2="111" stroke="#64748b" stroke-width="1" marker-end="url(#arrow)" />
+                </g>
+
+                <!-- LAYER 2: Latent Speech Representations Z & CNN Pyramids -->
+                <g id="layerZ" class="layer-highlight">
+                    <text x="10" y="152" fill="#94a3b8" font-size="11" font-weight="bold">Latent Z</text>
+                    <text x="410" y="174" fill="#0284c7" font-size="10" font-weight="bold" text-anchor="middle">7-Layer Temporal CNN</text>
+
+                    <!-- 1 -->
+                    <polygon points="160,185 185,152 209,152 234,185" fill="#0e7490" opacity="0.6" stroke="#0891b2" stroke-width="1"/>
+                    <rect x="182" y="140" width="30" height="18" rx="3" fill="#0891b2" stroke="#38bdf8" stroke-width="1"/>
+                    <text x="197" y="153" fill="#ffffff" font-size="9" font-weight="bold" text-anchor="middle">Z₁</text>
+
+                    <!-- 2 -->
+                    <polygon points="245,185 270,152 294,152 319,185" fill="#0e7490" opacity="0.6" stroke="#0891b2" stroke-width="1"/>
+                    <rect x="267" y="140" width="30" height="18" rx="3" fill="#0891b2" stroke="#38bdf8" stroke-width="1"/>
+                    <text x="282" y="153" fill="#ffffff" font-size="9" font-weight="bold" text-anchor="middle">Z₂</text>
+
+                    <!-- 3 -->
+                    <polygon points="330,185 355,152 379,152 404,185" fill="#0e7490" opacity="0.6" stroke="#0891b2" stroke-width="1"/>
+                    <rect x="352" y="140" width="30" height="18" rx="3" fill="#0891b2" stroke="#38bdf8" stroke-width="1"/>
+                    <text x="367" y="153" fill="#ffffff" font-size="9" font-weight="bold" text-anchor="middle">Z₃</text>
+
+                    <!-- 4 -->
+                    <polygon points="415,185 440,152 464,152 489,185" fill="#0e7490" opacity="0.6" stroke="#0891b2" stroke-width="1"/>
+                    <rect x="437" y="140" width="30" height="18" rx="3" fill="#0891b2" stroke="#38bdf8" stroke-width="1"/>
+                    <text x="452" y="153" fill="#ffffff" font-size="9" font-weight="bold" text-anchor="middle">Z₄</text>
+
+                    <!-- 5 -->
+                    <polygon points="500,185 525,152 549,152 574,185" fill="#0e7490" opacity="0.6" stroke="#0891b2" stroke-width="1"/>
+                    <rect x="522" y="140" width="30" height="18" rx="3" fill="#0891b2" stroke="#38bdf8" stroke-width="1"/>
+                    <text x="537" y="153" fill="#ffffff" font-size="9" font-weight="bold" text-anchor="middle">Z₅</text>
+
+                    <!-- 6 -->
+                    <polygon points="585,185 610,152 634,152 659,185" fill="#0e7490" opacity="0.6" stroke="#0891b2" stroke-width="1"/>
+                    <rect x="607" y="140" width="30" height="18" rx="3" fill="#0891b2" stroke="#38bdf8" stroke-width="1"/>
+                    <text x="622" y="153" fill="#ffffff" font-size="9" font-weight="bold" text-anchor="middle">Z₆</text>
+                </g>
+
+                <!-- LAYER 1: Raw Waveform X -->
+                <g id="layerX" class="layer-highlight">
+                    <text x="25" y="212" fill="#94a3b8" font-size="11" font-weight="bold">Waveform X</text>
+                    <path d="M 140 212 
+                             Q 150 195, 160 212 T 180 212 T 200 190 T 220 225 T 240 212 
+                             T 260 192 T 280 228 T 300 212 T 320 198 T 340 222 T 360 212 
+                             T 380 188 T 400 232 T 420 212 T 440 200 T 460 220 T 480 212 
+                             T 500 195 T 520 225 T 540 212 T 560 200 T 580 218 T 600 212
+                             T 620 190 T 640 230 T 660 212 T 680 198" 
+                          fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round"/>
+                </g>
+            </svg>
+        </div>
+
+        <!-- 2. DETAILED STAGE VIEW (ANIMATED STEP BREAKDOWN) -->
+        <div class="stage-detail-box" id="canvasBox">
+            <!-- Dynamic Animation Injected Here -->
+        </div>
+
+        <div class="step-nav">
+            <button type="button" class="nav-btn" id="prevBtn" onclick="prevStep()">? Previous</button>
+            <button type="button" class="nav-btn nav-btn-primary" id="nextBtn" onclick="nextStep()">Next Step ?</button>
+        </div>
+    </div>
+
+    <!-- Results Section -->
+    <div id="results">
+        <!-- 1. CLEAR & PROMINENT WAV2VEC 2.0 DECODED TRANSCRIPT -->
+        <div class="handoff-banner" style="background: #0b1120; border: 1px solid #334155; border-radius: 10px; padding: 20px; margin-bottom: 25px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid #1e293b; padding-bottom: 12px; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="background: #1e293b; color: #34d399; border: 1px solid #10b981; font-weight: 700; font-size: 11px; padding: 3px 10px; border-radius: 12px; text-transform: uppercase;">Acoustic Decoding Done</span>
+                    <h3 style="margin: 0; font-size: 18px; color: #f8fafc;">Wav2Vec 2.0 Speech Recognition Output</h3>
+                </div>
+                <span style="font-size: 12px; color: #94a3b8;">CTC Greedy Decoding (16kHz Voice Signal)</span>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
+                <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 14px;">
+                    <div style="font-size: 11px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">🎯 Expected Target Text</div>
+                    <div id="displayTargetText" style="font-size: 18px; font-weight: 700; color: #f1f5f9; margin-top: 8px; font-family: monospace;">kamusta ang mga bata</div>
+                </div>
+
+                <div style="background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 14px;">
+                    <div style="font-size: 11px; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">🎙️ Produced Transcript (Wav2Vec 2.0)</div>
+                    <div class="handoff-transcript" id="handoffTranscript" style="font-size: 18px; font-weight: 700; color: #f1f5f9; margin-top: 8px; display: block; border: none; padding: 0; background: transparent;">kamusta ang mga batas</div>
+                </div>
+            </div>
+
+            <div style="margin-top: 14px; font-size: 13px; color: #94a3b8; display: flex; align-items: center; gap: 8px;">
+                <span>➔</span>
+                <span>Handing over transcript to <strong>Needleman-Wunsch Alignment (NWA)</strong> and <strong>Modified Levenshtein Distance (MLD)</strong> algorithm table below:</span>
+            </div>
+        </div>
+
+        <!-- 2. ALGORITHM RULES & SCORING LOGIC (CLEAR & PRESENTABLE FOR PANEL) -->
+        <div style="margin-top: 25px; margin-bottom: 25px;">
+            <div class="algo-rules-grid">
+                
+                <!-- RULE 1: NEEDLEMAN-WUNSCH ALIGNMENT (NWA) -->
+                <div style="background: #0b1120; border: 1px solid #334155; border-radius: 10px; padding: 20px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e293b; padding-bottom: 10px; margin-bottom: 12px;">
+                        <span style="background: #1e293b; color: #94a3b8; border: 1px solid #334155; font-weight: 700; font-size: 12px; padding: 3px 8px; border-radius: 4px; text-transform: uppercase;">Algorithm 1</span>
+                        <h4 style="margin: 0; font-size: 17px; color: #f8fafc;">Needleman-Wunsch (NWA)</h4>
+                    </div>
+                    
+                    <div style="background: #1e293b; border: 1px solid #334155; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px;">
+                        <strong style="color: #f8fafc; font-size: 15px; display: block;">🏆 Core Rule: HIGHEST NUMBER WINS!</strong>
+                        <span style="font-size: 13px; color: #94a3b8; display: block; margin-top: 3px;">Global sequence alignment finds the optimal trajectory through the 2D grid that maximizes the cumulative score.</span>
+                    </div>
+
+                    <div style="font-size: 14px; line-height: 1.8; color: #cbd5e1;">
+                        <div>• <strong style="color: #34d399;">Match Score:</strong> <code style="color: #34d399; font-weight: bold; font-size: 15px;">+5.0 points</code></div>
+                        <div>• <strong style="color: #94a3b8;">Gap / Omission Penalty:</strong> <code style="color: #f87171; font-weight: bold; font-size: 15px;">-2.0 points</code></div>
+                        <div>• <strong style="color: #94a3b8;">Insertion Penalty:</strong> <code style="color: #f87171; font-weight: bold; font-size: 15px;">-2.0 points</code></div>
+                        <div>• <strong style="color: #94a3b8;">Severe Mismatch Penalty:</strong> <code style="color: #f87171; font-weight: bold; font-size: 15px;">-2.0 points</code></div>
+                        <div style="margin-top: 10px; color: #94a3b8; font-size: 13px;">🧭 <em>Traceback follows diagonal arrows ↖ of highest scoring numbers from bottom-right back to 0,0.</em></div>
+                    </div>
+                </div>
+
+                <!-- RULE 2: MODIFIED LEVENSHTEIN DISTANCE (MLD) -->
+                <div style="background: #0b1120; border: 1px solid #334155; border-radius: 10px; padding: 20px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e293b; padding-bottom: 10px; margin-bottom: 12px;">
+                        <span style="background: #1e293b; color: #94a3b8; border: 1px solid #334155; font-weight: 700; font-size: 12px; padding: 3px 8px; border-radius: 4px; text-transform: uppercase;">Algorithm 2</span>
+                        <h4 style="margin: 0; font-size: 17px; color: #f8fafc;">Modified Levenshtein (MLD)</h4>
+                    </div>
+
+                    <div style="background: #1e293b; border: 1px solid #334155; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px;">
+                        <strong style="color: #f8fafc; font-size: 15px; display: block;">🗣️ Core Role: THE FILIPINO PHONICS EXPERT</strong>
+                        <span style="font-size: 13px; color: #94a3b8; display: block; margin-top: 3px;">Prevents penalizing valid Filipino regional dialects and vowel shifts.</span>
+                    </div>
+
+                    <div style="font-size: 14px; line-height: 1.8; color: #cbd5e1;">
+                        <div>• <strong style="color: #34d399;">Exact Match:</strong> <code style="color: #34d399; font-weight: bold; font-size: 15px;">0.0 cost</code></div>
+                        <div>• <strong style="color: #e2e8f0;">Regional Vowel Shift:</strong> <code style="color: #38bdf8; font-weight: bold; font-size: 15px;">0.30 cost</code></div>
+                        <div>• <strong style="color: #94a3b8;">Severe Error / Extra Letter:</strong> <code style="color: #f87171; font-weight: bold; font-size: 15px;">1.0 cost</code> per character</div>
+                        
+                        <div style="margin-top: 14px; background: #0f172a; border: 1.5px solid #38bdf8; border-radius: 8px; padding: 10px 14px;">
+                            <div style="font-size: 11px; color: #38bdf8; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Formula: Solving MLD to NWA Score</div>
+                            <div style="font-size: 16px; font-weight: 800; color: #34d399; margin-top: 4px; font-family: monospace;">
+                                NWA Score = 5.0 × (1.0 - MLD Distance)
+                            </div>
+                            <div style="font-size: 12px; color: #94a3b8; margin-top: 3px;">
+                                Applied when MLD Distance ≤ 0.40; otherwise penalizes -2.0 points
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- 3. 2D NEEDLEMAN-WUNSCH ALIGNMENT MATRIX (DP GRID) -->
+        <div style="margin-top: 30px; margin-bottom: 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
+                <div>
+                    <h3 style="margin: 0; color: #f8fafc; font-size: 20px;">📊 2D Needleman-Wunsch Alignment Matrix (DP Grid)</h3>
+                    <div style="font-size: 14px; color: #94a3b8; margin-top: 4px;">
+                        Columns (Top): <strong style="color: #38bdf8;">Expected Target Text</strong> | Rows (Left): <strong style="color: #c084fc;">Wav2Vec Spoken Transcript</strong>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <span style="font-size: 13px; color: #38bdf8; font-weight: bold; background: rgba(56, 189, 248, 0.12); border: 1px solid #0284c7; padding: 5px 12px; border-radius: 6px;">
+                        💡 Tap: Highlight 4 Boxes | 🔍 Double-Tap / Button: Open MLD
+                    </span>
+                    <div style="font-size: 13px; background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #34d399; padding: 5px 12px; border-radius: 6px; font-weight: bold;">
+                        ✔ Green = Winning Traceback Path
+                    </div>
+                </div>
+            </div>
+
+            <div class="mobile-swipe-hint">
+                <span>👉 Swipe table horizontally • Double-tap any cell to open MLD Phonics</span>
+            </div>
+
+            <div class="dp-matrix-container" style="margin-top: 8px;">
+                <div id="dpGridWrapper"></div>
+            </div>
+
+            <!-- 4-Box Calculation Inspector Box (Visualizing the 4 boxes evaluated for selected cell) -->
+            <div id="dp4BoxCalcCard" class="calc-4box-card" style="display: none;"></div>
+        </div>
+
+
+
+        <!-- 5. SCORING SECTION (AT THE VERY BOTTOM) -->
+        <div style="margin-top: 40px; border-top: 2px solid #334155; padding-top: 25px;">
+            <h3 style="margin-top: 0; color: #f8fafc; font-size: 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <span>🏆 Final Evaluation & Scoring Summary</span>
+                <span style="font-size: 13px; color: #94a3b8; font-weight: normal;">Computed from alignment results above</span>
+            </h3>
+
+            <!-- 6 SUMMARY METRIC CARDS -->
+            <div class="score-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
+                <div class="score-box">
+                    <span>Total Target Words</span>
+                    <strong id="resTotal" style="color: #cbd5e1;">0</strong>
+                </div>
+                <div class="score-box">
+                    <span>Correct Words</span>
+                    <strong id="resCorrect" style="color: #34d399;">0</strong>
+                </div>
+                <div class="score-box">
+                    <span>Errors / Gaps</span>
+                    <strong id="resErrors" style="color: #f87171;">0</strong>
+                </div>
+                <div class="score-box" style="border-color: #0284c7;">
+                    <span style="color: #38bdf8;">Accuracy</span>
+                    <strong id="resAccuracy" style="color: #38bdf8;">0%</strong>
+                </div>
+                <div class="score-box" style="border-color: #0284c7;">
+                    <span style="color: #38bdf8;">Reading Speed (WCPM)</span>
+                    <strong id="resWcpm" style="color: #38bdf8;">0</strong>
+                </div>
+                <div class="score-box" style="border-color: #a855f7;">
+                    <span style="color: #c084fc;">WCPM Speed Score</span>
+                    <strong id="resFluency" style="color: #c084fc;">0%</strong>
+                </div>
+            </div>
+
+            <!-- STEP-BY-STEP FORMULA COMPUTATION BREAKDOWN (CLEAR & DEFENSE-READY) -->
+            <div style="background: #0b1120; border: 1.5px solid #334155; border-radius: 10px; padding: 22px; margin-top: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="background: #0284c7; color: white; font-weight: 800; font-size: 11px; padding: 3px 8px; border-radius: 4px; text-transform: uppercase;">Step-by-Step Formulas</span>
+                        <h4 style="margin: 0; font-size: 17px; color: #f8fafc;">Mathematical Computation to Composite Final Score</h4>
+                    </div>
+                    <span style="font-size: 12px; color: #94a3b8;">Phil-IRI & Speech Recognition Standard</span>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
+                    
+                    <!-- REAL EQUATION 1: ACCURACY -->
+                    <div class="math-equation-card" style="border-top: 3px solid #38bdf8;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 6px;">
+                            <strong style="font-size: 13px; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px;">1. Accuracy Equation</strong>
+                            <span style="font-size: 11px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-weight: 700;">50% Weight</span>
+                        </div>
+                        
+                        <!-- General Mathematical Formula with Fraction -->
+                        <div class="math-eq-row" style="margin-top: 12px;">
+                            <span style="font-weight: 600; color: #94a3b8;">Accuracy</span>
+                            <span class="math-eq-symbol">=</span>
+                            <span class="math-frac">
+                                <span class="math-frac-num" style="font-size: 12px; color: #38bdf8;">Correct Words</span>
+                                <span class="math-frac-den" style="font-size: 12px;">Total Target Words</span>
+                            </span>
+                            <span class="math-eq-symbol">×</span>
+                            <span style="font-weight: 700; color: #f1f5f9;">100%</span>
+                        </div>
+
+                        <!-- Live Calculated Equation -->
+                        <div class="math-eq-row" id="stepCalcAccuracyEq" style="background: #070a13; border: 1px solid #1e293b; border-radius: 6px; padding: 8px 12px; margin-top: 8px; justify-content: space-between;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span class="math-eq-symbol">=</span>
+                                <span class="math-frac">
+                                    <span class="math-frac-num" id="mathAccNum" style="color: #34d399; font-size: 16px;">0</span>
+                                    <span class="math-frac-den" id="mathAccDen" style="color: #cbd5e1; font-size: 16px;">0</span>
+                                </span>
+                                <span class="math-eq-symbol">×</span>
+                                <span style="font-weight: 700; color: #f1f5f9; font-size: 15px;">100</span>
+                            </div>
+                            <div class="math-result-badge" id="stepCalcAccuracy" style="color: #38bdf8;">
+                                0.0%
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- REAL EQUATION 2: WCPM -->
+                    <div class="math-equation-card" style="border-top: 3px solid #38bdf8;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 6px;">
+                            <strong style="font-size: 13px; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px;">2. Reading Speed (WCPM)</strong>
+                            <span style="font-size: 11px; background: rgba(56, 189, 248, 0.15); color: #38bdf8; padding: 2px 6px; border-radius: 4px; font-weight: 700;">Rate</span>
+                        </div>
+                        
+                        <!-- General Mathematical Formula with Fraction -->
+                        <div class="math-eq-row" style="margin-top: 12px;">
+                            <span style="font-weight: 600; color: #94a3b8;">WCPM</span>
+                            <span class="math-eq-symbol">=</span>
+                            <span class="math-frac">
+                                <span class="math-frac-num" style="font-size: 12px; color: #38bdf8;">Correct Words</span>
+                                <span class="math-frac-den" style="font-size: 12px;">Time in Seconds</span>
+                            </span>
+                            <span class="math-eq-symbol">×</span>
+                            <span style="font-weight: 700; color: #f1f5f9;">60s</span>
+                        </div>
+
+                        <!-- Live Calculated Equation -->
+                        <div class="math-eq-row" id="stepCalcWcpmEq" style="background: #070a13; border: 1px solid #1e293b; border-radius: 6px; padding: 8px 12px; margin-top: 8px; justify-content: space-between;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span class="math-eq-symbol">=</span>
+                                <span class="math-frac">
+                                    <span class="math-frac-num" id="mathWcpmNum" style="color: #34d399; font-size: 16px;">0</span>
+                                    <span class="math-frac-den" id="mathWcpmDen" style="color: #cbd5e1; font-size: 16px;">~2.0s</span>
+                                </span>
+                                <span class="math-eq-symbol">×</span>
+                                <span style="font-weight: 700; color: #f1f5f9; font-size: 15px;">60</span>
+                            </div>
+                            <div class="math-result-badge" id="stepCalcWcpm" style="color: #38bdf8;">
+                                0
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- REAL EQUATION 3: WCPM BENCHMARK -->
+                    <div class="math-equation-card" style="border-top: 3px solid #c084fc;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 6px;">
+                            <strong style="font-size: 13px; color: #c084fc; text-transform: uppercase; letter-spacing: 0.5px;">3. Speed Score Benchmark</strong>
+                            <span style="font-size: 11px; background: rgba(192, 132, 252, 0.15); color: #c084fc; padding: 2px 6px; border-radius: 4px; font-weight: 700;">50% Weight</span>
+                        </div>
+                        
+                        <!-- General Mathematical Formula with Fraction -->
+                        <div class="math-eq-row" style="margin-top: 12px;">
+                            <span style="font-weight: 600; color: #94a3b8;">Speed Score</span>
+                            <span class="math-eq-symbol">=</span>
+                            <span class="math-frac">
+                                <span class="math-frac-num" style="font-size: 12px; color: #c084fc;">Student WCPM</span>
+                                <span class="math-frac-den" style="font-size: 12px;">150 Benchmark</span>
+                            </span>
+                            <span class="math-eq-symbol">×</span>
+                            <span style="font-weight: 700; color: #f1f5f9;">100%</span>
+                        </div>
+
+                        <!-- Live Calculated Equation -->
+                        <div class="math-eq-row" id="stepCalcBenchmarkEq" style="background: #070a13; border: 1px solid #1e293b; border-radius: 6px; padding: 8px 12px; margin-top: 8px; justify-content: space-between;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span class="math-eq-symbol">=</span>
+                                <span class="math-frac">
+                                    <span class="math-frac-num" id="mathBenchNum" style="color: #c084fc; font-size: 16px;">0</span>
+                                    <span class="math-frac-den" style="color: #cbd5e1; font-size: 16px;">150</span>
+                                </span>
+                                <span class="math-eq-symbol">×</span>
+                                <span style="font-weight: 700; color: #f1f5f9; font-size: 15px;">100</span>
+                            </div>
+                            <div class="math-result-badge" id="stepCalcBenchmark" style="color: #c084fc;">
+                                0.0%
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- REAL EQUATION 4: COMPOSITE FINAL SCORE HIGHLIGHT BOX -->
+                <div style="margin-top: 18px; background: #060913; border: 2px solid #10b981; border-radius: 10px; padding: 18px 22px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid #1e293b; padding-bottom: 10px; margin-bottom: 12px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="background: #10b981; color: #022c22; font-weight: 900; font-size: 11px; padding: 3px 10px; border-radius: 12px; text-transform: uppercase;">Final Composite Equation</span>
+                            <span style="color: #f1f5f9; font-size: 14px; font-weight: 700;">
+                                Composite Score = (Accuracy × 0.50) + (Speed Benchmark Score × 0.50)
+                            </span>
+                        </div>
+                        <span style="font-size: 12px; color: #10b981; font-weight: 700;">Phil-IRI Holistic Grade</span>
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+                        <div style="font-family: monospace; font-size: 18px; color: #cbd5e1;" id="stepCalcCompositeBreakdown">
+                            (<span style="color: #38bdf8;">0.0%</span> × 0.50) + (<span style="color: #c084fc;">0.0%</span> × 0.50) = <strong style="color: #f1f5f9;">0.0% + 0.0%</strong>
+                        </div>
+                        <div style="text-align: right; display: flex; align-items: baseline; gap: 10px;">
+                            <span style="font-size: 14px; color: #94a3b8; text-transform: uppercase; font-weight: 700;">Official Grade:</span>
+                            <div id="resCompositeScore" style="font-size: 40px; font-weight: 900; color: #34d399; font-family: monospace; line-height: 1;">
+                                0.0%
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- FLOATING SIDE CALCULATOR LAUNCHER BUTTON -->
+<button type="button" class="floating-calc-trigger" onclick="toggleMiniCalculator()" title="Open mini calculator for adding, subtracting, and dividing matrix values">
+    <span style="font-size: 18px; line-height: 1;">🧮</span>
+    <span>Calculator</span>
+</button>
+
+<!-- FLOATING MINI CALCULATOR WIDGET -->
+<div id="miniCalcWidget" class="mini-calc-widget">
+    <div class="mini-calc-header" id="miniCalcHeader">
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <span style="font-size: 14px;">🧮</span>
+            <strong style="font-size: 13px; color: #f8fafc;">Mini Calculator</strong>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+            <button type="button" onclick="toggleMiniCalculator()" style="background: transparent; border: none; color: #94a3b8; font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1;">✕</button>
+        </div>
+    </div>
+    <div class="mini-calc-screen">
+        <div class="mini-calc-history" id="miniCalcHistory">&nbsp;</div>
+        <div class="mini-calc-display" id="miniCalcDisplay">0</div>
+    </div>
+    <div class="mini-calc-keypad">
+        <button type="button" class="mini-calc-btn btn-action" onclick="calcAction('C')">C</button>
+        <button type="button" class="mini-calc-btn btn-action" onclick="calcAction('DEL')">⌫</button>
+        <button type="button" class="mini-calc-btn btn-op" onclick="calcInput('+/-')">±</button>
+        <button type="button" class="mini-calc-btn btn-op" onclick="calcInput('/')">÷</button>
+
+        <button type="button" class="mini-calc-btn" onclick="calcInput('7')">7</button>
+        <button type="button" class="mini-calc-btn" onclick="calcInput('8')">8</button>
+        <button type="button" class="mini-calc-btn" onclick="calcInput('9')">9</button>
+        <button type="button" class="mini-calc-btn btn-op" onclick="calcInput('*')">×</button>
+
+        <button type="button" class="mini-calc-btn" onclick="calcInput('4')">4</button>
+        <button type="button" class="mini-calc-btn" onclick="calcInput('5')">5</button>
+        <button type="button" class="mini-calc-btn" onclick="calcInput('6')">6</button>
+        <button type="button" class="mini-calc-btn btn-op" onclick="calcInput('-')">−</button>
+
+        <button type="button" class="mini-calc-btn" onclick="calcInput('1')">1</button>
+        <button type="button" class="mini-calc-btn" onclick="calcInput('2')">2</button>
+        <button type="button" class="mini-calc-btn" onclick="calcInput('3')">3</button>
+        <button type="button" class="mini-calc-btn btn-op" onclick="calcInput('+')">+</button>
+
+        <button type="button" class="mini-calc-btn" style="grid-column: span 2;" onclick="calcInput('0')">0</button>
+        <button type="button" class="mini-calc-btn" onclick="calcInput('.')">.</button>
+        <button type="button" class="mini-calc-btn btn-equals" onclick="calcAction('=')">=</button>
+    </div>
+</div>
+
+<!-- MLD LETTER-BY-LETTER MODAL DIALOG -->
+<div id="mldModalOverlay" class="mld-modal-overlay" onclick="handleModalBackdropClick(event)">
+    <div class="mld-modal-card" id="mldModalCard">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid #334155; padding-bottom: 14px; margin-bottom: 18px;">
+            <div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="background: #0284c7; color: white; font-weight: 800; font-size: 11px; padding: 3px 8px; border-radius: 12px; text-transform: uppercase;">Phonics Expert MLD</span>
+                    <h3 style="margin: 0; color: #f8fafc; font-size: 18px;" id="mldModalTitle">Letter-by-Letter MLD Analysis</h3>
+                </div>
+                <div style="color: #94a3b8; font-size: 13px; margin-top: 4px;" id="mldModalSubtitle">
+                    Comparing target word vs. spoken word at the individual phoneme / letter level.
+                </div>
+            </div>
+            <button type="button" class="btn-close-modal" onclick="closeMldModal()" title="Close (Esc)">✕</button>
+        </div>
+
+        <!-- Metric Cards -->
+        <div class="mld-metrics-grid" id="mldMetricsGrid"></div>
+
+        <!-- Step-by-Step Conversion Walkthrough Banner -->
+        <div id="mldCalcStepBanner" style="display: none; background: #0b1120; border: 1.5px solid #38bdf8; border-radius: 8px; padding: 12px 16px; margin-bottom: 18px;"></div>
+
+        <!-- 2D Character DP Matrix -->
+        <h4 style="margin-top: 20px; margin-bottom: 8px; color: #cbd5e1; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
+            <span>📊 Character DP Matrix (Target Top Columns vs. Spoken Left Rows)</span>
+            <span style="font-size: 11px; color: #38bdf8; font-weight: bold;">💡 Click ANY character box to inspect its 4 calculation boxes</span>
+        </h4>
+        <div class="dp-matrix-container" style="margin: 0 0 12px 0; max-height: 240px;">
+            <div id="mldCharGridWrapper"></div>
+        </div>
+
+        <!-- Character 4-Box Calculation Inspector -->
+        <div id="mldChar4BoxCard" class="calc-4box-card" style="display: none; padding: 14px 16px; margin: 0 0 18px 0;"></div>
+
+        <!-- Detailed Character Alignment Steps -->
+        <h4 style="margin-top: 18px; margin-bottom: 8px; color: #cbd5e1;">Detailed Character-by-Character Operations</h4>
+        <table class="aligned-table" style="font-size: 13px; margin-top: 6px;">
+            <thead>
+                <tr>
+                    <th style="width: 50px;">Pos</th>
+                    <th>Target Letter</th>
+                    <th>Spoken Letter</th>
+                    <th>Operation / Phonetic Classification</th>
+                    <th>Cost</th>
+                </tr>
+            </thead>
+            <tbody id="mldCharStepsBody"></tbody>
+        </table>
+
+        <!-- Phonics Note -->
+        <div style="background: #070a13; border: 1px solid #1e293b; border-radius: 8px; padding: 12px 16px; margin-top: 18px; font-size: 12px; color: #94a3b8; line-height: 1.5;">
+            <strong style="color: #38bdf8;">💡 Filipino Regional Accent Leniency:</strong> Valid dialectal vowel shifts (<code style="color:#fbbf24;">e↔i</code>, <code style="color:#fbbf24;">o↔u</code>) and allophonic consonant shifts (<code style="color:#fbbf24;">d↔r</code>, <code style="color:#fbbf24;">p↔b</code>, <code style="color:#fbbf24;">l↔r</code>) receive a lenient penalty of only <strong style="color:#34d399;">0.30</strong> rather than a full 1.0 mismatch penalty.
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentStep = 1;
+    const totalSteps = 4;
+
+    function toggleWcpmMode() {
+        const mode = document.querySelector('input[name="wcpmMode"]:checked').value;
+        const manualContainer = document.getElementById("manualWcpmContainer");
+        const randomContainer = document.getElementById("randomWcpmContainer");
+
+        if (mode === "manual") {
+            manualContainer.style.display = "flex";
+            randomContainer.style.display = "none";
+        } else {
+            manualContainer.style.display = "none";
+            randomContainer.style.display = "flex";
+            generateRandomWcpm();
+        }
+    }
+
+    function generateRandomWcpm() {
+        const spokenRaw = document.getElementById("spokenText").value.trim();
+        const targetRaw = document.getElementById("targetText").value.trim();
+        const textToUse = spokenRaw || targetRaw;
+
+        const words = textToUse ? textToUse.split(/\s+/).filter(Boolean) : [];
+        let totalChars = 0;
+        words.forEach(w => totalChars += w.length);
+
+        let finalWcpm = 0;
+        let details = "";
+
+        if (words.length === 0) {
+            finalWcpm = Math.floor(75 + Math.random() * 45);
+            details = "(Duration: ~2.0 seconds)";
+        } else {
+            const charsPerSec = 12.0 + (Math.random() * 5.0);
+            const durationSec = Math.max(1.0, totalChars / charsPerSec);
+            finalWcpm = Math.round((words.length / (durationSec / 60.0)));
+            details = `(Duration: ${durationSec.toFixed(1)} seconds for ${words.length} words)`;
+        }
+
+        document.getElementById("generatedWcpm").value = finalWcpm;
+        document.getElementById("genDetails").innerText = details;
+    }
+
+    // --- STEP-BY-STEP SIMULATION ENGINE (USING SPOKEN TEXT) ---
+    function startWav2VecSimulation() {
+        const targetRaw = document.getElementById("targetText").value.trim();
+        if (!targetRaw) {
+            alert("Please enter target text.");
+            return;
+        }
+
+        document.getElementById("simViewer").style.display = "block";
+        document.getElementById("results").style.display = "none";
+        currentStep = 1;
+        renderStep(currentStep);
+
+        document.getElementById("simViewer").scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function renderStep(step) {
+        const titleEl = document.getElementById("stepTitle");
+        const badgeEl = document.getElementById("stepBadge");
+        const descEl = document.getElementById("stepDesc");
+        const prevBtn = document.getElementById("prevBtn");
+        const nextBtn = document.getElementById("nextBtn");
+
+        const spokenRaw = document.getElementById("spokenText").value.trim() || "kamusta ang mga batas";
+        const tagEl = document.getElementById("spokenSpeechTag");
+        if (tagEl) tagEl.textContent = `"${spokenRaw}"`;
+        const words = spokenRaw.split(/\s+/).filter(Boolean);
+
+        for (let idx = 0; idx < 6; idx++) {
+            const txtEl = document.getElementById(`yTxt${idx}`);
+            if (txtEl) {
+                txtEl.textContent = words[idx] || (idx === 0 ? "ka" : "-");
+            }
+        }
+
+        const lX = document.getElementById("layerX");
+        const lZ = document.getElementById("layerZ");
+        const lC = document.getElementById("layerC");
+        const lY = document.getElementById("layerY");
+
+        // Reset highlights
+        lX.className.baseVal = "layer-highlight";
+        lZ.className.baseVal = "layer-highlight";
+        lC.className.baseVal = "layer-highlight";
+        lY.className.baseVal = "layer-highlight";
+
+        badgeEl.innerText = `Step ${step} of ${totalSteps}`;
+        prevBtn.style.visibility = (step === 1) ? "hidden" : "visible";
+
+        if (step === totalSteps) {
+            nextBtn.innerText = "View Final Scoring Results ➡";
+            nextBtn.className = "nav-btn nav-btn-primary";
+        } else {
+            nextBtn.innerText = "Next Step ➡";
+            nextBtn.className = "nav-btn nav-btn-primary";
+        }
+
+        const ptrBadge = document.getElementById("currentPointerBadge");
+        const canvas = document.getElementById("canvasBox");
+
+        if (step === 1) {
+            lX.className.baseVal = "layer-highlight active";
+            ptrBadge.innerText = "📍 (We are currently here: Raw Waveform X)";
+            titleEl.innerText = "Stage 1: User Voice Input (Raw Audio at 16kHz)";
+            descEl.innerText = `Microphone captures the acoustic waveform of: "${spokenRaw}". At 16kHz, each second of speech contains 16,000 raw audio samples. Aggressive silence trimming is disabled.`;
+            canvas.innerHTML = `
+                <div class="speech-quote">🎙️ Spoken Audio: "${spokenRaw}"</div>
+                <div class="wave-container">
+                    ${Array.from({ length: 36 }, (_, i) => `<div class="wave-bar" style="animation-delay: ${(i * 0.04).toFixed(2)}s; height: ${Math.floor(20 + Math.random() * 75)}%;"></div>`).join('')}
+                </div>
+            `;
+        } else if (step === 2) {
+            lZ.className.baseVal = "layer-highlight active-teal";
+            ptrBadge.innerText = "📍 (We are currently here: 7-Layer CNN & Latent Z)";
+            titleEl.innerText = "Stage 2: Conv1D Temporal Feature Extraction (Latent Frames Z)";
+            descEl.innerText = `The 7-layer 1D CNN slides across your voice signal, filtering frequencies and compressing "${spokenRaw}" by 320x into distinct 25ms acoustic sound frames (Z).`;
+            canvas.innerHTML = `
+                <div class="speech-quote" style="margin-bottom: 20px;">Slicing "${spokenRaw}" into 25ms Feature Frames</div>
+                <div class="chunks-container">
+                    ${words.map((word, idx) => `
+                        <div class="chunk-card" style="animation-delay: ${idx * 0.1}s;">
+                            <div class="chunk-word">${word}</div>
+                            <div class="chunk-sub">Frame Z_${idx + 1} (25ms)</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        } else if (step === 3) {
+            lC.className.baseVal = "layer-highlight active-amber";
+            ptrBadge.innerText = "📍 (We are currently here: Transformer Context C)";
+            titleEl.innerText = "Stage 3: Transformer Context Network (Self-Attention Layer 1)";
+            descEl.innerText = `The 1st Transformer layer connects all spoken words simultaneously. Words exchange attention weights to resolve Tagalog regional accents and vowel shifts.`;
+            canvas.innerHTML = `
+                <div class="attention-network">
+                    <div class="attention-words-row">
+                        ${words.map((w, idx) => `<div class="attn-word-box">Frame: "${w}"</div>`).join('')}
+                    </div>
+                    <div class="attention-connectors">
+                        ${words.map(() => `<div class="attn-beam"></div>`).join('')}
+                    </div>
+                    <div class="attention-words-row">
+                        ${words.map((w, idx) => `<div class="attn-word-box context">Context: C_${idx + 1}</div>`).join('')}
+                    </div>
+                </div>
+            `;
+        } else if (step === 4) {
+            lY.className.baseVal = "layer-highlight active-green";
+            ptrBadge.innerText = "📍 (We are currently here: Linear FC & Output Tokens Y)";
+            const chars = spokenRaw.split("");
+            titleEl.innerText = "Stage 4: Linear Layer & CTC Character Decoding";
+            descEl.innerText = `A fully connected (FC) linear layer maps context representations to character probabilities via CTC decoding, emitting the recognized words: "${spokenRaw}".`;
+            canvas.innerHTML = `
+                <div class="speech-quote" style="margin-bottom: 15px;">Decoded CTC Output Tokens:</div>
+                <div class="ctc-grid">
+                    ${chars.map((c, idx) => `<div class="ctc-char" style="animation-delay: ${idx * 0.03}s;">${c === ' ' ? '␣' : c}</div>`).join('')}
+                </div>
+            `;
+        }
+    }
+
+    function nextStep() {
+        if (currentStep < totalSteps) {
+            currentStep++;
+            renderStep(currentStep);
+        } else {
+            runFinalScoring();
+        }
+    }
+
+    function prevStep() {
+        if (currentStep > 1) {
+            currentStep--;
+            renderStep(currentStep);
+        }
+    }
+
+    // --- MLD & NWA Scoring ---
+    function modifiedLevenshtein(word1, word2) {
+        const w1 = word1.toLowerCase().trim();
+        const w2 = word2.toLowerCase().trim();
+        const m = w1.length;
+        const n = w2.length;
+
+        const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0.0));
+
+        for (let i = 0; i <= m; i++) dp[i][0] = i * 1.0;
+        for (let j = 0; j <= n; j++) dp[0][j] = j * 1.0;
+
+        for (let i = 1; i <= m; i++) {
+            for (let j = 1; j <= n; j++) {
+                if (w1[i - 1] === w2[j - 1]) {
+                    dp[i][j] = dp[i - 1][j - 1];
+                } else {
+                    const c1 = w1[i - 1];
+                    const c2 = w2[j - 1];
+
+                    const isVowelShift = (c1 === 'e' && c2 === 'i') || (c1 === 'i' && c2 === 'e') ||
+                                         (c1 === 'o' && c2 === 'u') || (c1 === 'u' && c2 === 'o');
+
+                    const isConsonantShift = (c1 === 'd' && c2 === 'r') || (c1 === 'r' && c2 === 'd') ||
+                                             (c1 === 'l' && c2 === 'r') || (c1 === 'r' && c2 === 'l') ||
+                                             (c1 === 'p' && c2 === 'b') || (c1 === 'b' && c2 === 'p');
+
+                    const cost = (isVowelShift || isConsonantShift) ? 0.3 : 1.0;
+
+                    dp[i][j] = Math.min(
+                        dp[i - 1][j] + 1.0,
+                        dp[i][j - 1] + 1.0,
+                        dp[i - 1][j - 1] + cost
+                    );
+                }
+            }
+        }
+
+        const maxLen = Math.max(m, n);
+        return maxLen === 0 ? 0.0 : dp[m][n] / maxLen;
+    }
+
+    function needlemanWunschAlignment(targetWords, spokenWords) {
+        const MATCH = 5.0;
+        const MISMATCH = -2.0;
+        const GAP = -2.0;
+
+        const N = spokenWords.length; // ROWS: Spoken words on the LEFT
+        const M = targetWords.length; // COLUMNS: Target words on the TOP
+
+        const score = Array.from({ length: N + 1 }, () => Array(M + 1).fill(0.0));
+        const pointers = Array.from({ length: N + 1 }, () => Array(M + 1).fill(null));
+
+        for (let i = 0; i <= N; i++) {
+            score[i][0] = GAP * i;
+            pointers[i][0] = 'U'; // From UP: extra spoken insertion
+        }
+        for (let j = 0; j <= M; j++) {
+            score[0][j] = GAP * j;
+            pointers[0][j] = 'L'; // From LEFT: target omission
+        }
+        pointers[0][0] = null;
+
+        for (let i = 1; i <= N; i++) {
+            for (let j = 1; j <= M; j++) {
+                const s_w = spokenWords[i - 1];
+                const t_w = targetWords[j - 1];
+
+                let matchScore;
+                if (t_w.toLowerCase() === s_w.toLowerCase()) {
+                    matchScore = score[i - 1][j - 1] + MATCH;
+                } else {
+                    const dist = modifiedLevenshtein(t_w, s_w);
+                    if (dist <= 0.4) {
+                        matchScore = score[i - 1][j - 1] + (MATCH * (1.0 - dist));
+                    } else {
+                        matchScore = score[i - 1][j - 1] + MISMATCH;
+                    }
+                }
+
+                const insertScore = score[i - 1][j] + GAP; // from UP: extra spoken
+                const deleteScore = score[i][j - 1] + GAP; // from LEFT: missing target
+                const bestScore = Math.max(matchScore, insertScore, deleteScore);
+
+                score[i][j] = bestScore;
+
+                if (bestScore === matchScore) pointers[i][j] = 'D';
+                else if (bestScore === insertScore) pointers[i][j] = 'U';
+                else pointers[i][j] = 'L';
+            }
+        }
+
+        let i = N, j = M;
+        let errors = 0;
+        let correctWords = 0;
+        const alignmentRows = [];
+        const tracebackPath = [[N, M]];
+
+        while (i > 0 || j > 0) {
+            if (pointers[i][j] === 'D') {
+                const t = targetWords[j - 1];
+                const s = spokenWords[i - 1];
+                const dist = modifiedLevenshtein(t, s);
+                const isCorrect = dist <= 0.4;
+
+                let ruleApplied = "";
+                let nwaScoreVal = 0;
+                let verdictBadge = "";
+
+                if (t.toLowerCase() === s.toLowerCase()) {
+                    ruleApplied = "Exact Word Match (0.0 cost)";
+                    nwaScoreVal = MATCH;
+                    verdictBadge = `<span class="rule-badge badge-perfect">Correct (+5.0)</span>`;
+                } else if (dist <= 0.4) {
+                    // Check specific phonetic traits
+                    const t_low = t.toLowerCase();
+                    const s_low = s.toLowerCase();
+                    const isVowel = (t_low.includes('e') && s_low.includes('i')) || (t_low.includes('i') && s_low.includes('e')) ||
+                                    (t_low.includes('o') && s_low.includes('u')) || (t_low.includes('u') && s_low.includes('o'));
+                    const isConsonant = (t_low.includes('d') && s_low.includes('r')) || (t_low.includes('r') && s_low.includes('d')) ||
+                                        (t_low.includes('l') && s_low.includes('r')) || (t_low.includes('p') && s_low.includes('b'));
+                    
+                    if (isVowel) {
+                        ruleApplied = "Regional Accent / Vowel Shift (e↔i, o↔u)";
+                    } else if (isConsonant) {
+                        ruleApplied = "Consonant / Allophonic Shift (d↔r, p↔b)";
+                    } else {
+                        ruleApplied = "Minor Dialectal Variation (Dist ≤ 0.40)";
+                    }
+                    nwaScoreVal = MATCH * (1.0 - dist);
+                    verdictBadge = `<span class="rule-badge badge-regional">Accepted (${nwaScoreVal >= 0 ? '+' : ''}${nwaScoreVal.toFixed(1)})</span>`;
+                } else {
+                    ruleApplied = "Severe Mispronunciation / Mismatch";
+                    nwaScoreVal = MISMATCH;
+                    verdictBadge = `<span class="rule-badge badge-error">Error (-2.0)</span>`;
+                }
+
+                if (isCorrect) correctWords++;
+                else errors++;
+
+                alignmentRows.push({
+                    target: t,
+                    spoken: s,
+                    dist: dist.toFixed(2),
+                    nwaScore: (nwaScoreVal >= 0 ? "+" : "") + nwaScoreVal.toFixed(1),
+                    rule: ruleApplied,
+                    verdict: verdictBadge,
+                    cellI: i,
+                    cellJ: j
+                });
+                i--; j--;
+                tracebackPath.push([i, j]);
+            } else if (pointers[i][j] === 'U') {
+                // Came from UP: Spoken has extra word, Target is "—"
+                errors++;
+                alignmentRows.push({
+                    target: "—",
+                    spoken: spokenWords[i - 1],
+                    dist: "1.00",
+                    nwaScore: "-2.0",
+                    rule: "Insertion (Unprompted / Extra word spoken)",
+                    verdict: `<span class="rule-badge badge-error">Extra (-2.0)</span>`,
+                    cellI: i,
+                    cellJ: j
+                });
+                i--;
+                tracebackPath.push([i, j]);
+            } else if (pointers[i][j] === 'L') {
+                // Came from LEFT: Target was skipped, Spoken is "—"
+                errors++;
+                alignmentRows.push({
+                    target: targetWords[j - 1],
+                    spoken: "—",
+                    dist: "1.00",
+                    nwaScore: "-2.0",
+                    rule: "Omission (Word was skipped / missing)",
+                    verdict: `<span class="rule-badge badge-error">Missing (-2.0)</span>`,
+                    cellI: i,
+                    cellJ: j
+                });
+                j--;
+                tracebackPath.push([i, j]);
+            }
+        }
+
+        alignmentRows.reverse();
+        return { 
+            correctWords, 
+            errors, 
+            alignmentRows, 
+            dpScoreMatrix: score, 
+            dpPointers: pointers, 
+            tracebackPath: tracebackPath.reverse(),
+            targetWords,
+            spokenWords
+        };
+    }
+
+    let cachedAlignmentData = null;
+    let cachedAlignmentRows = [];
+    let currentAlignIndex = 0;
+    let autoPlayTimer = null;
+    let cachedTotal = 0;
+    let cachedWcpm = 0;
+
+    function runFinalScoring() {
+        const targetRaw = document.getElementById("targetText").value.trim();
+        const spokenRaw = document.getElementById("spokenText").value.trim();
+
+        document.getElementById("handoffTranscript").textContent = spokenRaw || "(no audio / speech detected)";
+        const targetEl = document.getElementById("displayTargetText");
+        if (targetEl) targetEl.textContent = targetRaw || "(no target text)";
+
+        const targetWords = targetRaw.split(/\s+/).filter(Boolean);
+        const spokenWords = spokenRaw ? spokenRaw.split(/\s+/).filter(Boolean) : [];
+
+        const alignResult = needlemanWunschAlignment(targetWords, spokenWords);
+        cachedAlignmentData = alignResult;
+        cachedAlignmentRows = alignResult.alignmentRows;
+        cachedTotal = targetWords.length;
+
+        const mode = document.querySelector('input[name="wcpmMode"]:checked').value;
+        if (mode === "manual") {
+            cachedWcpm = parseFloat(document.getElementById("manualWcpm").value) || 0;
+        } else {
+            let genVal = parseFloat(document.getElementById("generatedWcpm").value);
+            if (isNaN(genVal)) {
+                generateRandomWcpm();
+                genVal = parseFloat(document.getElementById("generatedWcpm").value) || 90;
+            }
+            cachedWcpm = genVal;
+        }
+
+        // Display results cleanly and immediately
+        document.getElementById("results").style.display = "block";
+        document.getElementById("results").scrollIntoView({ behavior: 'smooth' });
+
+        renderFullAlignment();
+    }
+
+    function renderDpGrid() {
+        if (!cachedAlignmentData) return;
+        const { dpScoreMatrix, dpPointers, tracebackPath, targetWords, spokenWords } = cachedAlignmentData;
+        const N = spokenWords.length; // ROWS (Spoken on LEFT)
+        const M = targetWords.length; // COLS (Target on TOP)
+
+        // Path cells set
+        const pathSet = new Set(tracebackPath.map(([r, c]) => `${r},${c}`));
+
+        let html = '<table class="dp-table">';
+        
+        // Header Row (TARGET WORDS along columns on the TOP)
+        html += '<tr><th style="font-size: 13px; color: #94a3b8; padding: 10px 14px; font-weight: bold;">Spoken (Left) \\ Target (Top)</th><th class="dp-header-target">[START]</th>';
+        for (let j = 0; j < M; j++) {
+            html += `<th class="dp-header-target">${targetWords[j]}</th>`;
+        }
+        html += '</tr>';
+
+        // Grid Rows (SPOKEN WORDS along rows on the LEFT)
+        for (let i = 0; i <= N; i++) {
+            html += '<tr>';
+            if (i === 0) {
+                html += '<th class="dp-header-spoken">[START]</th>';
+            } else {
+                html += `<th class="dp-header-spoken">${spokenWords[i - 1]}</th>`;
+            }
+
+            for (let j = 0; j <= M; j++) {
+                const scoreVal = dpScoreMatrix[i][j];
+                const ptr = dpPointers[i][j];
+                let arrowChar = '';
+                if (ptr === 'D') arrowChar = '↖';
+                else if (ptr === 'U') arrowChar = '↑';
+                else if (ptr === 'L') arrowChar = '←';
+
+                const isPath = pathSet.has(`${i},${j}`);
+                let cellClass = 'dp-cell filled';
+                if (isPath) cellClass += ' path-winner';
+
+                const displayScore = (scoreVal % 1 === 0) ? scoreVal.toFixed(0) : scoreVal.toFixed(1);
+
+                // Double click/tap opens MLD if both words exist for this cell
+                const tWord = (j >= 1) ? targetWords[j-1].replace(/'/g, "\\'") : '';
+                const sWord = (i >= 1) ? spokenWords[i-1].replace(/'/g, "\\'") : '';
+                const dblClickAttr = (i >= 1 && j >= 1) ? `ondblclick="openMldModal('${tWord}', '${sWord}')"` : '';
+                html += `
+                    <td class="${cellClass}" id="dpCell_${i}_${j}" onclick="handleDpCellInteraction(event, ${i}, ${j}, '${tWord}', '${sWord}')" ${dblClickAttr} title="Spoken: ${i === 0 ? 'START' : spokenWords[i-1]} | Target: ${j === 0 ? 'START' : targetWords[j-1]} | Pointer: ${ptr || 'None'} | Score: ${displayScore} | 💡 Tap: 4-box highlight | 🔍 Double-tap: Open MLD">
+                        <span class="pointer-arrow">${arrowChar}</span>
+                        ${displayScore}
+                    </td>
+                `;
+            }
+            html += '</tr>';
+        }
+
+        html += '</table>';
+        document.getElementById("dpGridWrapper").innerHTML = html;
+    }
+
+    let lastDpCellTapTime = 0;
+    let lastDpCellKey = null;
+
+    function handleDpCellInteraction(e, i, j, tWord, sWord) {
+        const now = Date.now();
+        const cellKey = `${i}_${j}`;
+        const isDoubleTap = (lastDpCellKey === cellKey && (now - lastDpCellTapTime) < 450);
+
+        if (isDoubleTap && i >= 1 && j >= 1 && tWord && sWord) {
+            // Rapid double-tap on Android/mobile touch or desktop mouse!
+            lastDpCellTapTime = 0;
+            lastDpCellKey = null;
+            if (e) {
+                if (e.stopPropagation) e.stopPropagation();
+                if (e.preventDefault && e.cancelable) e.preventDefault();
+            }
+            openMldModal(tWord, sWord);
+            return;
+        }
+
+        lastDpCellTapTime = now;
+        lastDpCellKey = cellKey;
+
+        // Single tap / click: inspect the 4 calculation boxes
+        inspectDpCell(i, j);
+    }
+
+    let currentSelectedDpCell = null;
+
+    function inspectDpCell(i, j) {
+        if (!cachedAlignmentData) return;
+        const { dpScoreMatrix, dpPointers, targetWords, spokenWords } = cachedAlignmentData;
+        const N = spokenWords.length;
+        const M = targetWords.length;
+
+        if (i < 0 || i > N || j < 0 || j > M) return;
+
+        // Toggle: if clicking the already selected cell, revert to normal
+        if (currentSelectedDpCell && currentSelectedDpCell.i === i && currentSelectedDpCell.j === j) {
+            clearCalcHighlight();
+            return;
+        }
+        currentSelectedDpCell = { i, j };
+
+        // 1. Remove previous highlights and apply dimming to background cells
+        const allCells = document.querySelectorAll("#dpGridWrapper .dp-cell");
+        allCells.forEach(cell => {
+            cell.classList.remove("calc-target-cell", "calc-diag-cell", "calc-top-cell", "calc-left-cell", "calc-dimmed");
+            cell.classList.add("calc-dimmed");
+        });
+
+        // 2. Highlight target cell
+        const targetCell = document.getElementById(`dpCell_${i}_${j}`);
+        if (targetCell) {
+            targetCell.classList.remove("calc-dimmed");
+            targetCell.classList.add("calc-target-cell");
+        }
+
+        // 3. Highlight predecessor neighbors
+        if (i > 0 && j > 0) {
+            const diagCell = document.getElementById(`dpCell_${i-1}_${j-1}`);
+            const topCell = document.getElementById(`dpCell_${i-1}_${j}`);
+            const leftCell = document.getElementById(`dpCell_${i}_${j-1}`);
+
+            if (diagCell) { diagCell.classList.remove("calc-dimmed"); diagCell.classList.add("calc-diag-cell"); }
+            if (topCell) { topCell.classList.remove("calc-dimmed"); topCell.classList.add("calc-top-cell"); }
+            if (leftCell) { leftCell.classList.remove("calc-dimmed"); leftCell.classList.add("calc-left-cell"); }
+        } else if (i === 0 && j > 0) {
+            const leftCell = document.getElementById(`dpCell_${i}_${j-1}`);
+            if (leftCell) { leftCell.classList.remove("calc-dimmed"); leftCell.classList.add("calc-left-cell"); }
+        } else if (i > 0 && j === 0) {
+            const topCell = document.getElementById(`dpCell_${i-1}_${j}`);
+            if (topCell) { topCell.classList.remove("calc-dimmed"); topCell.classList.add("calc-top-cell"); }
+        }
+
+        // 4. Render the 4-box card
+        render4BoxCalculationCard(i, j);
+    }
+
+    function clearCalcHighlight() {
+        currentSelectedDpCell = null;
+        const allCells = document.querySelectorAll("#dpGridWrapper .dp-cell");
+        allCells.forEach(cell => {
+            cell.classList.remove("calc-target-cell", "calc-diag-cell", "calc-top-cell", "calc-left-cell", "calc-dimmed");
+        });
+        const card = document.getElementById("dp4BoxCalcCard");
+        if (card) card.style.display = "none";
+    }
+
+    function render4BoxCalculationCard(i, j) {
+        const card = document.getElementById("dp4BoxCalcCard");
+        if (!card || !cachedAlignmentData) return;
+        const { dpScoreMatrix, dpPointers, targetWords, spokenWords } = cachedAlignmentData;
+        const GAP = -2.0;
+        const MATCH = 5.0;
+        const MISMATCH = -2.0;
+
+        card.style.display = "block";
+
+        if (i === 0 && j === 0) {
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="background: #0284c7; color: white; font-weight: 800; font-size: 11px; padding: 3px 8px; border-radius: 12px; text-transform: uppercase;">Cell [0, 0]</span>
+                        <h4 style="margin: 0; color: #f8fafc; font-size: 16px;">Root / Start Initialization</h4>
+                    </div>
+                    <button type="button" onclick="clearCalcHighlight()" style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;">✕ Reset Highlight</button>
+                </div>
+                <div style="margin-top: 14px; font-size: 15px; color: #cbd5e1;">
+                    Base initialization cell before any word comparison begins. <strong>Initial Score = 0.0</strong>.
+                </div>
+            `;
+            return;
+        }
+
+        if (i === 0 && j > 0) {
+            const t_w = targetWords[j - 1];
+            const priorVal = dpScoreMatrix[0][j - 1];
+            const currentVal = dpScoreMatrix[0][j];
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="background: #0284c7; color: white; font-weight: 800; font-size: 11px; padding: 3px 8px; border-radius: 12px; text-transform: uppercase;">Top Row Cell [0, ${j}]</span>
+                        <h4 style="margin: 0; color: #f8fafc; font-size: 16px;">Target Word Omission: "${t_w}"</h4>
+                    </div>
+                    <button type="button" onclick="clearCalcHighlight()" style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;">✕ Reset Highlight</button>
+                </div>
+                <div style="margin-top: 14px; font-size: 15px; color: #cbd5e1; line-height: 1.6;">
+                    Target word <strong style="color: #38bdf8;">"${t_w}"</strong> is missing in spoken text. Calculated from Left cell [0, ${j-1}]:<br>
+                    <code style="color: #fbbf24; font-size: 16px;">D[0][${j}] = D[0][${j-1}] + GAP = ${priorVal.toFixed(1)} + (${GAP.toFixed(1)}) = ${currentVal.toFixed(1)}</code>
+                </div>
+            `;
+            return;
+        }
+
+        if (i > 0 && j === 0) {
+            const s_w = spokenWords[i - 1];
+            const priorVal = dpScoreMatrix[i - 1][0];
+            const currentVal = dpScoreMatrix[i][0];
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="background: #0284c7; color: white; font-weight: 800; font-size: 11px; padding: 3px 8px; border-radius: 12px; text-transform: uppercase;">Left Col Cell [${i}, 0]</span>
+                        <h4 style="margin: 0; color: #f8fafc; font-size: 16px;">Spoken Word Insertion: "${s_w}"</h4>
+                    </div>
+                    <button type="button" onclick="clearCalcHighlight()" style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer;">✕ Reset Highlight</button>
+                </div>
+                <div style="margin-top: 14px; font-size: 15px; color: #cbd5e1; line-height: 1.6;">
+                    Spoken word <strong style="color: #c084fc;">"${s_w}"</strong> was spoken without a target. Calculated from Top cell [${i-1}, 0]:<br>
+                    <code style="color: #fbbf24; font-size: 16px;">D[${i}][0] = D[${i-1}][0] + GAP = ${priorVal.toFixed(1)} + (${GAP.toFixed(1)}) = ${currentVal.toFixed(1)}</code>
+                </div>
+            `;
+            return;
+        }
+
+        // --- FULL 4-BOX CALCULATION FOR INNER CELL (i, j) ---
+        const t_w = targetWords[j - 1];
+        const s_w = spokenWords[i - 1];
+
+        // Box 1: Diagonal
+        const priorDiag = dpScoreMatrix[i - 1][j - 1];
+        let wordSimScore = 0;
+        let simExplanation = "";
+        let dist = 0;
+        if (t_w.toLowerCase() === s_w.toLowerCase()) {
+            wordSimScore = MATCH;
+            simExplanation = "Exact Word Match (+5.0)";
+            dist = 0.0;
+        } else {
+            dist = modifiedLevenshtein(t_w, s_w);
+            if (dist <= 0.4) {
+                wordSimScore = MATCH * (1.0 - dist);
+                simExplanation = `MLD Phonics Leniency (Dist: ${dist.toFixed(2)} ➔ +${wordSimScore.toFixed(1)})`;
+            } else {
+                wordSimScore = MISMATCH;
+                simExplanation = `Mismatch / Severe Error (-2.0)`;
+            }
+        }
+        const candDiag = priorDiag + wordSimScore;
+
+        // Box 2: Top / Deletion
+        const priorTop = dpScoreMatrix[i - 1][j];
+        const candTop = priorTop + GAP;
+
+        // Box 3: Left / Insertion
+        const priorLeft = dpScoreMatrix[i][j - 1];
+        const candLeft = priorLeft + GAP;
+
+        // Box 4: Current Result
+        const winningScore = dpScoreMatrix[i][j];
+        const ptr = dpPointers[i][j];
+        const isDiagWin = (ptr === 'D');
+        const isTopWin = (ptr === 'U');
+        const isLeftWin = (ptr === 'L');
+
+        const arrowChar = isDiagWin ? '↖' : (isTopWin ? '↑' : '←');
+        const winningPathName = isDiagWin ? 'Diagonal (Word Match / Phonics)' : (isTopWin ? 'Top (Deletion / Extra Word)' : 'Left (Omission / Missing Word)');
+
+        // Result Box Values
+        const candDiagFmt = (candDiag >= 0 ? '+' : '') + candDiag.toFixed(1);
+        const candTopFmt = (candTop >= 0 ? '+' : '') + candTop.toFixed(1);
+        const candLeftFmt = (candLeft >= 0 ? '+' : '') + candLeft.toFixed(1);
+        const winningFmt = (winningScore >= 0 ? '+' : '') + winningScore.toFixed(1);
+
+        card.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 10px; margin-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="background: #0284c7; color: white; font-weight: 800; font-size: 13px; padding: 3px 10px; border-radius: 6px; text-transform: uppercase;">4-Box Inspector</span>
+                    <span style="color: #f8fafc; font-size: 20px; font-weight: 700;">
+                        Target: <strong style="color: #38bdf8;">"${t_w}"</strong> vs Spoken: <strong style="color: #c084fc;">"${s_w}"</strong>
+                    </span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-size: 14px; color: #34d399; font-weight: 800;">🏆 HIGHEST NUMBER WINS</span>
+                    <button type="button" onclick="clearCalcHighlight()" style="background: #1e293b; border: 1px solid #334155; color: #cbd5e1; padding: 4px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;">✕ Reset</button>
+                </div>
+            </div>
+
+            <!-- 2x2 QUAD GRID: ULTRA-SIMPLE & LARGE NUMBERS -->
+            <div class="calc-quad-grid" style="gap: 14px; margin-top: 10px;">
+                
+                <!-- BOX 1: DIAGONAL -->
+                <div class="calc-mini-box ${isDiagWin ? 'winner' : ''}" style="padding: 14px 18px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span class="box-tag" style="font-size: 13px;">↖ Diag [${i-1}, ${j-1}]</span>
+                        <span style="font-size: 13px; font-weight: 800; color: ${isDiagWin ? '#34d399' : '#64748b'};">${isDiagWin ? '🏆 WINNER' : 'Evaluated'}</span>
+                    </div>
+                    <div style="font-size: 16px; color: #94a3b8; margin-top: 8px;">
+                        ${priorDiag.toFixed(1)} + (${wordSimScore >= 0 ? '+' : ''}${wordSimScore.toFixed(1)})
+                    </div>
+                    <div style="font-size: 32px; font-weight: 900; color: ${isDiagWin ? '#34d399' : '#f1f5f9'}; margin-top: 6px; font-family: monospace;">
+                        = ${candDiagFmt}
+                    </div>
+                </div>
+
+                <!-- BOX 2: TOP / DELETION -->
+                <div class="calc-mini-box ${isTopWin ? 'winner' : ''}" style="padding: 14px 18px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span class="box-tag" style="font-size: 13px;">↑ Top [${i-1}, ${j}]</span>
+                        <span style="font-size: 13px; font-weight: 800; color: ${isTopWin ? '#34d399' : '#64748b'};">${isTopWin ? '🏆 WINNER' : 'Evaluated'}</span>
+                    </div>
+                    <div style="font-size: 16px; color: #94a3b8; margin-top: 8px;">
+                        ${priorTop.toFixed(1)} + (-2.0)
+                    </div>
+                    <div style="font-size: 32px; font-weight: 900; color: ${isTopWin ? '#34d399' : '#f1f5f9'}; margin-top: 6px; font-family: monospace;">
+                        = ${candTopFmt}
+                    </div>
+                </div>
+
+                <!-- BOX 3: LEFT / INSERTION -->
+                <div class="calc-mini-box ${isLeftWin ? 'winner' : ''}" style="padding: 14px 18px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span class="box-tag" style="font-size: 13px;">← Left [${i}, ${j-1}]</span>
+                        <span style="font-size: 13px; font-weight: 800; color: ${isLeftWin ? '#34d399' : '#64748b'};">${isLeftWin ? '🏆 WINNER' : 'Evaluated'}</span>
+                    </div>
+                    <div style="font-size: 16px; color: #94a3b8; margin-top: 8px;">
+                        ${priorLeft.toFixed(1)} + (-2.0)
+                    </div>
+                    <div style="font-size: 32px; font-weight: 900; color: ${isLeftWin ? '#34d399' : '#f1f5f9'}; margin-top: 6px; font-family: monospace;">
+                        = ${candLeftFmt}
+                    </div>
+                </div>
+
+                <!-- BOX 4: TARGET CELL RESULT -->
+                <div class="calc-mini-box target" style="padding: 14px 18px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span class="box-tag" style="border-color: #38bdf8; color: #38bdf8; font-size: 13px;">🎯 Target Result [${i}, ${j}]</span>
+                        <span style="font-size: 14px; font-weight: 800; color: #38bdf8;">Pointer: ${arrowChar}</span>
+                    </div>
+                    <div style="font-size: 16px; color: #94a3b8; margin-top: 8px;">
+                        MAX( ↖ ${candDiag.toFixed(1)}, ↑ ${candTop.toFixed(1)}, ← ${candLeft.toFixed(1)} )
+                    </div>
+                    <div style="font-size: 32px; font-weight: 900; color: #34d399; margin-top: 6px; font-family: monospace;">
+                        = ${winningFmt}
+                    </div>
+                </div>
+
+            </div>
+
+            <div style="margin-top: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; border-top: 1px solid #1e293b; padding-top: 12px;">
+                <span style="font-size: 12px; color: #94a3b8;">💡 Tip: Double-tap any cell or use this button to open phonics:</span>
+                <button type="button" class="btn-inspect-mld" onclick="openMldModal('${t_w}', '${s_w}')" style="font-size: 13px; padding: 7px 16px; border-radius: 6px; font-weight: 700; background: #0284c7; border: none; color: #ffffff; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4);">
+                    🔍 Open Letter-by-Letter MLD Phonics ("${t_w}" vs "${s_w}")
+                </button>
+            </div>
+        `;
+    }
+
+    function renderFullAlignment() {
+        if (!cachedAlignmentRows || cachedAlignmentRows.length === 0) return;
+
+        // Render DP Matrix
+        renderDpGrid();
+
+        // Normal state by default (no highlights until user clicks a box)
+        clearCalcHighlight();
+
+        // Count results and compute scoring
+        let correctCount = 0;
+        let errorCount = 0;
+
+        cachedAlignmentRows.forEach((row) => {
+            const isMatch = row.verdict.includes("Correct") || row.verdict.includes("Accepted");
+            if (isMatch) correctCount++;
+            else errorCount++;
+        });
+
+        const tbody = document.getElementById("alignmentBody");
+        if (tbody) {
+            tbody.innerHTML = "";
+            cachedAlignmentRows.forEach((row) => {
+                const isClickableMld = (row.target !== "—" && row.spoken !== "—");
+                const mldCellContent = isClickableMld ? 
+                    `<button type="button" class="btn-mld-badge" onclick="openMldModal('${row.target}', '${row.spoken}')" title="Click to view letter-by-letter MLD breakdown">
+                        <code>${row.dist}</code> 🔍 Inspect MLD
+                    </button>` : 
+                    `<code style="color: #94a3b8; font-size: 15px;">${row.dist}</code>`;
+
+                const tr = document.createElement("tr");
+                tr.className = "row-revealed";
+                tr.style.cursor = "pointer";
+                tr.title = "Click row to toggle 4-box highlight | Double-click to open MLD";
+                tr.onclick = (e) => {
+                    if (e.target.closest('.btn-mld-badge')) return;
+                    inspectDpCell(row.cellI, row.cellJ);
+                };
+                if (isClickableMld) {
+                    tr.ondblclick = () => openMldModal(row.target, row.spoken);
+                }
+                tr.innerHTML = `
+                    <td><strong style="color: #38bdf8; font-size: 17px; font-family: monospace;">${row.target}</strong></td>
+                    <td><strong style="color: #c084fc; font-size: 17px; font-family: monospace;">${row.spoken}</strong></td>
+                    <td>${mldCellContent}</td>
+                    <td><code style="color: #fbbf24; font-size: 17px; font-weight: bold;">${row.nwaScore}</code></td>
+                    <td style="font-size: 14px; color: #e2e8f0;">${row.rule}</td>
+                    <td>${row.verdict}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Compute and update scoring cards
+        const accuracy = cachedTotal > 0 ? ((Math.max(0, cachedTotal - errorCount) / cachedTotal) * 100.0) : 0.0;
+        const boundedAcc = Math.max(0, Math.min(100.0, accuracy));
+        const wcpmVal = Math.round(cachedWcpm);
+        const benchmarkScore = Math.min((wcpmVal / 150.0) * 100.0, 100.0);
+        const compositeScore = (boundedAcc * 0.50) + (benchmarkScore * 0.50);
+
+        // Update Top Metric Cards
+        document.getElementById("resTotal").innerText = cachedTotal;
+        document.getElementById("resCorrect").innerText = correctCount;
+        document.getElementById("resErrors").innerText = errorCount;
+        document.getElementById("resAccuracy").innerText = boundedAcc.toFixed(1) + "%";
+        document.getElementById("resWcpm").innerText = wcpmVal;
+        document.getElementById("resFluency").innerText = benchmarkScore.toFixed(1) + "%";
+
+        // 1. Real Equation 1: Accuracy Rate Breakdown
+        const accNumEl = document.getElementById("mathAccNum");
+        const accDenEl = document.getElementById("mathAccDen");
+        const stepAccEl = document.getElementById("stepCalcAccuracy");
+        if (accNumEl) accNumEl.textContent = correctCount;
+        if (accDenEl) accDenEl.textContent = cachedTotal;
+        if (stepAccEl) stepAccEl.textContent = boundedAcc.toFixed(1) + "%";
+
+        // 2. Real Equation 2: WCPM Reading Rate Breakdown
+        const wcpmNumEl = document.getElementById("mathWcpmNum");
+        const wcpmDenEl = document.getElementById("mathWcpmDen");
+        const stepWcpmEl = document.getElementById("stepCalcWcpm");
+        const estSec = wcpmVal > 0 ? ((correctCount / wcpmVal) * 60).toFixed(1) + "s" : "~2.0s";
+        if (wcpmNumEl) wcpmNumEl.textContent = correctCount;
+        if (wcpmDenEl) wcpmDenEl.textContent = estSec;
+        if (stepWcpmEl) stepWcpmEl.textContent = wcpmVal + " WCPM";
+
+        // 3. Real Equation 3: WCPM Benchmark Score Breakdown
+        const benchNumEl = document.getElementById("mathBenchNum");
+        const stepBenchEl = document.getElementById("stepCalcBenchmark");
+        if (benchNumEl) benchNumEl.textContent = wcpmVal;
+        if (stepBenchEl) stepBenchEl.textContent = benchmarkScore.toFixed(1) + "%";
+
+        // 4. Real Equation 4: Final Composite Score Breakdown
+        const compBreakdownEl = document.getElementById("stepCalcCompositeBreakdown");
+        const compScoreEl = document.getElementById("resCompositeScore");
+        if (compBreakdownEl) {
+            const accPart = (boundedAcc * 0.50).toFixed(1);
+            const speedPart = (benchmarkScore * 0.50).toFixed(1);
+            compBreakdownEl.innerHTML = `(<span style="color: #38bdf8;">${boundedAcc.toFixed(1)}%</span> × 0.50) + (<span style="color: #c084fc;">${benchmarkScore.toFixed(1)}%</span> × 0.50) = <strong style="color: #f1f5f9;">${accPart}% + ${speedPart}%</strong>`;
+        }
+        if (compScoreEl) {
+            compScoreEl.innerText = compositeScore.toFixed(1) + "%";
+        }
+    }
+
+    // --- DETAILED LETTER-BY-LETTER MLD ENGINE & MODAL ---
+    function getDetailedMld(targetWord, spokenWord) {
+        const t = targetWord.toLowerCase().trim();
+        const s = spokenWord.toLowerCase().trim();
+        const M = t.length; // Target letters on TOP (columns)
+        const N = s.length; // Spoken letters on LEFT (rows)
+
+        const dp = Array.from({ length: N + 1 }, () => Array(M + 1).fill(0.0));
+        const ptr = Array.from({ length: N + 1 }, () => Array(M + 1).fill(''));
+
+        for (let i = 0; i <= N; i++) {
+            dp[i][0] = i * 1.0;
+            ptr[i][0] = 'U'; // Extra spoken char
+        }
+        for (let j = 0; j <= M; j++) {
+            dp[0][j] = j * 1.0;
+            ptr[0][j] = 'L'; // Missing target char
+        }
+        ptr[0][0] = '';
+
+        for (let i = 1; i <= N; i++) {
+            for (let j = 1; j <= M; j++) {
+                const sc = s[i - 1];
+                const tc = t[j - 1];
+
+                let subCost = 0.0;
+                let subType = '';
+                if (sc === tc) {
+                    subCost = 0.0;
+                    subType = 'Match';
+                } else {
+                    const isVowel = (sc === 'e' && tc === 'i') || (sc === 'i' && tc === 'e') || 
+                                    (sc === 'o' && tc === 'u') || (sc === 'u' && tc === 'o');
+                    const isCons = (sc === 'd' && tc === 'r') || (sc === 'r' && tc === 'd') || 
+                                   (sc === 'l' && tc === 'r') || (sc === 'r' && tc === 'l') || 
+                                   (sc === 'p' && tc === 'b') || (sc === 'b' && tc === 'p');
+                    if (isVowel) {
+                        subCost = 0.3;
+                        subType = 'Regional Vowel Shift (e↔i, o↔u)';
+                    } else if (isCons) {
+                        subCost = 0.3;
+                        subType = 'Regional Consonant Shift (d↔r, p↔b, l↔r)';
+                    } else {
+                        subCost = 1.0;
+                        subType = 'Character Substitution';
+                    }
+                }
+
+                const diag = dp[i - 1][j - 1] + subCost;
+                const up = dp[i - 1][j] + 1.0;
+                const left = dp[i][j - 1] + 1.0;
+
+                const minVal = Math.min(diag, up, left);
+                dp[i][j] = minVal;
+
+                if (minVal === diag) ptr[i][j] = 'D';
+                else if (minVal === up) ptr[i][j] = 'U';
+                else ptr[i][j] = 'L';
+            }
+        }
+
+        // Traceback character alignment
+        let i = N, j = M;
+        const charRows = [];
+        const path = [[N, M]];
+
+        while (i > 0 || j > 0) {
+            if (ptr[i][j] === 'D') {
+                const sc = s[i - 1];
+                const tc = t[j - 1];
+                let cost = 0.0;
+                let op = 'Exact Match (0.0 cost)';
+                if (sc !== tc) {
+                    const isVowel = (sc === 'e' && tc === 'i') || (sc === 'i' && tc === 'e') || 
+                                    (sc === 'o' && tc === 'u') || (sc === 'u' && tc === 'o');
+                    const isCons = (sc === 'd' && tc === 'r') || (sc === 'r' && tc === 'd') || 
+                                   (sc === 'l' && tc === 'r') || (sc === 'r' && tc === 'l') || 
+                                   (sc === 'p' && tc === 'b') || (sc === 'b' && tc === 'p');
+                    if (isVowel) {
+                        cost = 0.3;
+                        op = `Regional Vowel Shift: ${tc} ↔ ${sc} (0.3 cost)`;
+                    } else if (isCons) {
+                        cost = 0.3;
+                        op = `Regional Consonant Shift: ${tc} ↔ ${sc} (0.3 cost)`;
+                    } else {
+                        cost = 1.0;
+                        op = `Character Mismatch: ${tc} ≠ ${sc} (1.0 cost)`;
+                    }
+                }
+                charRows.push({ tc, sc, cost, op, i, j });
+                i--; j--;
+                path.push([i, j]);
+            } else if (ptr[i][j] === 'U') {
+                charRows.push({ tc: '—', sc: s[i - 1], cost: 1.0, op: `Extra Character Inserted: +${s[i - 1]} (1.0 cost)`, i, j });
+                i--;
+                path.push([i, j]);
+            } else if (ptr[i][j] === 'L') {
+                charRows.push({ tc: t[j - 1], sc: '—', cost: 1.0, op: `Missing Character Omitted: -${t[j - 1]} (1.0 cost)`, i, j });
+                j--;
+                path.push([i, j]);
+            }
+        }
+
+        charRows.reverse();
+        path.reverse();
+
+        const maxLen = Math.max(M, N);
+        const rawCost = dp[N][M];
+        const normalizedDist = maxLen === 0 ? 0.0 : rawCost / maxLen;
+        const nwaScore = normalizedDist <= 0.40 ? (5.0 * (1.0 - normalizedDist)) : -2.0;
+
+        return { 
+            t, s, M, N, dp, ptr, path, charRows, rawCost, maxLen, normalizedDist, nwaScore 
+        };
+    }
+
+    let cachedMldData = null;
+
+    function openMldModal(targetWord, spokenWord) {
+        if (!targetWord || !spokenWord || targetWord === "—" || spokenWord === "—") {
+            alert("MLD letter-by-letter analysis applies to compared word pairs. Omitted or extra words receive standard alignment gap penalty.");
+            return;
+        }
+
+        const data = getDetailedMld(targetWord, spokenWord);
+        cachedMldData = data;
+
+        document.getElementById("mldModalTitle").innerText = `Letter-by-Letter MLD: "${data.t}" vs. "${data.s}"`;
+        document.getElementById("mldModalSubtitle").innerHTML = `Phoneme cost analysis comparing Target: <strong style="color: #38bdf8;">"${data.t}"</strong> and Spoken: <strong style="color: #c084fc;">"${data.s}"</strong>`;
+
+        // Metric cards with clear step-by-step calculation
+        const distVal = data.normalizedDist;
+        const simVal = Math.max(0, 1.0 - distVal);
+        const isAccepted = distVal <= 0.40;
+
+        document.getElementById("mldMetricsGrid").innerHTML = `
+            <div class="mld-metric-box">
+                <span>Step 1: Raw Edit Cost</span>
+                <strong style="color: #fbbf24; font-size: 22px;">${data.rawCost.toFixed(1)}</strong>
+                <div style="font-size: 11px; color: #64748b; margin-top: 3px;">Sum of char costs</div>
+            </div>
+            <div class="mld-metric-box">
+                <span>Step 2: Max Word Length</span>
+                <strong style="color: #cbd5e1; font-size: 22px;">${data.maxLen}</strong>
+                <div style="font-size: 11px; color: #64748b; margin-top: 3px;">max("${data.t}".len, "${data.s}".len)</div>
+            </div>
+            <div class="mld-metric-box" style="border-color: #0284c7;">
+                <span style="color: #38bdf8;">Step 3: Normalized MLD</span>
+                <strong style="color: #38bdf8; font-size: 22px;">${distVal.toFixed(2)}</strong>
+                <div style="font-size: 11px; color: #94a3b8; margin-top: 3px;">${data.rawCost.toFixed(1)} ÷ ${data.maxLen} = ${distVal.toFixed(2)}</div>
+            </div>
+            <div class="mld-metric-box" style="border-color: ${isAccepted ? '#10b981' : '#ef4444'};">
+                <span style="color: ${isAccepted ? '#34d399' : '#f87171'};">Step 4: NWA Scaled Score</span>
+                <strong style="color: ${isAccepted ? '#34d399' : '#f87171'}; font-size: 22px;">${data.nwaScore >= 0 ? '+' : ''}${data.nwaScore.toFixed(1)}</strong>
+                <div style="font-size: 11px; color: #94a3b8; margin-top: 3px;">${isAccepted ? `5.0 × (1 - ${distVal.toFixed(2)})` : 'Dist > 0.40 penalty'}</div>
+            </div>
+        `;
+
+        // Clear Step-by-Step Conversion Banner
+        const stepBanner = document.getElementById("mldCalcStepBanner");
+        if (stepBanner) {
+            stepBanner.style.display = "block";
+            stepBanner.innerHTML = `
+                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                    <div>
+                        <span style="background: #1e293b; color: #38bdf8; border: 1px solid #0284c7; font-weight: 800; font-size: 11px; padding: 2px 8px; border-radius: 4px; text-transform: uppercase;">Formula Walkthrough</span>
+                        <span style="color: #cbd5e1; font-size: 14px; margin-left: 8px;">
+                            <strong>1.0 − ${distVal.toFixed(2)}</strong> = <code style="color: #38bdf8; font-size: 15px; font-weight: bold;">${simVal.toFixed(2)}</code> (Similarity)
+                            &nbsp;➔&nbsp;
+                            <strong>5.0 × ${simVal.toFixed(2)}</strong> = <code style="color: #34d399; font-size: 18px; font-weight: 800;">+${data.nwaScore.toFixed(1)} NWA Score</code>
+                        </span>
+                    </div>
+                    <span style="font-size: 12px; color: #94a3b8;">
+                        ${isAccepted ? '✔ Within leniency limit (Dist ≤ 0.40)' : '✖ Exceeds leniency limit (Dist > 0.40)'}
+                    </span>
+                </div>
+            `;
+        }
+
+        // 2D Character DP Matrix
+        const pathSet = new Set(data.path.map(([r, c]) => `${r},${c}`));
+        let gridHtml = '<table class="dp-table" style="border-spacing: 3px; margin: 0 auto;">';
+        
+        // Header (Target characters along columns on TOP)
+        gridHtml += '<tr><th style="font-size: 10px; color: #64748b; padding: 4px 6px;">Spoken ↓ \\ Target →</th><th class="dp-header-target" style="padding: 4px 8px;">[START]</th>';
+        for (let j = 0; j < data.M; j++) {
+            gridHtml += `<th class="dp-header-target" style="padding: 4px 8px;">${data.t[j]}</th>`;
+        }
+        gridHtml += '</tr>';
+
+        // Rows (Spoken characters along rows on LEFT)
+        for (let i = 0; i <= data.N; i++) {
+            gridHtml += '<tr>';
+            if (i === 0) {
+                gridHtml += '<th class="dp-header-spoken" style="padding: 4px 8px;">[START]</th>';
+            } else {
+                gridHtml += `<th class="dp-header-spoken" style="padding: 4px 8px;">${data.s[i - 1]}</th>`;
+            }
+
+            for (let j = 0; j <= data.M; j++) {
+                const val = data.dp[i][j];
+                const p = data.ptr[i][j];
+                let arrow = '';
+                if (p === 'D') arrow = '↖';
+                else if (p === 'U') arrow = '↑';
+                else if (p === 'L') arrow = '←';
+
+                const isPath = pathSet.has(`${i},${j}`);
+                const cellClass = isPath ? 'char-cell path-winner' : 'char-cell';
+                const disp = (val % 1 === 0) ? val.toFixed(0) : val.toFixed(1);
+
+                gridHtml += `
+                    <td class="${cellClass}" id="mldCharCell_${i}_${j}" onclick="inspectMldCharCell(${i}, ${j})" title="Spoken: ${i === 0 ? 'START' : data.s[i-1]} | Target: ${j === 0 ? 'START' : data.t[j-1]} | Pointer: ${p || 'None'} | Cost: ${disp} | 💡 Click to inspect 4-box calculation">
+                        <span class="pointer-arrow">${arrow}</span>
+                        ${disp}
+                    </td>
+                `;
+            }
+            gridHtml += '</tr>';
+        }
+        gridHtml += '</table>';
+        document.getElementById("mldCharGridWrapper").innerHTML = gridHtml;
+
+        // Character Breakdown Table
+        const tbody = document.getElementById("mldCharStepsBody");
+        tbody.innerHTML = "";
+        data.charRows.forEach((step, idx) => {
+            const tr = document.createElement("tr");
+            tr.style.cursor = "pointer";
+            tr.title = "Click row to inspect this character's 4-box calculation in matrix above";
+            tr.onclick = () => inspectMldCharCell(step.i, step.j);
+            const costColor = step.cost === 0.0 ? '#34d399' : (step.cost <= 0.3 ? '#fbbf24' : '#f87171');
+            tr.innerHTML = `
+                <td style="text-align: center; color: #64748b;">${idx + 1}</td>
+                <td><code style="font-size: 15px; color: #38bdf8; font-weight: bold;">${step.tc}</code></td>
+                <td><code style="font-size: 15px; color: #c084fc; font-weight: bold;">${step.sc}</code></td>
+                <td>${step.op}</td>
+                <td><code style="color: ${costColor}; font-weight: bold;">${step.cost.toFixed(1)}</code></td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        // Show Modal
+        document.getElementById("mldModalOverlay").style.display = "flex";
+
+        // Normal state by default (no highlights until user clicks a character box)
+        clearMldCharHighlight();
+    }
+
+    let currentSelectedMldCell = null;
+
+    function inspectMldCharCell(i, j) {
+        if (!cachedMldData) return;
+        const { dp, ptr, t, s, N, M } = cachedMldData;
+
+        if (i < 0 || i > N || j < 0 || j > M) return;
+
+        // Toggle: if clicking the already selected cell, revert to normal
+        if (currentSelectedMldCell && currentSelectedMldCell.i === i && currentSelectedMldCell.j === j) {
+            clearMldCharHighlight();
+            return;
+        }
+        currentSelectedMldCell = { i, j };
+
+        // 1. Dim all character cells
+        const allCells = document.querySelectorAll("#mldCharGridWrapper .char-cell");
+        allCells.forEach(c => {
+            c.classList.remove("calc-target-cell", "calc-diag-cell", "calc-top-cell", "calc-left-cell", "calc-dimmed");
+            c.classList.add("calc-dimmed");
+        });
+
+        // 2. Highlight target character cell
+        const targetCell = document.getElementById(`mldCharCell_${i}_${j}`);
+        if (targetCell) {
+            targetCell.classList.remove("calc-dimmed");
+            targetCell.classList.add("calc-target-cell");
+        }
+
+        // 3. Highlight predecessor neighbors
+        if (i > 0 && j > 0) {
+            const diagCell = document.getElementById(`mldCharCell_${i-1}_${j-1}`);
+            const topCell = document.getElementById(`mldCharCell_${i-1}_${j}`);
+            const leftCell = document.getElementById(`mldCharCell_${i}_${j-1}`);
+
+            if (diagCell) { diagCell.classList.remove("calc-dimmed"); diagCell.classList.add("calc-diag-cell"); }
+            if (topCell) { topCell.classList.remove("calc-dimmed"); topCell.classList.add("calc-top-cell"); }
+            if (leftCell) { leftCell.classList.remove("calc-dimmed"); leftCell.classList.add("calc-left-cell"); }
+        } else if (i === 0 && j > 0) {
+            const leftCell = document.getElementById(`mldCharCell_${i}_${j-1}`);
+            if (leftCell) { leftCell.classList.remove("calc-dimmed"); leftCell.classList.add("calc-left-cell"); }
+        } else if (i > 0 && j === 0) {
+            const topCell = document.getElementById(`mldCharCell_${i-1}_${j}`);
+            if (topCell) { topCell.classList.remove("calc-dimmed"); topCell.classList.add("calc-top-cell"); }
+        }
+
+        // 4. Render 4-box card in modal
+        renderMldChar4BoxCard(i, j);
+    }
+
+    function clearMldCharHighlight() {
+        currentSelectedMldCell = null;
+        const allCells = document.querySelectorAll("#mldCharGridWrapper .char-cell");
+        allCells.forEach(c => {
+            c.classList.remove("calc-target-cell", "calc-diag-cell", "calc-top-cell", "calc-left-cell", "calc-dimmed");
+        });
+        const card = document.getElementById("mldChar4BoxCard");
+        if (card) card.style.display = "none";
+    }
+
+    function renderMldChar4BoxCard(i, j) {
+        const card = document.getElementById("mldChar4BoxCard");
+        if (!card || !cachedMldData) return;
+        const { dp, ptr, t, s } = cachedMldData;
+
+        card.style.display = "block";
+
+        if (i === 0 && j === 0) {
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 6px;">
+                    <strong style="color: #38bdf8; font-size: 14px;">Character Root Cell [0, 0]</strong>
+                    <button type="button" onclick="clearMldCharHighlight()" style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 6px; border-radius: 4px; font-size: 11px; cursor: pointer;">✕ Reset</button>
+                </div>
+                <div style="font-size: 13px; color: #94a3b8; margin-top: 6px;">Root character boundary: Cost = 0.0.</div>
+            `;
+            return;
+        }
+
+        if (i === 0 && j > 0) {
+            const tc = t[j - 1];
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 6px;">
+                    <strong style="color: #38bdf8; font-size: 14px;">Character Omission Cell [0, ${j}]: '-${tc}'</strong>
+                    <button type="button" onclick="clearMldCharHighlight()" style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 6px; border-radius: 4px; font-size: 11px; cursor: pointer;">✕ Reset</button>
+                </div>
+                <div style="font-size: 13px; color: #cbd5e1; margin-top: 6px;">
+                    Target character <strong style="color: #38bdf8;">'${tc}'</strong> was omitted: Left cell cost + 1.0 = <code style="color: #fbbf24;">${dp[0][j].toFixed(1)}</code>.
+                </div>
+            `;
+            return;
+        }
+
+        if (i > 0 && j === 0) {
+            const sc = s[i - 1];
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 6px;">
+                    <strong style="color: #c084fc; font-size: 14px;">Character Insertion Cell [${i}, 0]: '+${sc}'</strong>
+                    <button type="button" onclick="clearMldCharHighlight()" style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 6px; border-radius: 4px; font-size: 11px; cursor: pointer;">✕ Reset</button>
+                </div>
+                <div style="font-size: 13px; color: #cbd5e1; margin-top: 6px;">
+                    Spoken character <strong style="color: #c084fc;">'${sc}'</strong> inserted: Top cell cost + 1.0 = <code style="color: #fbbf24;">${dp[i][0].toFixed(1)}</code>.
+                </div>
+            `;
+            return;
+        }
+
+        // Inner cell (i, j)
+        const tc = t[j - 1];
+        const sc = s[i - 1];
+
+        // Diagonal
+        const priorDiag = dp[i - 1][j - 1];
+        let subCost = 0.0;
+        let subDesc = "Exact Match (0.0)";
+        if (sc !== tc) {
+            const isVowel = (sc === 'e' && tc === 'i') || (sc === 'i' && tc === 'e') || 
+                            (sc === 'o' && tc === 'u') || (sc === 'u' && tc === 'o');
+            const isCons = (sc === 'd' && tc === 'r') || (sc === 'r' && tc === 'd') || 
+                           (sc === 'l' && tc === 'r') || (sc === 'r' && tc === 'l') || 
+                           (sc === 'p' && tc === 'b') || (sc === 'b' && tc === 'p');
+            if (isVowel || isCons) {
+                subCost = 0.3;
+                subDesc = "Regional Accent Shift (0.3)";
+            } else {
+                subCost = 1.0;
+                subDesc = "Character Mismatch (1.0)";
+            }
+        }
+        const candDiag = priorDiag + subCost;
+
+        // Top
+        const priorTop = dp[i - 1][j];
+        const candTop = priorTop + 1.0;
+
+        // Left
+        const priorLeft = dp[i][j - 1];
+        const candLeft = priorLeft + 1.0;
+
+        // Result
+        const p = ptr[i][j];
+        const isDiagWin = (p === 'D');
+        const isTopWin = (p === 'U');
+        const isLeftWin = (p === 'L');
+        const arrow = isDiagWin ? '↖' : (isTopWin ? '↑' : '←');
+
+        card.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 8px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="background: #0284c7; color: white; font-weight: 800; font-size: 11px; padding: 2px 6px; border-radius: 8px; text-transform: uppercase;">4-Box Char Inspector</span>
+                    <strong style="color: #f8fafc; font-size: 14px;">Target: '<span style="color:#38bdf8">${tc}</span>' vs Spoken: '<span style="color:#c084fc">${sc}</span>' (Lowest Cost Wins!)</strong>
+                </div>
+                <button type="button" onclick="clearMldCharHighlight()" style="background: #1e293b; border: 1px solid #334155; color: #cbd5e1; padding: 2px 8px; border-radius: 4px; font-size: 11px; cursor: pointer;">✕ Reset</button>
+            </div>
+            <div class="calc-quad-grid" style="gap: 10px; margin-top: 10px;">
+                <div class="calc-mini-box ${isDiagWin ? 'winner' : ''}" style="padding: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span class="box-tag">↖ Diag [${i-1}, ${j-1}]</span>
+                        <span style="font-size: 11px; font-weight: bold; color: ${isDiagWin ? '#34d399' : '#64748b'};">${isDiagWin ? '🏆 WINNER' : 'Evaluated'}</span>
+                    </div>
+                    <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">${priorDiag.toFixed(1)} + ${subCost.toFixed(1)} (${subDesc})</div>
+                    <div style="font-size: 15px; font-weight: bold; color: ${isDiagWin ? '#34d399' : '#cbd5e1'}; margin-top: 4px;">= ${candDiag.toFixed(1)}</div>
+                </div>
+                <div class="calc-mini-box ${isTopWin ? 'winner' : ''}" style="padding: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span class="box-tag">↑ Top [${i-1}, ${j}]</span>
+                        <span style="font-size: 11px; font-weight: bold; color: ${isTopWin ? '#34d399' : '#64748b'};">${isTopWin ? '🏆 WINNER' : 'Evaluated'}</span>
+                    </div>
+                    <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">${priorTop.toFixed(1)} + 1.0 (Insertion)</div>
+                    <div style="font-size: 15px; font-weight: bold; color: ${isTopWin ? '#34d399' : '#cbd5e1'}; margin-top: 4px;">= ${candTop.toFixed(1)}</div>
+                </div>
+                <div class="calc-mini-box ${isLeftWin ? 'winner' : ''}" style="padding: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span class="box-tag">← Left [${i}, ${j-1}]</span>
+                        <span style="font-size: 11px; font-weight: bold; color: ${isLeftWin ? '#34d399' : '#64748b'};">${isLeftWin ? '🏆 WINNER' : 'Evaluated'}</span>
+                    </div>
+                    <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">${priorLeft.toFixed(1)} + 1.0 (Omission)</div>
+                    <div style="font-size: 15px; font-weight: bold; color: ${isLeftWin ? '#34d399' : '#cbd5e1'}; margin-top: 4px;">= ${candLeft.toFixed(1)}</div>
+                </div>
+                <div class="calc-mini-box target" style="padding: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span class="box-tag" style="border-color: #38bdf8; color: #38bdf8;">🎯 Min Cost Result</span>
+                        <span style="font-size: 11px; font-weight: bold; color: #34d399;">Active Choice</span>
+                    </div>
+                    <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">MIN( ↖ ${candDiag.toFixed(1)}, ↑ ${candTop.toFixed(1)}, ← ${candLeft.toFixed(1)} )</div>
+                    <div style="font-size: 16px; font-weight: 800; color: #34d399; margin-top: 4px;">= ${dp[i][j].toFixed(1)} (${arrow} ${p})</div>
+                </div>
+            </div>
+        `;
+    }
+
+    function openActiveMldModal() {
+        if (!cachedAlignmentRows || cachedAlignmentRows.length === 0) return;
+        const current = cachedAlignmentRows[currentAlignIndex];
+        if (current) {
+            openMldModal(current.target, current.spoken);
+        }
+    }
+
+    function closeMldModal() {
+        document.getElementById("mldModalOverlay").style.display = "none";
+    }
+
+    function handleModalBackdropClick(event) {
+        if (event.target.id === "mldModalOverlay") {
+            closeMldModal();
+        }
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeMldModal();
+            const calc = document.getElementById("miniCalcWidget");
+            if (calc && calc.style.display === "flex") {
+                toggleMiniCalculator();
+            }
+        }
+    });
+
+    // --- MINI CALCULATOR ENGINE ---
+    let calcCurrentVal = "0";
+    let calcPrevVal = null;
+    let calcPendingOp = null;
+    let calcResetOnNextDigit = false;
+
+    function toggleMiniCalculator() {
+        const calc = document.getElementById("miniCalcWidget");
+        if (!calc) return;
+        if (calc.style.display === "flex") {
+            calc.style.display = "none";
+        } else {
+            calc.style.display = "flex";
+            if (window.innerWidth <= 768) {
+                const w = Math.min(320, window.innerWidth - 24);
+                const leftPos = Math.max(12, Math.floor((window.innerWidth - w) / 2));
+                const topPos = Math.max(20, Math.floor((window.innerHeight - 390) / 2));
+                calc.style.left = `${leftPos}px`;
+                calc.style.top = `${topPos}px`;
+                calc.style.right = "auto";
+                calc.style.bottom = "auto";
+            }
+            updateCalcScreen();
+        }
+    }
+
+    function updateCalcScreen() {
+        const disp = document.getElementById("miniCalcDisplay");
+        const hist = document.getElementById("miniCalcHistory");
+        if (disp) disp.textContent = calcCurrentVal;
+        if (hist) {
+            if (calcPrevVal !== null && calcPendingOp) {
+                const opChar = calcPendingOp === '*' ? '×' : (calcPendingOp === '/' ? '÷' : (calcPendingOp === '-' ? '−' : '+'));
+                hist.textContent = `${calcPrevVal} ${opChar}`;
+            } else {
+                hist.innerHTML = "&nbsp;";
+            }
+        }
+    }
+
+    function calcInput(char) {
+        if (char === '+/-') {
+            if (calcCurrentVal === "0" || calcCurrentVal === "") return;
+            if (calcCurrentVal.startsWith("-")) {
+                calcCurrentVal = calcCurrentVal.substring(1);
+            } else {
+                calcCurrentVal = "-" + calcCurrentVal;
+            }
+            updateCalcScreen();
+            return;
+        }
+
+        if (char === '.') {
+            if (calcResetOnNextDigit) {
+                calcCurrentVal = "0.";
+                calcResetOnNextDigit = false;
+            } else if (!calcCurrentVal.includes('.')) {
+                calcCurrentVal += '.';
+            }
+            updateCalcScreen();
+            return;
+        }
+
+        if (['+', '-', '*', '/'].includes(char)) {
+            if (calcPrevVal !== null && calcPendingOp && !calcResetOnNextDigit) {
+                calcCompute();
+            }
+            calcPrevVal = parseFloat(calcCurrentVal);
+            calcPendingOp = char;
+            calcResetOnNextDigit = true;
+            updateCalcScreen();
+            return;
+        }
+
+        // Digits 0-9
+        if (calcCurrentVal === "0" || calcResetOnNextDigit) {
+            calcCurrentVal = char;
+            calcResetOnNextDigit = false;
+        } else {
+            if (calcCurrentVal.length < 14) {
+                calcCurrentVal += char;
+            }
+        }
+        updateCalcScreen();
+    }
+
+    function calcCompute() {
+        if (calcPrevVal === null || calcPendingOp === null) return;
+        const current = parseFloat(calcCurrentVal);
+        let res = 0;
+        switch (calcPendingOp) {
+            case '+': res = calcPrevVal + current; break;
+            case '-': res = calcPrevVal - current; break;
+            case '*': res = calcPrevVal * current; break;
+            case '/': 
+                if (current === 0) {
+                    calcCurrentVal = "Error";
+                    calcPrevVal = null;
+                    calcPendingOp = null;
+                    calcResetOnNextDigit = true;
+                    updateCalcScreen();
+                    return;
+                }
+                res = calcPrevVal / current; 
+                break;
+        }
+        // Clean round precision to avoid IEEE floating point errors e.g. 0.1 + 0.2 = 0.30000000000000004
+        res = Math.round(res * 1000000) / 1000000;
+        calcCurrentVal = String(res);
+        calcPrevVal = null;
+        calcPendingOp = null;
+        calcResetOnNextDigit = true;
+    }
+
+    function calcAction(action) {
+        if (action === 'C') {
+            calcCurrentVal = "0";
+            calcPrevVal = null;
+            calcPendingOp = null;
+            calcResetOnNextDigit = false;
+            updateCalcScreen();
+        } else if (action === 'DEL') {
+            if (calcResetOnNextDigit) {
+                calcCurrentVal = "0";
+                calcResetOnNextDigit = false;
+            } else if (calcCurrentVal.length > 1) {
+                calcCurrentVal = calcCurrentVal.slice(0, -1);
+                if (calcCurrentVal === "-" || calcCurrentVal === "") calcCurrentVal = "0";
+            } else {
+                calcCurrentVal = "0";
+            }
+            updateCalcScreen();
+        } else if (action === '=') {
+            if (calcPendingOp !== null) {
+                calcCompute();
+                updateCalcScreen();
+            }
+        }
+    }
+
+    // Draggable Mini Calculator Window (Touch for Android / Mobile & Mouse for Desktop)
+    (function makeMiniCalcDraggable() {
+        const widget = document.getElementById("miniCalcWidget");
+        const header = document.getElementById("miniCalcHeader");
+        if (!widget || !header) return;
+
+        let isDragging = false;
+        let startX, startY, initialLeft, initialTop;
+
+        header.style.cursor = "move";
+
+        function startDrag(clientX, clientY) {
+            isDragging = true;
+            startX = clientX;
+            startY = clientY;
+
+            const rect = widget.getBoundingClientRect();
+            initialLeft = rect.left;
+            initialTop = rect.top;
+
+            widget.style.right = "auto";
+            widget.style.bottom = "auto";
+            widget.style.left = `${initialLeft}px`;
+            widget.style.top = `${initialTop}px`;
+        }
+
+        function moveDrag(clientX, clientY) {
+            if (!isDragging) return;
+            const dx = clientX - startX;
+            const dy = clientY - startY;
+            const maxL = Math.max(10, window.innerWidth - widget.offsetWidth - 10);
+            const maxT = Math.max(10, window.innerHeight - widget.offsetHeight - 10);
+            widget.style.left = `${Math.max(10, Math.min(maxL, initialLeft + dx))}px`;
+            widget.style.top = `${Math.max(10, Math.min(maxT, initialTop + dy))}px`;
+        }
+
+        function endDrag() {
+            isDragging = false;
+        }
+
+        // Mouse listeners (desktop)
+        header.addEventListener("mousedown", (e) => {
+            if (e.target.tagName.toLowerCase() === "button") return;
+            startDrag(e.clientX, e.clientY);
+            const onMouseMove = (ev) => moveDrag(ev.clientX, ev.clientY);
+            const onMouseUp = () => {
+                endDrag();
+                document.removeEventListener("mousemove", onMouseMove);
+                document.removeEventListener("mouseup", onMouseUp);
+            };
+            document.addEventListener("mousemove", onMouseMove);
+            document.addEventListener("mouseup", onMouseUp);
+        });
+
+        // Touch listeners (Android / CP mobile devices)
+        header.addEventListener("touchstart", (e) => {
+            if (e.target.tagName.toLowerCase() === "button") return;
+            const touch = e.touches[0];
+            startDrag(touch.clientX, touch.clientY);
+            const onTouchMove = (ev) => {
+                if (ev.cancelable) ev.preventDefault();
+                const t = ev.touches[0];
+                moveDrag(t.clientX, t.clientY);
+            };
+            const onTouchEnd = () => {
+                endDrag();
+                document.removeEventListener("touchmove", onTouchMove);
+                document.removeEventListener("touchend", onTouchEnd);
+            };
+            document.addEventListener("touchmove", onTouchMove, { passive: false });
+            document.addEventListener("touchend", onTouchEnd);
+        }, { passive: true });
+    })();
+</script>
+</body>
+</html>
