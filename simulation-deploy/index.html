@@ -16,6 +16,22 @@
             color: #e2e8f0;
             display: flex;
             justify-content: center;
+            margin-bottom: 0 !important;
+        }
+        /* Suppress third-party injected promotional banners (tiiny.host watermark) */
+        div[style*="bottom:0%"],
+        div[style*="bottom: 0%"],
+        div[style*="height:55px"],
+        div[style*="height: 55px"],
+        div[style*="height: 55px !important"],
+        .sidebar-container {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            max-height: 0 !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
         }
         .container {
             width: 100%;
@@ -3612,6 +3628,24 @@
             document.addEventListener("touchmove", onTouchMove, { passive: false });
             document.addEventListener("touchend", onTouchEnd);
         }, { passive: true });
+    })();
+
+    // Auto-remove any third-party injected promotional banners (tiiny.host watermark)
+    (function removeInjectedHostBanners() {
+        function clean() {
+            const ads = document.querySelectorAll('div[style*="bottom:0%"], div[style*="bottom: 0%"], div[style*="height:55px"], div[style*="height: 55px"], .sidebar-container');
+            ads.forEach(el => el.remove());
+            if (document.body) {
+                document.body.style.marginBottom = "0px";
+            }
+        }
+        try {
+            const observer = new MutationObserver(clean);
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) {}
+        window.addEventListener("DOMContentLoaded", clean);
+        window.addEventListener("load", clean);
+        setInterval(clean, 300);
     })();
 </script>
 </body>
