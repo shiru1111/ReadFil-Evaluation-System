@@ -114,7 +114,12 @@ cleanup_thread.start()
 _executor = ThreadPoolExecutor(max_workers=2)
 
 # =================================================================
-# LOAD MODELS
+# 1. ACOUSTIC MODEL: WAV2VEC 2.0 (FILIPINO TRANSFORMER MODEL)
+# -----------------------------------------------------------------
+# - Pretrained Model: "Khalsuu/filipino-wav2vec2-l-xls-r-300m-official"
+# - Optimization: PyTorch Dynamic 8-bit Quantization (torch.qint8)
+#   Halves RAM memory footprint and accelerates CPU inference to
+#   enable near real-time processing on standard school computers.
 # =================================================================
 print("Loading Wav2Vec 2.0 (Filipino Acoustic Model)...")
 W2V_MODEL_NAME = "Khalsuu/filipino-wav2vec2-l-xls-r-300m-official"
@@ -1171,6 +1176,18 @@ def modified_levenshtein(word1, word2):
 
 
 
+# =================================================================
+# 2. NEEDLEMAN-WUNSCH ALGORITHM (NWA) - GLOBAL SEQUENCE ALIGNMENT
+# -----------------------------------------------------------------
+# - Role: "Macro / Sentence-Level Structural Alignment"
+# - Purpose: Prevents cascading alignment errors when a student
+#   skips a word (omission/deletion) or inserts filler words.
+# - Recurrence: F(i, j) = max[ F(i-1,j-1)+S(xi,yj), F(i-1,j)+d, F(i,j-1)+d ]
+# - Pointers:
+#     'D' (Diagonal) = Word match or phonetic substitution
+#     'U' (Up)       = Omission / Deletion (word skipped by reader)
+#     'L' (Left)     = Insertion (extra/filler word spoken by reader)
+# =================================================================
 def needleman_wunsch_alignment(target_words, spoken_words, vowel_shifted_targets=None):
     MATCH    =  5.0
     MISMATCH = -2.0
@@ -2032,10 +2049,15 @@ def evaluate_audio():
             _, final_errors = needleman_wunsch_alignment(target_words, final_opt, None)
             best_errors = final_errors
 
+            # -------------------------------------------------------------
+            # PHIL-IRI CORE FORMULAS: READING ACCURACY RATE (RAR) & WCPM
+            # -------------------------------------------------------------
             total_target_words = len(target_words)
             final_correct_count = max(0, total_target_words - best_errors)
+            # Accuracy Rate (%) = ((Total Target Words - Errors) / Total Target Words) * 100
             accuracy_rate = (final_correct_count / total_target_words * 100.0) if total_target_words > 0 else 0.0
 
+            # WCPM = (Total Correct Words / Duration in Seconds) * 60
             duration_minutes = duration_seconds / 60.0
             wcpm = (final_correct_count / duration_minutes) if duration_minutes > 0 else 0.0
 
@@ -2092,10 +2114,15 @@ def evaluate_audio():
             _, final_errors = needleman_wunsch_alignment(target_words, final_opt, None)
             best_errors = final_errors
 
+            # -------------------------------------------------------------
+            # PHIL-IRI CORE FORMULAS: READING ACCURACY RATE (RAR) & WCPM
+            # -------------------------------------------------------------
             total_target_words = len(target_words)
             final_correct_count = max(0, total_target_words - best_errors)
+            # Accuracy Rate (%) = ((Total Target Words - Errors) / Total Target Words) * 100
             accuracy_rate = (final_correct_count / total_target_words * 100.0) if total_target_words > 0 else 0.0
 
+            # WCPM = (Total Correct Words / Duration in Seconds) * 60
             duration_minutes = duration_seconds / 60.0
             wcpm = (final_correct_count / duration_minutes) if duration_minutes > 0 else 0.0
 

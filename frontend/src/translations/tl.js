@@ -52,7 +52,7 @@ export const tl = {
     criteria_desc: "Tuklasin nang eksakto kung paano sinusuri ng ReadFil ang iyong boses upang kalkulahin ang iyong marka sa kahusayan.",
     accuracy: "Katumpakan sa Pagbigkas",
     accuracy_weight: "50% ng Huling Marka",
-    accuracy_desc: "Ang sistema ay gumagamit ng mahigpit na dalawahang-modelong arkitektura (Wav2Vec 2.0 & Whisper). Kung may nakitang maling pagbigkas, nagsasagawa sila ng masusing letra-por-letrang pagsusuri ng pagkakahanay ng ponetika. Ang salita ay mamarkahang tama lamang kung ang mga binigkas na letra ay umaayon sa target na salita, na tinitiyak ang lubos na tumpak na pagmamarka na hindi pinapansin ang maliliit na ingay sa background.",
+    accuracy_desc: "Ang sistema ay gumagamit ng Wav2Vec 2.0 Filipino acoustic model kasama ang Needleman-Wunsch algorithm at Modified Levenshtein Distance. Sinusuri nito ang pagbigkas gamit ang mga espesyalisadong penalty weights na nakatugma sa ponolohiyang Tagalog, na tumatanggap sa mga punto ng rehiyon habang tumpak na natutukoy ang mga maling bigkas, paglaktaw, at pagdagdag ng salita.",
     math_formula: "Matematikong Pormula",
     speed: "Bilis ng Pagbabasa",
     speed_weight: "50% ng Huling Marka",
