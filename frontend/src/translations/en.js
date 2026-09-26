@@ -52,7 +52,7 @@ export const en = {
     criteria_desc: "Discover exactly how ReadFil analyzes your voice to calculate your fluency score.",
     accuracy: "Pronunciation Accuracy",
     accuracy_weight: "50% of Final Grade",
-    accuracy_desc: "The system uses a strict dual-model architecture (Wav2Vec 2.0 & Whisper). If the models detect a mispronunciation, they perform an advanced letter-by-letter phonetic alignment check. A word is only marked correct if the pronounced letters align with the target word, ensuring highly accurate grading that ignores minor background noise.",
+    accuracy_desc: "The system utilizes the Wav2Vec 2.0 Filipino acoustic model combined with the Needleman-Wunsch algorithm and Modified Levenshtein Distance. It evaluates pronunciation using specialized mathematical penalty weights calibrated for Tagalog phonology, accommodating regional accent variations while accurately detecting mispronunciations, omissions, and insertions.",
     math_formula: "Mathematical Formula",
     speed: "Reading Speed",
     speed_weight: "50% of Final Grade",

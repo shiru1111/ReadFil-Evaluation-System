@@ -48,12 +48,30 @@ export default function Results() {
     });
   }, []);
 
+  // =================================================================
+  // PHIL-IRI COMPOSITE SCORE & DIAGNOSTIC CLASSIFICATION (CHAPTER III & IV)
+  // -----------------------------------------------------------------
+  // - Automaticity Ceiling: 150 WCPM represents optimal conversational fluency.
+  // - Balanced Weighting: 50% Reading Accuracy (RAR) + 50% Normalized Speed (WCPM).
+  // - Formula: FinalScore = (AccuracyRate * 0.50) + (Normalized_WCPM * 0.50)
+  // =================================================================
   const targetWcpm = 150; 
   
+  // 50% of Grade: Reading Accuracy Rate (%)
   const accuracyScore = resultData.accuracyRate * 0.5; 
+  
+  // 50% of Grade: Normalized Reading Speed (capped at 50 points)
   const fluencyScore = Math.min((resultData.wcpm / targetWcpm) * 50, 50); 
+  
+  // Final Overall Composite Score (0 - 100 points)
   const finalScore = Math.round(accuracyScore + fluencyScore);
 
+  // -----------------------------------------------------------------
+  // PHIL-IRI READING LEVEL BENCHMARKS (DepEd Standard Tiers):
+  //   Independent   : 90% - 100% (Autonomous, highly fluent reader)
+  //   Instructional : 75% - 89%  (Requires teacher guidance/monitoring)
+  //   Frustration   : < 75%      (Struggling reader requiring targeted intervention)
+  // -----------------------------------------------------------------
   let tagalogLevel = "";
   if (finalScore >= 90) {
     tagalogLevel = "Independent";
