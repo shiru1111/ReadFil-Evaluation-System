@@ -1940,6 +1940,10 @@ def evaluate_audio():
                 active_raw = re.sub(r'\b(?:athinas|atinas)\b', 'Atenas', active_raw, flags=re.IGNORECASE)
                 if w2v_expert_raw:
                     w2v_expert_raw = re.sub(r'\b(?:athinas|atinas)\b', 'atenas', w2v_expert_raw, flags=re.IGNORECASE)
+            if 'kasama' in target_lower_str:
+                active_raw = re.sub(r'\bkkasamama\b', 'kasama', active_raw, flags=re.IGNORECASE)
+                if w2v_expert_raw:
+                    w2v_expert_raw = re.sub(r'\bkkasamama\b', 'kasama', w2v_expert_raw, flags=re.IGNORECASE)
 
             spoken_words = clean_text(active_raw)
             if safe_level == 'expert':

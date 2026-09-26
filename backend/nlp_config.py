@@ -20,7 +20,8 @@ SYNONYM_PAIRS = [
     {'tiago', 'tiyago'},
     {'atenas', 'athinas', 'atinas', 'athenas'},
     {'albania', 'albanya'},
-    {'kasamahang', 'Kkasamamahang'}
+    {'kasamahang', 'Kkasamamahang'},
+    {'kasama', 'kkasamama'}
 ]
 
 ENCLITIC_Y_BASES = {
@@ -48,4 +49,5 @@ EXPERT_CORRECTIONS = {
     'silaywalang': 'silay walang',
     'mahihi ng': 'mahihinang',
     'mahihing': 'mahihinang',
+    'kkasamama': 'kasama',
 }
