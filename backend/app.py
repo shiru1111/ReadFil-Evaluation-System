@@ -133,42 +133,55 @@ w2v_model.eval()
 print("Wav2Vec 2.0 loaded and quantized.\n")
 
 # =================================================================
-# AUDIO PREPROCESSING
+# AUDIO PREPROCESSING & WAV CONVERSION
 # =================================================================
 def convert_webm_to_wav(webm_path, wav_path):
+    # Load WebM compressed audio recording captured from React browser
     audio = AudioSegment.from_file(webm_path, format="webm")
+    # Resample to 16,000 Hz single-channel mono PCM required by Wav2Vec 2.0
     audio = audio.set_frame_rate(16000).set_channels(1)
+    # Export clean 16kHz WAV file to disk
     audio.export(wav_path, format="wav")
 
 def preprocess_audio(input_wav_path, output_wav_path):
+    # Load raw WAV segment
     audio_seg = AudioSegment.from_wav(input_wav_path)
+    # Apply dynamic range normalization with 0.1 headroom to prevent clipping
     normalized = effects.normalize(audio_seg, headroom=0.1)
+    # Ensure exact 16kHz mono audio formatting
     normalized = normalized.set_frame_rate(16000).set_channels(1)
+    # Save normalized WAV file
     normalized.export(output_wav_path, format="wav")
 
+    # Load normalized audio into float array using librosa at 16kHz
     speech, sr = librosa.load(output_wav_path, sr=16000)
     
-    # Apply a little bit of noise cancellation
+    # Apply spectral gating noise reduction to remove background classroom hum
     import noisereduce as nr
     reduced_noise_speech = nr.reduce_noise(y=speech, sr=sr, prop_decrease=0.5)
     
-    # We completely disable librosa.effects.trim here.
-    # Trimming often deletes quiet trailing consonants (like 'r' in 'lugar') 
-    # before the Wav2Vec model even gets a chance to hear it!
+    # We preserve natural pauses and quiet trailing consonants (e.g. 'r' in 'lugar')
     trimmed = reduced_noise_speech
 
+    # Write cleaned speech array back to output WAV file
     sf.write(output_wav_path, trimmed, sr)
+    # Return total elapsed audio duration in seconds
     return librosa.get_duration(y=trimmed, sr=sr)
 
 # =================================================================
-# TRANSCRIPTION
+# 2. ACOUSTIC TRANSCRIPTION ENGINE (WAV2VEC 2.0 CTC DECODING)
 # =================================================================
 def transcribe_wav2vec(wav_path):
+    # Step 1: Load 16kHz audio waveform as a 1D float array using Librosa
     speech_array, _ = librosa.load(wav_path, sr=16000)
+    # Step 2: Convert audio waveform into PyTorch tensor with padding for transformer input
     inputs = w2v_processor(speech_array, sampling_rate=16000, return_tensors="pt", padding=True)
+    # Step 3: Run forward pass through quantized Wav2Vec 2.0 model (no gradient tracking)
     with torch.no_grad():
         logits = w2v_model(inputs.input_values).logits
+    # Step 4: Extract highest probability token ID per frame via argmax (CTC greedy decode)
     predicted_ids = torch.argmax(logits, dim=-1)
+    # Step 5: Decode predicted token IDs into recognized Tagalog text string
     return w2v_processor.batch_decode(predicted_ids)[0]
 
 TAGALOG_BASIC_NUMBERS = {
@@ -1189,157 +1202,204 @@ def modified_levenshtein(word1, word2):
 #     'L' (Left)     = Insertion (extra/filler word spoken by reader)
 # =================================================================
 def needleman_wunsch_alignment(target_words, spoken_words, vowel_shifted_targets=None):
-    MATCH    =  5.0
-    MISMATCH = -2.0
-    GAP      = -2.0
+    # Alignment scoring weights
+    MATCH    =  5.0   # Reward score awarded for exact or close phonetic match
+    MISMATCH = -2.0   # Penalty score assessed for completely unaligned word substitution
+    GAP      = -2.0   # Penalty score assessed for structural omission or insertion
 
+    # Get sequence lengths
     m, n = len(target_words), len(spoken_words)
+    # Initialize DP score grid of size (m+1) x (n+1) with float zeros
     score    = [[0.0]  * (n + 1) for _ in range(m + 1)]
+    # Initialize directional pointers grid ('D'=Diagonal, 'U'=Up, 'L'=Left)
     pointers = [[None] * (n + 1) for _ in range(m + 1)]
 
+    # Base case: Initialize first column (deletions/omissions) with cumulative gap penalties
     for i in range(m + 1):
         score[i][0]    = GAP * i
-        pointers[i][0] = 'U'
+        pointers[i][0] = 'U'  # Up pointer represents word skipped by reader
+    # Base case: Initialize first row (insertions) with cumulative gap penalties
     for j in range(n + 1):
         score[0][j]    = GAP * j
-        pointers[0][j] = 'L'
+        pointers[0][j] = 'L'  # Left pointer represents extra filler word inserted by reader
     pointers[0][0] = None
 
+    # Step 1: Populate the 2D Dynamic Programming alignment matrix
     for i in range(1, m + 1):
         for j in range(1, n + 1):
-            t_w = target_words[i - 1]
-            s_w = spoken_words[j - 1]
+            t_w = target_words[i - 1]  # Target word at index i-1
+            s_w = spoken_words[j - 1]  # Spoken word at index j-1
             t_low = t_w.lower()
             s_low = s_w.lower()
             w1_norm = phonetic_normalize(t_w)
             w2_norm = phonetic_normalize(s_w)
+            # Check for zero phonetic distance (exact match, Tagalog synonym, or identical phonetics)
             is_zero_dist = (t_low == s_low) or check_is_synonym(t_low, s_low) or (w1_norm == w2_norm)
 
             if is_zero_dist:
-                match_score = score[i - 1][j - 1] + MATCH
+                match_score = score[i - 1][j - 1] + MATCH  # Full match score
             else:
+                # Calculate character-level Modified Levenshtein Distance (MLD)
                 dist = modified_levenshtein(t_w, s_w)
+                # If phonetic difference is within threshold (<= 0.4) or a recognized accent shift:
                 if is_stutter(t_w, s_w) or has_vowel_shift(t_w, s_w) or dist <= 0.4:
-                    match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
+                    match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))  # Proportional match score
                 else:
-                    match_score = score[i - 1][j - 1] + MISMATCH
+                    match_score = score[i - 1][j - 1] + MISMATCH  # Substitution penalty
 
+            # Calculate gap scores for vertical (deletion) and horizontal (insertion) transitions
             delete_score = score[i - 1][j] + GAP
             insert_score = score[i][j - 1] + GAP
+            # Select the optimal alignment path score using recurrence formula
             best_score   = max(match_score, delete_score, insert_score)
             score[i][j]  = best_score
 
-            if best_score == match_score: pointers[i][j] = 'D'
-            elif best_score == delete_score: pointers[i][j] = 'U'
-            else: pointers[i][j] = 'L'
+            # Record directional pointer for optimal backtracking
+            if best_score == match_score: pointers[i][j] = 'D'       # Diagonal: align pair
+            elif best_score == delete_score: pointers[i][j] = 'U'    # Up: omission
+            else: pointers[i][j] = 'L'                               # Left: insertion
 
+    # Step 2: Backtrack from bottom-right F(m, n) to origin F(0, 0)
     i, j = m, n
     errors = 0
     correct_words = 0
 
     while i > 0 or j > 0:
         if pointers[i][j] == 'D':
+            # Diagonal step: Inspect pronunciation accuracy of the aligned pair
             is_correct = is_correct_pronunciation(target_words[i - 1], spoken_words[j - 1])
             if vowel_shifted_targets and (i - 1) in vowel_shifted_targets:
                 is_correct = False
                 
             if is_correct:
-                correct_words += 1
+                correct_words += 1  # Valid pronunciation or accepted regional dialect
             else:
-                errors += 1
+                errors += 1         # Genuine mispronunciation / substitution error
             i -= 1; j -= 1
         elif pointers[i][j] == 'U':
-            errors += 1; i -= 1
+            errors += 1; i -= 1     # Up step: Omission error (student skipped a word)
         elif pointers[i][j] == 'L':
-            errors += 1; j -= 1
+            errors += 1; j -= 1     # Left step: Insertion error (student added a word)
 
+    # Return total correct words and total reading errors
     return correct_words, errors
 
 def get_alignment_mapping(target_words, spoken_words):
-    MATCH    =  5.0
-    MISMATCH = -2.0
-    GAP      = -2.0
+    # Alignment scoring weights for global sequence matching
+    MATCH    =  5.0   # Reward score for phonetic or exact match
+    MISMATCH = -2.0   # Penalty score for differing words
+    GAP      = -2.0   # Penalty score for omission (deletion) or insertion
 
+    # Get word counts of target reference text and spoken transcript
     m, n = len(target_words), len(spoken_words)
+    # Initialize DP score matrix of dimensions (m+1) x (n+1) with 0.0
     score    = [[0.0]  * (n + 1) for _ in range(m + 1)]
+    # Initialize pointer matrix to store backtrack directions ('D', 'U', 'L')
     pointers = [[None] * (n + 1) for _ in range(m + 1)]
 
+    # Base case: Initialize first column with cumulative gap penalties for target word omissions
     for i in range(m + 1):
         score[i][0]    = GAP * i
-        pointers[i][0] = 'U'
+        pointers[i][0] = 'U'  # Up pointer = student omitted this target word
+    # Base case: Initialize first row with cumulative gap penalties for spoken insertions
     for j in range(n + 1):
         score[0][j]    = GAP * j
-        pointers[0][j] = 'L'
-    pointers[0][0] = None
+        pointers[0][j] = 'L'  # Left pointer = student inserted an extra word
+    pointers[0][0] = None     # Origin cell has no prior pointer
 
+    # Populate 2D DP matrix using optimal alignment recurrence formula
     for i in range(1, m + 1):
         for j in range(1, n + 1):
+            # Calculate phonetic distance between current target word and spoken word via MLD
             dist = modified_levenshtein(target_words[i - 1], spoken_words[j - 1])
+            # Case 1: Check if pronunciation is acceptable (exact, synonym, or dialectal variation)
             if is_correct_pronunciation(target_words[i - 1], spoken_words[j - 1]):
                 match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
+            # Case 2: Partial credit for stutters or valid Tagalog regional vowel shifts
             elif is_stutter(target_words[i - 1], spoken_words[j - 1]) or has_vowel_shift(target_words[i - 1], spoken_words[j - 1]):
                 match_score = score[i - 1][j - 1] + (MATCH * 0.5)
+            # Case 3: Complete mismatch / substitution
             else:
                 match_score = score[i - 1][j - 1] + MISMATCH
+            # Calculate gap scores for vertical deletion and horizontal insertion
             delete_score = score[i - 1][j] + GAP
             insert_score = score[i][j - 1] + GAP
+            # Determine maximum score among diagonal, up, and left transitions
             best_score   = max(match_score, delete_score, insert_score)
             score[i][j]  = best_score
 
-            if best_score == match_score: pointers[i][j] = 'D'
-            elif best_score == delete_score: pointers[i][j] = 'U'
-            else: pointers[i][j] = 'L'
+            # Save directional pointer according to the winning transition path
+            if best_score == match_score: pointers[i][j] = 'D'       # Diagonal: align target to spoken
+            elif best_score == delete_score: pointers[i][j] = 'U'    # Up: target word was omitted
+            else: pointers[i][j] = 'L'                               # Left: spoken word was inserted
 
+    # Trace back from bottom-right (m, n) to construct bidirectional word index mappings
     i, j = m, n
-    spoken_to_target = {}
-    target_to_spoken = {}
+    spoken_to_target = {}  # Maps spoken word index -> target word index
+    target_to_spoken = {}  # Maps target word index -> spoken word string
 
     while i > 0 or j > 0:
         if pointers[i][j] == 'D':
+            # Diagonal: spoken word j-1 corresponds to target word i-1
             spoken_to_target[j - 1] = i - 1
             target_to_spoken[i - 1] = spoken_words[j - 1]
             i -= 1; j -= 1
         elif pointers[i][j] == 'U':
+            # Up: target word i-1 was skipped by the student (omission)
             target_to_spoken[i - 1] = None
             i -= 1
         elif pointers[i][j] == 'L':
+            # Left: spoken word j-1 was an extra word inserted by the student
             spoken_to_target[j - 1] = None
             j -= 1
 
+    # Return bidirectional alignment index dictionaries
     return spoken_to_target, target_to_spoken
 
 
 
 def has_vowel_shift(word1, word2):
+    # Lengths of both input words for DP character matrix
     m, n = len(word1), len(word2)
+    # Initialize DP matrix for character-level edit distance
     dp = [[0.0] * (n + 1) for _ in range(m + 1)]
+    # Matrix tracking whether a regional vowel shift occurred on the optimal edit path
     has_v_shift = [[False] * (n + 1) for _ in range(m + 1)]
 
+    # Base case initialization for deletions and insertions
     for i in range(m + 1): dp[i][0] = float(i)
     for j in range(n + 1): dp[0][j] = float(j)
 
+    # Fill DP matrix comparing characters of word1 against word2
     for i in range(1, m + 1):
         for j in range(1, n + 1):
             if word1[i - 1] == word2[j - 1]:
+                # Exact character match: carry forward previous cost and shift state
                 dp[i][j] = dp[i - 1][j - 1]
                 has_v_shift[i][j] = has_v_shift[i - 1][j - 1]
             else:
                 c1, c2 = word1[i - 1], word2[j - 1]
                 vowels = {'a', 'e', 'i', 'o', 'u'}
+                # Check for vowel shift (e.g. Bisaya/Batangueno interchangeable vowels: e<->i, o<->u)
                 is_vowel_shift = (c1 in vowels and c2 in vowels and c1 != c2)
+                # Check for accepted Tagalog dialectal consonant shifts (d<->r, l<->r, c<->k)
                 is_consonant_shift = (c1 == 'd' and c2 == 'r') or (c1 == 'r' and c2 == 'd') or \
                                      (c1 == 'l' and c2 == 'r') or (c1 == 'r' and c2 == 'l') or \
                                      (c1 == 'c' and c2 == 'k') or (c1 == 'k' and c2 == 'c')
                 
+                # Assign lower cost of 0.3 for valid regional dialect shifts vs 1.0 for general errors
                 cost = 0.3 if (is_vowel_shift or is_consonant_shift) else 1.0
                 
+                # Calculate cost for deletion, insertion, and substitution
                 d_val = dp[i - 1][j] + 1.0
                 i_val = dp[i][j - 1] + 1.0
                 s_val = dp[i - 1][j - 1] + cost
                 
+                # Find minimum edit cost transition
                 best = min(d_val, i_val, s_val)
                 dp[i][j] = best
                 
+                # Update shift tracking boolean based on which transition won
                 if best == s_val:
                     has_v_shift[i][j] = has_v_shift[i - 1][j - 1] or is_vowel_shift
                 elif best == d_val:
@@ -1347,6 +1407,7 @@ def has_vowel_shift(word1, word2):
                 else:
                     has_v_shift[i][j] = has_v_shift[i][j - 1]
                     
+    # Return true if any regional vowel shift occurred on the optimal character path
     return has_v_shift[m][n]
 
 def has_omission(target, spoken):
@@ -2083,45 +2144,60 @@ def evaluate_audio():
         # BRANCH 2: BEGINNER MODE -> WAV2VEC 1.0 ONLY (LOCAL, STRICT)
         # =============================================================
         else:
+            # Step 1: Run local acoustic transcription through quantized Wav2Vec 2.0
             wav2vec_raw = transcribe_wav2vec(wav_clean_path)
+            # Step 2: Validate that speech was captured; return 400 if silent/empty
             if not wav2vec_raw.strip():
                 return jsonify({
                     "error": "No speech detected. Please speak clearly into the microphone.",
                     "status": "empty"
                 }), 400
 
+            # Step 3: Candidate raw string initialization
             iq_wav2vec_raw = wav2vec_raw
+            # Step 4: Perform multi-variant scoring to identify optimal reading alignment
             w2v_acc, w2v_correct, w2v_errors, w2v_opt = score_candidate(target_words, iq_wav2vec_raw, level)
+            # Step 5: Merge repeated stutter syllables and acoustic hallucinations
             cleaned_opt = merge_syllable_hallucinations_and_stutters(w2v_opt, target_words)
+            # Step 6: Derive bidirectional word alignment mapping (spoken to target indices)
             fused_spoken_to_target_1, _ = get_alignment_mapping(target_words, cleaned_opt)
 
+            # Step 7: Create final candidate word list initialized from cleaned transcript
             final_opt = list(cleaned_opt)
+            # Step 8: Apply linguistic normalization across aligned word pairs
             for idx_spoken, idx_target in fused_spoken_to_target_1.items():
                 if idx_target is not None:
                     target_word = target_words[idx_target]
                     w1 = cleaned_opt[idx_spoken]
                     t_lower = target_word.lower()
                     w1_lower = w1.lower()
+                    # Check phonetic equivalence, Tagalog synonym dictionary, or 'c' vs 's'
                     w1_exact = (phonetic_normalize(t_lower) == phonetic_normalize(w1_lower))
                     is_synonym = check_is_synonym(t_lower, w1_lower)
                     c_s_match = (w1_lower.replace('c', 's') == t_lower.replace('c', 's'))
 
+                    # If linguistically valid, normalize to target casing; otherwise preserve spoken token
                     if is_synonym or c_s_match or w1_exact:
                         final_opt[idx_spoken] = target_word
                     else:
                         final_opt[idx_spoken] = w1
 
+            # Step 9: Reconstruct full sentence string and match original target casing & punctuation
             fused_transcription = " ".join(final_opt)
             fused_transcription = match_original_casing_and_punctuation(target_text, fused_transcription)
 
+            # Step 10: Detect disfluencies (stutters / false starts)
             detected_stutters = detect_stutters(final_opt, target_words)
+            # Step 11: Execute global Needleman-Wunsch sequence alignment to count reading miscues
             _, final_errors = needleman_wunsch_alignment(target_words, final_opt, None)
             best_errors = final_errors
 
             # -------------------------------------------------------------
             # PHIL-IRI CORE FORMULAS: READING ACCURACY RATE (RAR) & WCPM
             # -------------------------------------------------------------
+            # Total target words in passage
             total_target_words = len(target_words)
+            # Correct words count = total target words minus verified reading errors (clamped at 0)
             final_correct_count = max(0, total_target_words - best_errors)
             # Accuracy Rate (%) = ((Total Target Words - Errors) / Total Target Words) * 100
             accuracy_rate = (final_correct_count / total_target_words * 100.0) if total_target_words > 0 else 0.0
@@ -2130,6 +2206,7 @@ def evaluate_audio():
             duration_minutes = duration_seconds / 60.0
             wcpm = (final_correct_count / duration_minutes) if duration_minutes > 0 else 0.0
 
+            # Diagnostic logging for console observation
             print(f"\n{'='*70}")
             print(f" TARGET         : {target_text}")
             print(f" WAV2VEC (raw)  : {wav2vec_raw}")
@@ -2139,8 +2216,10 @@ def evaluate_audio():
             print(f" DURATION       : {round(duration_seconds, 2)} seconds")
             print(f"{'='*70}\n")
 
+        # Step 12: Generate detailed step-by-step trace for simulation matrix & UI visualization
         trace_data, _, _, _ = get_simulation_trace(target_words, final_opt)
 
+        # Assemble comprehensive evaluation payload conforming to Phil-IRI specifications
         evaluation_record = {
             "target_text":      target_text,
             "transcription":    fused_transcription,
@@ -2155,6 +2234,7 @@ def evaluate_audio():
             "status":           "success"
         }
 
+        # Return JSON payload with 200 OK HTTP status code
         return jsonify(evaluation_record), 200
 
     except Exception as e:
@@ -2172,22 +2252,29 @@ def evaluate_audio():
         pass
 
 def get_simulation_trace(target_words, spoken_words):
-    MATCH    =  5.0
-    MISMATCH = -2.0
-    GAP      = -2.0
+    # Set alignment scoring weights for global sequence trace
+    MATCH    =  5.0   # Reward for word match
+    MISMATCH = -2.0   # Penalty for substitution
+    GAP      = -2.0   # Penalty for omission / insertion
 
+    # Get sequence lengths
     m, n = len(target_words), len(spoken_words)
+    # Initialize DP score grid of size (m+1) x (n+1)
     score    = [[0.0]  * (n + 1) for _ in range(m + 1)]
+    # Initialize pointer tracking grid ('D'=Diagonal, 'U'=Up, 'L'=Left)
     pointers = [[None] * (n + 1) for _ in range(m + 1)]
 
+    # Initialize column 0 with cumulative omission gap penalties
     for i in range(m + 1):
         score[i][0]    = GAP * i
         pointers[i][0] = 'U'
+    # Initialize row 0 with cumulative insertion gap penalties
     for j in range(n + 1):
         score[0][j]    = GAP * j
         pointers[0][j] = 'L'
     pointers[0][0] = None
 
+    # Step 1: Compute alignment score grid
     for i in range(1, m + 1):
         for j in range(1, n + 1):
             t_w = target_words[i - 1]
@@ -2196,11 +2283,13 @@ def get_simulation_trace(target_words, spoken_words):
             s_low = s_w.lower()
             w1_norm = phonetic_normalize(t_w)
             w2_norm = phonetic_normalize(s_w)
+            # Evaluate zero phonetic distance (exact match, Tagalog synonym, or identical phonetics)
             is_zero_dist = (t_low == s_low) or check_is_synonym(t_low, s_low) or (w1_norm == w2_norm)
 
             if is_zero_dist:
                 match_score = score[i - 1][j - 1] + MATCH
             else:
+                # Calculate character-level edit distance via MLD
                 dist = modified_levenshtein(t_w, s_w)
                 if is_stutter(t_w, s_w) or has_vowel_shift(t_w, s_w) or dist <= 0.4:
                     match_score = score[i - 1][j - 1] + (MATCH * (1.0 - dist))
@@ -2212,15 +2301,18 @@ def get_simulation_trace(target_words, spoken_words):
             best_score   = max(match_score, delete_score, insert_score)
             score[i][j]  = best_score
 
+            # Save optimal directional transition pointer
             if best_score == match_score: pointers[i][j] = 'D'
             elif best_score == delete_score: pointers[i][j] = 'U'
             else: pointers[i][j] = 'L'
 
+    # Step 2: Backtrack from (m, n) to origin to assemble step-by-step trace
     i, j = m, n
     trace = []
     
     while i > 0 or j > 0:
         if pointers[i][j] == 'D':
+            # Diagonal: Aligned target word and spoken word
             t_word = target_words[i - 1]
             s_word = spoken_words[j - 1]
             t_low = t_word.lower()
@@ -2238,17 +2330,18 @@ def get_simulation_trace(target_words, spoken_words):
                 dist = modified_levenshtein(t_word, s_word)
                 max_len = max(len(w1_norm), len(w2_norm))
                 raw_dist = round(dist * max_len, 1)
-                # Pure vowel shift (strictly e,i and o,u) is highlighted but NOT flagged as an error
+                # Pure vowel shift (strictly e<->i and o<->u) is classified as correct (accent variation)
                 is_correct = True
                 step_type = "match"
             else:
                 dist = modified_levenshtein(t_word, s_word)
                 max_len = max(len(w1_norm), len(w2_norm))
                 raw_dist = round(dist * max_len, 1)
-                # Genuine errors (substitutions, missing letters) ARE flagged as error
+                # Genuine phonetic mismatch is flagged as a substitution error
                 is_correct = False
                 step_type = "substitution"
 
+            # Record step dictionary in trace
             trace.append({
                 "type": step_type,
                 "target": t_word,
@@ -2259,6 +2352,7 @@ def get_simulation_trace(target_words, spoken_words):
             })
             i -= 1; j -= 1
         elif pointers[i][j] == 'U':
+            # Up step: Target word was skipped by student (omission/deletion)
             t_word = target_words[i - 1]
             trace.append({
                 "type": "deletion",
@@ -2269,6 +2363,7 @@ def get_simulation_trace(target_words, spoken_words):
             })
             i -= 1
         elif pointers[i][j] == 'L':
+            # Left step: Spoken word was an extra word inserted by student (insertion)
             s_word = spoken_words[j - 1]
             trace.append({
                 "type": "insertion",
@@ -2279,14 +2374,19 @@ def get_simulation_trace(target_words, spoken_words):
             })
             j -= 1
             
+    # Reverse trace list so that it runs chronologically from sentence start to finish
     trace.reverse()
     
+    # Calculate aggregate metrics across trace steps
     errors = sum(1 for step in trace if not step["is_correct"] and step["target"] != "-")
     insertions = sum(1 for step in trace if step["type"] == "insertion")
     total_errors = errors + insertions
     
+    # Calculate total correct words clamped at 0
     correct_words = max(0, len(target_words) - total_errors)
+    # Detect stutter words for display badges
     stutter_words = detect_stutters(spoken_words, target_words)
+    # Return 4-tuple of trace results
     return trace, correct_words, total_errors, stutter_words
 
 @app.route('/api/simulate', methods=['POST'])
