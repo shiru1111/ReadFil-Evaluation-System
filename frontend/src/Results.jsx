@@ -123,13 +123,15 @@ export default function Results() {
       return heardWords.map((word, index) => {
         const step = spokenSteps[index];
         const cleanWord = clean(word);
-        const isStutter = (stutters || []).includes(cleanWord) || (step && (stutters || []).includes(clean(step.spoken)));
         
         // Genuine errors (substitutions, insertions, deletions)
         const isError = step && (!step.is_correct || step.type === 'substitution' || step.type === 'insertion');
         // Pure vowel shifts (e,i and o,u) highlight visually but are not errors
         const isVowelShift = step && (step.is_vowel_shift || (step.distance > 0 && isPureVowelShift(step.target, step.spoken)));
         const shouldHighlight = isError || isVowelShift;
+
+        // Only mark as stutter if this step is NOT a correct match!
+        const isStutter = step && step.type !== 'match' && (step.is_stutter || (stutters || []).includes(cleanWord) || (stutters || []).includes(clean(step.spoken)));
 
         let styleClass = "text-gray-900";
         if (isStutter) {
@@ -192,8 +194,9 @@ export default function Results() {
 
     return heardWords.map((word, index) => {
       const cleanWord = clean(word);
-      const isStutter = (stutters || []).includes(cleanWord);
       const shouldHighlight = isWordHighlight[index];
+      // Only highlight as stutter if it is an actual error/stutter, never a correct target word match!
+      const isStutter = shouldHighlight && (stutters || []).includes(cleanWord);
 
       let styleClass = "text-gray-900";
       if (isStutter) {

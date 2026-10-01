@@ -2394,13 +2394,15 @@ def get_simulation_trace(target_words, spoken_words):
                 step_type = "substitution"
 
             # Record step dictionary in trace
+            is_step_stutter = is_stutter(t_word, s_word) if not is_correct else False
             trace.append({
                 "type": step_type,
                 "target": t_word,
                 "spoken": s_word,
                 "distance": raw_dist,
                 "is_correct": is_correct,
-                "is_vowel_shift": is_v_shift
+                "is_vowel_shift": is_v_shift,
+                "is_stutter": is_step_stutter
             })
             i -= 1; j -= 1
         elif pointers[i][j] == 'U':
@@ -2411,18 +2413,32 @@ def get_simulation_trace(target_words, spoken_words):
                 "target": t_word,
                 "spoken": "-",
                 "distance": 1.0,
-                "is_correct": False
+                "is_correct": False,
+                "is_stutter": False
             })
             i -= 1
         elif pointers[i][j] == 'L':
             # Left step: Spoken word was an extra word inserted by student (insertion)
             s_word = spoken_words[j - 1]
+            # Check if this insertion is an adjacent stutter of neighboring target words
+            is_adj_stutter = False
+            adj_targets = []
+            if i > 0: adj_targets.append(target_words[i - 1])
+            if i < m: adj_targets.append(target_words[i])
+            for at in adj_targets:
+                at_norm = phonetic_normalize(at)
+                sn_norm = phonetic_normalize(s_word)
+                if (len(sn_norm) <= len(at_norm) and sn_norm in at_norm) or is_stutter(at, s_word):
+                    is_adj_stutter = True
+                    break
+
             trace.append({
                 "type": "insertion",
                 "target": "-",
                 "spoken": s_word,
                 "distance": 1.0,
-                "is_correct": False
+                "is_correct": False,
+                "is_stutter": is_adj_stutter
             })
             j -= 1
             
