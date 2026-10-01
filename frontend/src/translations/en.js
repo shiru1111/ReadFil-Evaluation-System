@@ -16,6 +16,7 @@ export const en = {
   levels: {
     title: "Select Your Level",
     classroom: "Classroom Mode",
+    classroom_badge: "NEW: TEACHER ASSIGNMENT",
     classroom_desc: "Take an assigned reading quiz created by your teacher with a live countdown timer.",
     start_classroom: "Enter Classroom",
     beginner: "Beginner",

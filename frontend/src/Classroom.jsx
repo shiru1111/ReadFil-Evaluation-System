@@ -6,7 +6,8 @@ import SoundWaveBackground from './components/SoundWaveBackground';
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
 export default function Classroom() {
-  const { t } = useLanguage();
+  const { language } = useLanguage();
+  const isEn = language === 'en';
   const navigate = useNavigate();
 
   // Active Passage State
@@ -48,7 +49,10 @@ export default function Classroom() {
         setIsLoadingPassage(true);
         const res = await fetch(`${API_BASE}/api/classroom/active-passage`);
         if (!res.ok) {
-          throw new Error("Walang aktibong talata sa kasalukuyan. Makipag-ugnayan sa iyong guro.");
+          throw new Error(isEn
+            ? "No active reading passage assigned. Please contact your teacher."
+            : "Walang aktibong talata sa kasalukuyan. Makipag-ugnayan sa iyong guro."
+          );
         }
         const data = await res.json();
         setActivePassage(data);
@@ -57,14 +61,14 @@ export default function Classroom() {
         setTimeLeft(duration);
       } catch (err) {
         console.error("Error fetching classroom passage:", err);
-        setPassageError(err.message || "Failed to load classroom reading passage.");
+        setPassageError(err.message || (isEn ? "Failed to load classroom reading passage." : "Hindi ma-load ang talata sa klase."));
       } finally {
         setIsLoadingPassage(false);
       }
     };
 
     fetchActivePassage();
-  }, []);
+  }, [isEn]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -262,7 +266,10 @@ export default function Classroom() {
 
     } catch (err) {
       console.error("Evaluation error:", err);
-      alert("May naganap na error habang sinusuri ang iyong pagbasa. Subukan muli.");
+      alert(isEn
+        ? "An error occurred while evaluating your reading. Please try again."
+        : "May naganap na error habang sinusuri ang iyong pagbasa. Subukan muli."
+      );
     } finally {
       setIsProcessing(false);
       audioChunksRef.current = [];
@@ -282,7 +289,9 @@ export default function Classroom() {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-6">
         <div className="w-16 h-16 border-4 border-[#0096FF] border-t-transparent rounded-full animate-spin mb-4"></div>
-        <h2 className="text-xl font-bold">Kinukuha ang aktibong talata mula sa guro...</h2>
+        <h2 className="text-xl font-bold">
+          {isEn ? "Fetching active reading passage from teacher..." : "Kinukuha ang aktibong talata mula sa guro..."}
+        </h2>
         <p className="text-gray-400 text-sm mt-1">Connecting to Classroom Assessment Service</p>
       </div>
     );
@@ -294,16 +303,21 @@ export default function Classroom() {
       <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center">
         <div className="bg-red-500/10 border border-red-500/30 p-8 rounded-3xl max-w-lg">
           <div className="w-16 h-16 bg-red-500/20 text-red-400 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl font-bold">!</div>
-          <h2 className="text-2xl font-black mb-3">Walang Aktibong Talata</h2>
+          <h2 className="text-2xl font-black mb-3">
+            {isEn ? "No Active Passage" : "Walang Aktibong Talata"}
+          </h2>
           <p className="text-gray-300 mb-6 text-base leading-relaxed">
-            {passageError || "Walang itinalagang aktibong talata sa kasalukuyan. Makipag-ugnayan sa iyong guro upang i-set ang aktibong babasahin sa Teacher Portal."}
+            {passageError || (isEn
+              ? "There is no active reading passage assigned currently. Please contact your teacher to set an active passage in the Teacher Portal."
+              : "Walang itinalagang aktibong talata sa kasalukuyan. Makipag-ugnayan sa iyong guro upang i-set ang aktibong babasahin sa Teacher Portal."
+            )}
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <Link to="/" className="px-6 py-3 bg-white text-black font-bold rounded-full hover:bg-gray-200 transition-colors">
-              Bumalik sa Simula
+              {isEn ? "Return to Home" : "Bumalik sa Simula"}
             </Link>
             <Link to="/teacher" className="px-6 py-3 bg-[#0096FF] text-white font-bold rounded-full hover:bg-blue-600 transition-colors">
-              Pumunta sa Teacher Portal
+              {isEn ? "Go to Teacher Portal" : "Pumunta sa Teacher Portal"}
             </Link>
           </div>
         </div>
@@ -326,7 +340,7 @@ export default function Classroom() {
             ReadFil
           </Link>
           <span className="text-xs uppercase px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-bold tracking-wider">
-            Classroom Mode
+            {isEn ? "Classroom Mode" : "Modo ng Klase"}
           </span>
         </div>
 
@@ -336,15 +350,15 @@ export default function Classroom() {
             className="flex items-center space-x-2 text-sm bg-slate-800/80 hover:bg-slate-800 px-3.5 py-1.5 rounded-full border border-slate-700 transition-colors"
           >
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-            <span className="text-gray-300 font-medium">Mag-aaral:</span>
-            <span className="font-bold text-white truncate max-w-[130px]">{studentName || "Magtakda ng Pangalan"}</span>
+            <span className="text-gray-300 font-medium">{isEn ? "Student:" : "Mag-aaral:"}</span>
+            <span className="font-bold text-white truncate max-w-[130px]">{studentName || (isEn ? "Set Name" : "Magtakda ng Pangalan")}</span>
           </button>
 
           <Link
             to="/"
             className="text-xs uppercase font-bold text-gray-400 hover:text-white px-3 py-1.5 rounded-lg border border-slate-800 hover:border-slate-700 transition-all"
           >
-            Lumabas
+            {isEn ? "Exit" : "Lumabas"}
           </Link>
         </div>
       </header>
@@ -360,7 +374,7 @@ export default function Classroom() {
                   {activePassage.grade_level || "General"}
                 </span>
                 <span className="text-xs text-slate-400">
-                  Itinalaga ni: <strong className="text-slate-200">{activePassage.teacher_name || "Guro"}</strong>
+                  {isEn ? "Assigned by:" : "Itinalaga ni:"} <strong className="text-slate-200">{activePassage.teacher_name || (isEn ? "Teacher" : "Guro")}</strong>
                 </span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
@@ -375,7 +389,7 @@ export default function Classroom() {
                 : 'bg-blue-500/10 border-blue-500/20 text-blue-300'
             }`}>
               <div className="flex flex-col text-right">
-                <span className="text-[10px] uppercase font-bold tracking-widest text-slate-400">Takdang Oras</span>
+                <span className="text-[10px] uppercase font-bold tracking-widest text-slate-400">{isEn ? "Time Limit" : "Takdang Oras"}</span>
                 <span className="font-mono text-2xl font-black leading-none">{timeLeft}s</span>
               </div>
               <div className="w-10 h-10 rounded-full border-2 border-current flex items-center justify-center font-bold text-xs">
@@ -400,19 +414,19 @@ export default function Classroom() {
             {!isRecording && !isProcessing && (
               <div className="absolute text-slate-500 text-sm font-medium flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-slate-700"></span>
-                Nakahanda ang mikropono. Pindutin ang Simulan ang Pagbasa upang magsimula.
+                {isEn ? "Microphone ready. Press Start Reading to begin." : "Nakahanda ang mikropono. Pindutin ang Simulan ang Pagbasa upang magsimula."}
               </div>
             )}
             {isRecording && (
               <div className="absolute top-3 right-4 flex items-center gap-2 bg-red-500/20 border border-red-500/40 px-3 py-1 rounded-full text-red-400 text-xs font-bold animate-pulse">
                 <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                NAGRE-RECORD
+                {isEn ? "RECORDING" : "NAGRE-RECORD"}
               </div>
             )}
             {isProcessing && (
               <div className="absolute inset-0 bg-slate-950/90 flex items-center justify-center gap-3 text-blue-400 font-bold">
                 <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                Sinusuri ng ASR engine ang iyong pagbasa...
+                {isEn ? "Evaluating speech via ASR engine..." : "Sinusuri ng ASR engine ang iyong pagbasa..."}
               </div>
             )}
           </div>
@@ -422,7 +436,9 @@ export default function Classroom() {
             <div className="mb-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex items-center gap-3">
               <span className="text-xl">⚠️</span>
               <div>
-                <strong>Walang boses na narinig.</strong> Pakisuyong magsalita nang malinaw at malapit sa mikropono bago matapos ang oras.
+                <strong>{isEn ? "No speech detected." : "Walang boses na narinig."}</strong> {isEn
+                  ? "Please speak clearly and close to the microphone before time expires."
+                  : "Pakisuyong magsalita nang malinaw at malapit sa mikropono bago matapos ang oras."}
               </div>
             </div>
           )}
@@ -439,7 +455,7 @@ export default function Classroom() {
                   <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
                   <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
                 </svg>
-                Simulan ang Pagbasa ({totalTimerDuration}s)
+                {isEn ? `Start Reading (${totalTimerDuration}s)` : `Simulan ang Pagbasa (${totalTimerDuration}s)`}
               </button>
             ) : (
               <button
@@ -447,7 +463,7 @@ export default function Classroom() {
                 className="w-full sm:w-auto px-10 py-4 bg-red-600 hover:bg-red-700 text-white font-black text-lg rounded-full shadow-lg shadow-red-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3 animate-pulse"
               >
                 <div className="w-4 h-4 bg-white rounded-sm"></div>
-                Tapusin at I-evaluate ({timeLeft}s natitira)
+                {isEn ? `Finish & Evaluate (${timeLeft}s left)` : `Tapusin at I-evaluate (${timeLeft}s natitira)`}
               </button>
             )}
           </div>
@@ -458,22 +474,26 @@ export default function Classroom() {
       {isNameModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl animate-in fade-in zoom-in duration-200">
-            <h3 className="text-xl font-black text-white mb-2">Pangalan ng Mag-aaral</h3>
+            <h3 className="text-xl font-black text-white mb-2">
+              {isEn ? "Student Name" : "Pangalan ng Mag-aaral"}
+            </h3>
             <p className="text-slate-400 text-sm mb-6">
-              Ilagay ang iyong buong pangalan upang maitala ng iyong guro ang resulta ng iyong pagsusulit sa pagbasa.
+              {isEn
+                ? "Enter your full name so your teacher can track and record your oral reading assessment results."
+                : "Ilagay ang iyong buong pangalan upang maitala ng iyong guro ang resulta ng iyong pagsusulit sa pagbasa."}
             </p>
 
             <form onSubmit={handleSaveStudentName}>
               <div className="mb-6">
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-2">
-                  Buong Pangalan (Hal. Juan Dela Cruz)
+                  {isEn ? "Full Name (e.g. Juan Dela Cruz)" : "Buong Pangalan (Hal. Juan Dela Cruz)"}
                 </label>
                 <input
                   type="text"
                   required
                   value={tempName}
                   onChange={(e) => setTempName(e.target.value)}
-                  placeholder="I-type ang iyong pangalan..."
+                  placeholder={isEn ? "Type your name..." : "I-type ang iyong pangalan..."}
                   className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF] focus:ring-1 focus:ring-[#0096FF]"
                   autoFocus
                 />
@@ -486,14 +506,14 @@ export default function Classroom() {
                     onClick={() => setIsNameModalOpen(false)}
                     className="px-5 py-2.5 rounded-full text-slate-400 hover:text-white font-bold text-sm"
                   >
-                    Kanselahin
+                    {isEn ? "Cancel" : "Kanselahin"}
                   </button>
                 )}
                 <button
                   type="submit"
                   className="px-6 py-2.5 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-full text-sm transition-colors"
                 >
-                  I-save at Magpatuloy
+                  {isEn ? "Save & Continue" : "I-save at Magpatuloy"}
                 </button>
               </div>
             </form>

@@ -6,7 +6,8 @@ import SoundWaveBackground from './components/SoundWaveBackground';
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
 export default function TeacherPortal() {
-  const { t } = useLanguage();
+  const { language } = useLanguage();
+  const isEn = language === 'en';
 
   // Authentication State
   const [teacher, setTeacher] = useState(() => {
@@ -28,7 +29,9 @@ export default function TeacherPortal() {
   const [regUsername, setRegUsername] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
-  const [regSecurityQuestion, setRegSecurityQuestion] = useState('Ano ang pangalan ng paborito mong guro?');
+  const [regSecurityQuestion, setRegSecurityQuestion] = useState(
+    isEn ? 'What is the name of your favorite teacher?' : 'Ano ang pangalan ng paborito mong guro?'
+  );
   const [regSecurityAnswer, setRegSecurityAnswer] = useState('');
 
   // Forgot Password Form
@@ -126,7 +129,7 @@ export default function TeacherPortal() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "Maling username o password.");
+        throw new Error(data.error || (isEn ? "Invalid username or password." : "Maling username o password."));
       }
       setTeacher(data.teacher);
       localStorage.setItem('readfil_teacher', JSON.stringify(data.teacher));
@@ -158,9 +161,12 @@ export default function TeacherPortal() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "Hindi ma-proseso ang pagrehistro.");
+        throw new Error(data.error || (isEn ? "Failed to complete registration." : "Hindi ma-proseso ang pagrehistro."));
       }
-      setAuthSuccess("Matagumpay na nakarehistro! Maaari ka nang mag-login gamit ang iyong account.");
+      setAuthSuccess(isEn
+        ? "Registration successful! You may now log in with your credentials."
+        : "Matagumpay na nakarehistro! Maaari ka nang mag-login gamit ang iyong account."
+      );
       setAuthMode('login');
       setLoginUsername(regUsername);
     } catch (err) {
@@ -179,7 +185,7 @@ export default function TeacherPortal() {
       const res = await fetch(`${API_BASE}/api/teacher/security-question/${encodeURIComponent(forgotUsername)}`);
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "Hindi nahanap ang username.");
+        throw new Error(data.error || (isEn ? "Username not found." : "Hindi nahanap ang username."));
       }
       setForgotSecurityQuestion(data.security_question);
       setForgotStep(2);
@@ -207,9 +213,12 @@ export default function TeacherPortal() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "Hindi maitakda ang bagong password.");
+        throw new Error(data.error || (isEn ? "Could not reset password." : "Hindi maitakda ang bagong password."));
       }
-      setAuthSuccess("Matagumpay na napalitan ang iyong password! Maaari ka nang mag-login.");
+      setAuthSuccess(isEn
+        ? "Password successfully reset! You can now log in."
+        : "Matagumpay na napalitan ang iyong password! Maaari ka nang mag-login."
+      );
       setAuthMode('login');
       setLoginUsername(forgotUsername);
       setForgotStep(1);
@@ -233,7 +242,6 @@ export default function TeacherPortal() {
     setPassageSaving(true);
     try {
       if (editingPassage) {
-        // Update existing passage
         const res = await fetch(`${API_BASE}/api/teacher/passages/${editingPassage.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -245,9 +253,8 @@ export default function TeacherPortal() {
             timer_seconds: parseInt(passageTimer, 10) || 60
           })
         });
-        if (!res.ok) throw new Error("Hindi ma-update ang talata.");
+        if (!res.ok) throw new Error(isEn ? "Failed to update passage." : "Hindi ma-update ang talata.");
       } else {
-        // Create new passage
         const res = await fetch(`${API_BASE}/api/teacher/passages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -257,10 +264,10 @@ export default function TeacherPortal() {
             content: passageContent,
             grade_level: passageGrade,
             timer_seconds: parseInt(passageTimer, 10) || 60,
-            is_active: passages.length === 0 // automatically active if first passage
+            is_active: passages.length === 0
           })
         });
-        if (!res.ok) throw new Error("Hindi ma-save ang bagong talata.");
+        if (!res.ok) throw new Error(isEn ? "Failed to save new passage." : "Hindi ma-save ang bagong talata.");
       }
 
       setIsPassageModalOpen(false);
@@ -293,7 +300,10 @@ export default function TeacherPortal() {
 
   // Delete Passage
   const handleDeletePassage = async (passageId) => {
-    if (!window.confirm("Sigurado ka bang nais mong tanggalin ang talatang ito?")) return;
+    const confirmMsg = isEn
+      ? "Are you sure you want to delete this passage?"
+      : "Sigurado ka bang nais mong tanggalin ang talatang ito?";
+    if (!window.confirm(confirmMsg)) return;
     try {
       const res = await fetch(`${API_BASE}/api/teacher/passages/${passageId}?teacher_id=${teacher.id}`, {
         method: 'DELETE'
@@ -358,7 +368,7 @@ export default function TeacherPortal() {
             ReadFil
           </Link>
           <Link to="/" className="text-xs uppercase font-bold text-gray-400 hover:text-white px-3 py-1.5 rounded-lg border border-slate-800 hover:border-slate-700 transition-all">
-            Bumalik sa Simula
+            {isEn ? "Return to Home" : "Bumalik sa Simula"}
           </Link>
         </header>
 
@@ -371,7 +381,9 @@ export default function TeacherPortal() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
                 </svg>
               </div>
-              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">Portal ng Guro</h1>
+              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+                {isEn ? "Teacher Portal" : "Portal ng Guro"}
+              </h1>
               <p className="text-slate-400 text-sm mt-1">Classroom Monitoring & Passage Management</p>
             </div>
 
@@ -396,7 +408,7 @@ export default function TeacherPortal() {
                     authMode === 'login' ? 'bg-[#0096FF] text-white shadow-md' : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  Mag-Login
+                  {isEn ? "Log In" : "Mag-Login"}
                 </button>
                 <button
                   onClick={() => { setAuthMode('register'); setAuthError(''); }}
@@ -404,7 +416,7 @@ export default function TeacherPortal() {
                     authMode === 'register' ? 'bg-[#0096FF] text-white shadow-md' : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  Magrehistro
+                  {isEn ? "Register" : "Magrehistro"}
                 </button>
               </div>
             )}
@@ -413,19 +425,23 @@ export default function TeacherPortal() {
             {authMode === 'login' && (
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">Username</label>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                    {isEn ? "Username" : "Username"}
+                  </label>
                   <input
                     type="text"
                     required
                     value={loginUsername}
                     onChange={(e) => setLoginUsername(e.target.value)}
-                    placeholder="hal. teacher"
+                    placeholder="e.g. teacher"
                     className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">Password</label>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                    {isEn ? "Password" : "Password"}
+                  </label>
                   <input
                     type="password"
                     required
@@ -442,7 +458,7 @@ export default function TeacherPortal() {
                     onClick={() => { setAuthMode('forgot'); setForgotStep(1); setAuthError(''); setAuthSuccess(''); }}
                     className="text-xs font-semibold text-[#0096FF] hover:underline"
                   >
-                    Nakalimutan ang password?
+                    {isEn ? "Forgot password?" : "Nakalimutan ang password?"}
                   </button>
                 </div>
 
@@ -451,11 +467,11 @@ export default function TeacherPortal() {
                   disabled={authLoading}
                   className="w-full py-3.5 bg-gradient-to-r from-[#0096FF] to-[#005FA3] hover:from-blue-500 hover:to-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50"
                 >
-                  {authLoading ? "Pumapasok..." : "Pumasok sa Dashboard"}
+                  {authLoading ? (isEn ? "Signing in..." : "Pumapasok...") : (isEn ? "Sign In to Dashboard" : "Pumasok sa Dashboard")}
                 </button>
 
                 <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-[11px] text-slate-400 text-center">
-                  💡 <em>Default test login:</em> Username: <strong>teacher</strong> | Password: <strong>teacher123</strong>
+                  💡 <em>{isEn ? "Default test credentials:" : "Default test login:"}</em> Username: <strong>teacher</strong> | Password: <strong>teacher123</strong>
                 </div>
               </form>
             )}
@@ -464,13 +480,15 @@ export default function TeacherPortal() {
             {authMode === 'register' && (
               <form onSubmit={handleRegister} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">Buong Pangalan</label>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                    {isEn ? "Full Name" : "Buong Pangalan"}
+                  </label>
                   <input
                     type="text"
                     required
                     value={regName}
                     onChange={(e) => setRegName(e.target.value)}
-                    placeholder="Guro Maria Santos"
+                    placeholder="Teacher Maria Santos"
                     className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
                   />
                 </div>
@@ -501,7 +519,9 @@ export default function TeacherPortal() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">Password</label>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                    {isEn ? "Password" : "Password"}
+                  </label>
                   <input
                     type="password"
                     required
@@ -513,27 +533,39 @@ export default function TeacherPortal() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">Tanong sa Seguridad (Recovery)</label>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                    {isEn ? "Security Question (Recovery)" : "Tanong sa Seguridad (Recovery)"}
+                  </label>
                   <select
                     value={regSecurityQuestion}
                     onChange={(e) => setRegSecurityQuestion(e.target.value)}
                     className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:outline-none focus:border-[#0096FF]"
                   >
-                    <option value="Ano ang pangalan ng paborito mong guro?">Ano ang pangalan ng paborito mong guro?</option>
-                    <option value="Ano ang pangalan ng iyong unang paaralan?">Ano ang pangalan ng iyong unang paaralan?</option>
-                    <option value="Ano ang paborito mong asignatura?">Ano ang paborito mong asignatura?</option>
-                    <option value="Ano ang paborito mong kulay?">Ano ang paborito mong kulay?</option>
+                    <option value={isEn ? "What is the name of your favorite teacher?" : "Ano ang pangalan ng paborito mong guro?"}>
+                      {isEn ? "What is the name of your favorite teacher?" : "Ano ang pangalan ng paborito mong guro?"}
+                    </option>
+                    <option value={isEn ? "What was the name of your first school?" : "Ano ang pangalan ng iyong unang paaralan?"}>
+                      {isEn ? "What was the name of your first school?" : "Ano ang pangalan ng iyong unang paaralan?"}
+                    </option>
+                    <option value={isEn ? "What is your favorite subject?" : "Ano ang paborito mong asignatura?"}>
+                      {isEn ? "What is your favorite subject?" : "Ano ang paborito mong asignatura?"}
+                    </option>
+                    <option value={isEn ? "What is your favorite color?" : "Ano ang paborito mong kulay?"}>
+                      {isEn ? "What is your favorite color?" : "Ano ang paborito mong kulay?"}
+                    </option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">Sagot sa Tanong</label>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                    {isEn ? "Answer" : "Sagot sa Tanong"}
+                  </label>
                   <input
                     type="text"
                     required
                     value={regSecurityAnswer}
                     onChange={(e) => setRegSecurityAnswer(e.target.value)}
-                    placeholder="Ilagay ang iyong sagot..."
+                    placeholder={isEn ? "Type your security answer..." : "Ilagay ang iyong sagot..."}
                     className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
                   />
                 </div>
@@ -543,7 +575,7 @@ export default function TeacherPortal() {
                   disabled={authLoading}
                   className="w-full py-3.5 bg-gradient-to-r from-[#0096FF] to-[#005FA3] hover:from-blue-500 hover:to-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50"
                 >
-                  {authLoading ? "Nirerehistro..." : "Gumawa ng Teacher Account"}
+                  {authLoading ? (isEn ? "Registering..." : "Nirerehistro...") : (isEn ? "Create Teacher Account" : "Gumawa ng Teacher Account")}
                 </button>
               </form>
             )}
@@ -551,11 +583,13 @@ export default function TeacherPortal() {
             {/* 3. FORGOT PASSWORD FLOW */}
             {authMode === 'forgot' && (
               <div>
-                <h3 className="text-lg font-bold text-white mb-2">I-recover ang Password</h3>
+                <h3 className="text-lg font-bold text-white mb-2">
+                  {isEn ? "Recover Password" : "I-recover ang Password"}
+                </h3>
                 <p className="text-slate-400 text-xs mb-4">
                   {forgotStep === 1
-                    ? "Ilagay ang iyong username upang makuha ang iyong tanong sa seguridad."
-                    : "Sagutin ang iyong tanong sa seguridad upang makapag-set ng bagong password."}
+                    ? (isEn ? "Enter your username to retrieve your registered security question." : "Ilagay ang iyong username upang makuha ang iyong tanong sa seguridad.")
+                    : (isEn ? "Answer your security question to set a new password." : "Sagutin ang iyong tanong sa seguridad upang makapag-set ng bagong password.")}
                 </p>
 
                 {forgotStep === 1 ? (
@@ -567,7 +601,7 @@ export default function TeacherPortal() {
                         required
                         value={forgotUsername}
                         onChange={(e) => setForgotUsername(e.target.value)}
-                        placeholder="I-type ang iyong username..."
+                        placeholder={isEn ? "Type your username..." : "I-type ang iyong username..."}
                         className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
                       />
                     </div>
@@ -578,37 +612,41 @@ export default function TeacherPortal() {
                         onClick={() => { setAuthMode('login'); setAuthError(''); }}
                         className="w-1/3 py-3 rounded-xl border border-slate-700 text-slate-300 font-bold text-sm hover:bg-slate-800"
                       >
-                        Bumalik
+                        {isEn ? "Back" : "Bumalik"}
                       </button>
                       <button
                         type="submit"
                         disabled={authLoading}
                         className="w-2/3 py-3 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl transition-colors disabled:opacity-50 text-sm"
                       >
-                        {authLoading ? "Sinusuri..." : "Ipagpatuloy"}
+                        {authLoading ? (isEn ? "Verifying..." : "Sinusuri...") : (isEn ? "Continue" : "Ipagpatuloy")}
                       </button>
                     </div>
                   </form>
                 ) : (
                   <form onSubmit={handleForgotStep2} className="space-y-4">
                     <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300">
-                      <strong>Tanong:</strong> {forgotSecurityQuestion}
+                      <strong>{isEn ? "Question:" : "Tanong:"}</strong> {forgotSecurityQuestion}
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">Iyong Sagot</label>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                        {isEn ? "Your Answer" : "Iyong Sagot"}
+                      </label>
                       <input
                         type="text"
                         required
                         value={forgotSecurityAnswer}
                         onChange={(e) => setForgotSecurityAnswer(e.target.value)}
-                        placeholder="I-type ang iyong sagot..."
+                        placeholder={isEn ? "Type your answer..." : "I-type ang iyong sagot..."}
                         className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">Bagong Password</label>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                        {isEn ? "New Password" : "Bagong Password"}
+                      </label>
                       <input
                         type="password"
                         required
@@ -625,14 +663,14 @@ export default function TeacherPortal() {
                         onClick={() => setForgotStep(1)}
                         className="w-1/3 py-3 rounded-xl border border-slate-700 text-slate-300 font-bold text-sm hover:bg-slate-800"
                       >
-                        Bumalik
+                        {isEn ? "Back" : "Bumalik"}
                       </button>
                       <button
                         type="submit"
                         disabled={authLoading}
                         className="w-2/3 py-3 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl transition-colors disabled:opacity-50 text-sm"
                       >
-                        {authLoading ? "Inilalapat..." : "I-reset ang Password"}
+                        {authLoading ? (isEn ? "Resetting..." : "Inilalapat...") : (isEn ? "Reset Password" : "I-reset ang Password")}
                       </button>
                     </div>
                   </form>
@@ -663,26 +701,26 @@ export default function TeacherPortal() {
             ReadFil
           </Link>
           <span className="text-xs uppercase font-bold px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
-            Teacher Portal
+            {isEn ? "Teacher Portal" : "Portal ng Guro"}
           </span>
           {tokenStatus && (
             <span className="hidden lg:inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              {tokenStatus.cloud_stt_configured ? "Cloud STT Online (Token Active)" : "Local Wav2Vec Mode"}
+              {tokenStatus.cloud_stt_configured ? (isEn ? "Cloud STT Online (Token Active)" : "Cloud STT Online (Token Aktibo)") : (isEn ? "Local Wav2Vec Mode" : "Local Wav2Vec Mode")}
             </span>
           )}
         </div>
 
         <div className="flex items-center space-x-3">
           <div className="text-right hidden sm:block">
-            <div className="text-xs text-slate-400">Naka-login bilang:</div>
+            <div className="text-xs text-slate-400">{isEn ? "Logged in as:" : "Naka-login bilang:"}</div>
             <div className="text-sm font-bold text-white">{teacher.name}</div>
           </div>
           <button
             onClick={handleLogout}
             className="text-xs uppercase font-bold text-red-400 hover:text-white hover:bg-red-500/20 px-3.5 py-2 rounded-xl border border-red-500/30 transition-all"
           >
-            Mag-Logout
+            {isEn ? "Log Out" : "Mag-Logout"}
           </button>
         </div>
       </header>
@@ -702,7 +740,7 @@ export default function TeacherPortal() {
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
             </svg>
-            Pamamahala ng Talata ({passages.length})
+            {isEn ? `Passage Management (${passages.length})` : `Pamamahala ng Talata (${passages.length})`}
           </button>
 
           <button
@@ -716,7 +754,7 @@ export default function TeacherPortal() {
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
             </svg>
-            Talaan ng mga Mag-aaral ({records.length})
+            {isEn ? `Student Records (${records.length})` : `Talaan ng mga Mag-aaral (${records.length})`}
           </button>
         </div>
 
@@ -727,26 +765,34 @@ export default function TeacherPortal() {
           <div>
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <div>
-                <h2 className="text-2xl font-black text-white">Mga Talata sa Pagbasa</h2>
+                <h2 className="text-2xl font-black text-white">
+                  {isEn ? "Reading Passages" : "Mga Talata sa Pagbasa"}
+                </h2>
                 <p className="text-slate-400 text-sm">
-                  Gumawa at pumili ng talatang babasahin ng buong klase sa Classroom Mode.
+                  {isEn
+                    ? "Create, edit, and set active reading passages for Classroom Mode assessment."
+                    : "Gumawa at pumili ng talatang babasahin ng buong klase sa Classroom Mode."}
                 </p>
               </div>
               <button
                 onClick={openCreateModal}
                 className="px-6 py-3 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-2xl shadow-lg shadow-blue-500/20 flex items-center gap-2 transition-transform hover:scale-[1.02]"
               >
-                <span className="text-xl leading-none">+</span> Magdagdag ng Bagong Talata
+                <span className="text-xl leading-none">+</span> {isEn ? "Add New Passage" : "Magdagdag ng Bagong Talata"}
               </button>
             </div>
 
             {passages.length === 0 ? (
               <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-12 text-center">
                 <div className="w-16 h-16 bg-slate-800 text-slate-400 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl font-bold">📄</div>
-                <h3 className="text-lg font-bold text-white mb-1">Walang Naka-save na Talata</h3>
-                <p className="text-slate-400 text-sm mb-6">Magsimula sa pamamagitan ng paglikha ng iyong unang babasahin para sa mga mag-aaral.</p>
+                <h3 className="text-lg font-bold text-white mb-1">
+                  {isEn ? "No Saved Passages" : "Walang Naka-save na Talata"}
+                </h3>
+                <p className="text-slate-400 text-sm mb-6">
+                  {isEn ? "Get started by creating your first passage for students." : "Magsimula sa pamamagitan ng paglikha ng iyong unang babasahin para sa mga mag-aaral."}
+                </p>
                 <button onClick={openCreateModal} className="px-6 py-2.5 bg-[#0096FF] text-white font-bold rounded-xl text-sm">
-                  Gumawa ng Talata Ngayon
+                  {isEn ? "Create Passage Now" : "Gumawa ng Talata Ngayon"}
                 </button>
               </div>
             ) : (
@@ -771,10 +817,12 @@ export default function TeacherPortal() {
                           {p.is_active ? (
                             <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 rounded-full">
                               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                              AKTIBO SA KLASE
+                              {isEn ? "ACTIVE FOR CLASS" : "AKTIBO SA KLASE"}
                             </span>
                           ) : (
-                            <span className="text-xs font-semibold text-slate-500">Hindi Aktibo</span>
+                            <span className="text-xs font-semibold text-slate-500">
+                              {isEn ? "Inactive" : "Hindi Aktibo"}
+                            </span>
                           )}
                         </div>
 
@@ -785,7 +833,7 @@ export default function TeacherPortal() {
 
                         <div className="flex items-center gap-4 text-xs text-slate-400 mb-6 pb-4 border-b border-slate-800">
                           <span>⏱️ <strong>{p.timer_seconds || 60}s</strong> timer</span>
-                          <span>📝 <strong>{wordCount}</strong> salita</span>
+                          <span>📝 <strong>{wordCount}</strong> {isEn ? "words" : "salita"}</span>
                         </div>
                       </div>
 
@@ -796,7 +844,7 @@ export default function TeacherPortal() {
                             onClick={() => handleActivatePassage(p.id)}
                             className="w-full py-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
                           >
-                            ✓ Gawing Aktibo para sa Klase
+                            ✓ {isEn ? "Set as Active for Class" : "Gawing Aktibo para sa Klase"}
                           </button>
                         )}
                         <div className="flex gap-2">
@@ -804,13 +852,13 @@ export default function TeacherPortal() {
                             onClick={() => openEditModal(p)}
                             className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs transition-colors"
                           >
-                            I-edit
+                            {isEn ? "Edit" : "I-edit"}
                           </button>
                           <button
                             onClick={() => handleDeletePassage(p.id)}
                             className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-bold rounded-xl text-xs transition-colors"
                           >
-                            Tanggalin
+                            {isEn ? "Delete" : "Tanggalin"}
                           </button>
                         </div>
                       </div>
@@ -830,25 +878,35 @@ export default function TeacherPortal() {
             {/* Stat Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
               <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-lg">
-                <span className="text-xs uppercase font-bold text-slate-400">Kabuuang Pagsusuri</span>
+                <span className="text-xs uppercase font-bold text-slate-400">
+                  {isEn ? "Total Assessments" : "Kabuuang Pagsusuri"}
+                </span>
                 <div className="text-3xl font-black text-white mt-1">{totalStudents}</div>
-                <div className="text-[11px] text-slate-500 mt-1">mga naitalang resulta</div>
+                <div className="text-[11px] text-slate-500 mt-1">
+                  {isEn ? "logged student records" : "mga naitalang resulta"}
+                </div>
               </div>
 
               <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-lg">
-                <span className="text-xs uppercase font-bold text-slate-400">Karaniwang Accuracy</span>
+                <span className="text-xs uppercase font-bold text-slate-400">
+                  {isEn ? "Average Accuracy" : "Karaniwang Accuracy"}
+                </span>
                 <div className="text-3xl font-black text-[#0096FF] mt-1">{avgAccuracy}%</div>
                 <div className="text-[11px] text-slate-500 mt-1">Reading Accuracy Rate</div>
               </div>
 
               <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-lg">
-                <span className="text-xs uppercase font-bold text-slate-400">Karaniwang WCPM</span>
+                <span className="text-xs uppercase font-bold text-slate-400">
+                  {isEn ? "Average WCPM" : "Karaniwang WCPM"}
+                </span>
                 <div className="text-3xl font-black text-blue-400 mt-1">{avgWcpm}</div>
                 <div className="text-[11px] text-slate-500 mt-1">Words Correct / Minute</div>
               </div>
 
               <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-lg flex flex-col justify-between">
-                <span className="text-xs uppercase font-bold text-slate-400">Phil-IRI Antas</span>
+                <span className="text-xs uppercase font-bold text-slate-400">
+                  {isEn ? "Phil-IRI Level" : "Phil-IRI Antas"}
+                </span>
                 <div className="flex gap-2 text-xs font-bold mt-2">
                   <span className="text-emerald-400">{independentCount} Ind</span>
                   <span className="text-amber-400">{instructionalCount} Ins</span>
@@ -862,7 +920,7 @@ export default function TeacherPortal() {
               <div className="relative flex-1 max-w-md">
                 <input
                   type="text"
-                  placeholder="Maghanap ayon sa pangalan ng mag-aaral..."
+                  placeholder={isEn ? "Search by student name..." : "Maghanap ayon sa pangalan ng mag-aaral..."}
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
@@ -883,7 +941,7 @@ export default function TeacherPortal() {
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
                 </svg>
-                I-export sa Excel / CSV
+                {isEn ? "Export to Excel / CSV" : "I-export sa Excel / CSV"}
               </button>
             </div>
 
@@ -893,21 +951,23 @@ export default function TeacherPortal() {
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
                     <tr className="bg-slate-950/80 border-b border-slate-800 text-slate-400 text-xs uppercase font-bold tracking-wider">
-                      <th className="py-4 px-6">Mag-aaral</th>
-                      <th className="py-4 px-6">Babasahin</th>
+                      <th className="py-4 px-6">{isEn ? "Student" : "Mag-aaral"}</th>
+                      <th className="py-4 px-6">{isEn ? "Passage" : "Babasahin"}</th>
                       <th className="py-4 px-6">Accuracy</th>
                       <th className="py-4 px-6">WCPM</th>
                       <th className="py-4 px-6">Composite</th>
-                      <th className="py-4 px-6">Antas (Phil-IRI)</th>
-                      <th className="py-4 px-6">Petsa</th>
-                      <th className="py-4 px-6 text-center">Aksyon</th>
+                      <th className="py-4 px-6">{isEn ? "Level (Phil-IRI)" : "Antas (Phil-IRI)"}</th>
+                      <th className="py-4 px-6">{isEn ? "Date" : "Petsa"}</th>
+                      <th className="py-4 px-6 text-center">{isEn ? "Action" : "Aksyon"}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
                     {records.length === 0 ? (
                       <tr>
                         <td colSpan="8" className="py-12 text-center text-slate-500 font-medium">
-                          {recordsLoading ? "Kinukuha ang talaan..." : "Walang nahanap na resulta ng mag-aaral."}
+                          {recordsLoading
+                            ? (isEn ? "Retrieving records..." : "Kinukuha ang talaan...")
+                            : (isEn ? "No student results found." : "Walang nahanap na resulta ng mag-aaral.")}
                         </td>
                       </tr>
                     ) : (
@@ -937,7 +997,7 @@ export default function TeacherPortal() {
                                 onClick={() => setSelectedRecord(r)}
                                 className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-[#0096FF] font-bold rounded-lg text-xs transition-colors border border-blue-500/20"
                               >
-                                Detalye
+                                {isEn ? "Details" : "Detalye"}
                               </button>
                             </td>
                           </tr>
@@ -959,23 +1019,27 @@ export default function TeacherPortal() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
             <h3 className="text-2xl font-black text-white mb-1">
-              {editingPassage ? "I-edit ang Talata" : "Magdagdag ng Bagong Talata"}
+              {editingPassage
+                ? (isEn ? "Edit Passage" : "I-edit ang Talata")
+                : (isEn ? "Add New Passage" : "Magdagdag ng Bagong Talata")}
             </h3>
             <p className="text-slate-400 text-sm mb-6">
-              Itakda ang pamagat, nilalaman, at takdang oras ng pagbasa para sa iyong klase.
+              {isEn
+                ? "Set the title, content, and reading timer limit for your class assessment."
+                : "Itakda ang pamagat, nilalaman, at takdang oras ng pagbasa para sa iyong klase."}
             </p>
 
             <form onSubmit={handleSavePassage} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                  Pamagat ng Talata
+                  {isEn ? "Passage Title" : "Pamagat ng Talata"}
                 </label>
                 <input
                   type="text"
                   required
                   value={passageTitle}
                   onChange={(e) => setPassageTitle(e.target.value)}
-                  placeholder="Hal. Si Pagong at si Matsing"
+                  placeholder={isEn ? "e.g. The Honest Farmer" : "Hal. Ang Masipag na Magsasaka"}
                   className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
                 />
               </div>
@@ -983,7 +1047,7 @@ export default function TeacherPortal() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                    Baitang / Antas
+                    {isEn ? "Grade Level" : "Baitang / Antas"}
                   </label>
                   <select
                     value={passageGrade}
@@ -994,42 +1058,42 @@ export default function TeacherPortal() {
                     <option value="Grade 5">Grade 5</option>
                     <option value="Grade 6">Grade 6</option>
                     <option value="Grade 7">Grade 7</option>
-                    <option value="General">Pangkalahatan (General)</option>
+                    <option value="General">{isEn ? "General" : "Pangkalahatan (General)"}</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                    Oras ng Pagbasa (Segundo)
+                    {isEn ? "Reading Timer Limit" : "Oras ng Pagbasa (Segundo)"}
                   </label>
                   <select
                     value={passageTimer}
                     onChange={(e) => setPassageTimer(parseInt(e.target.value, 10))}
                     className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#0096FF]"
                   >
-                    <option value={30}>30 Segundo</option>
-                    <option value={45}>45 Segundo</option>
-                    <option value={60}>60 Segundo (1 Minuto)</option>
-                    <option value={90}>90 Segundo (1.5 Minuto)</option>
-                    <option value={120}>120 Segundo (2 Minuto)</option>
+                    <option value={30}>{isEn ? "30 Seconds" : "30 Segundo"}</option>
+                    <option value={45}>{isEn ? "45 Seconds" : "45 Segundo"}</option>
+                    <option value={60}>{isEn ? "60 Seconds (1 Min)" : "60 Segundo (1 Minuto)"}</option>
+                    <option value={90}>{isEn ? "90 Seconds (1.5 Mins)" : "90 Segundo (1.5 Minuto)"}</option>
+                    <option value={120}>{isEn ? "120 Seconds (2 Mins)" : "120 Segundo (2 Minuto)"}</option>
                   </select>
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
-                  Nilalaman ng Babasahing Talata (Tagalog)
+                  {isEn ? "Passage Content (Tagalog)" : "Nilalaman ng Babasahing Talata (Tagalog)"}
                 </label>
                 <textarea
                   required
                   rows={6}
                   value={passageContent}
                   onChange={(e) => setPassageContent(e.target.value)}
-                  placeholder="I-type o i-paste ang buong talata dito..."
+                  placeholder={isEn ? "Type or paste the complete reading paragraph here..." : "I-type o i-paste ang buong talata dito..."}
                   className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF] leading-relaxed font-serif text-sm"
                 ></textarea>
                 <div className="text-right text-[11px] text-slate-500 mt-1">
-                  Bilang ng Salita: {passageContent.trim() ? passageContent.trim().split(/\s+/).length : 0}
+                  {isEn ? "Word Count:" : "Bilang ng Salita:"} {passageContent.trim() ? passageContent.trim().split(/\s+/).length : 0}
                 </div>
               </div>
 
@@ -1039,14 +1103,14 @@ export default function TeacherPortal() {
                   onClick={() => setIsPassageModalOpen(false)}
                   className="px-5 py-2.5 rounded-full text-slate-400 hover:text-white font-bold text-sm"
                 >
-                  Kanselahin
+                  {isEn ? "Cancel" : "Kanselahin"}
                 </button>
                 <button
                   type="submit"
                   disabled={passageSaving}
                   className="px-6 py-2.5 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-full text-sm transition-colors disabled:opacity-50"
                 >
-                  {passageSaving ? "Inililigtas..." : "I-save ang Talata"}
+                  {passageSaving ? (isEn ? "Saving..." : "Inililigtas...") : (isEn ? "Save Passage" : "I-save ang Talata")}
                 </button>
               </div>
             </form>
@@ -1062,7 +1126,9 @@ export default function TeacherPortal() {
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-start mb-6 pb-4 border-b border-slate-800">
               <div>
-                <span className="text-xs uppercase font-bold text-slate-400">Detalyadong Pagsusuri ng Mag-aaral</span>
+                <span className="text-xs uppercase font-bold text-slate-400">
+                  {isEn ? "Detailed Student Evaluation" : "Detalyadong Pagsusuri ng Mag-aaral"}
+                </span>
                 <h3 className="text-2xl font-black text-white">{selectedRecord.student_name}</h3>
                 <p className="text-sm text-[#0096FF] font-medium">{selectedRecord.passage_title}</p>
               </div>
@@ -1085,11 +1151,15 @@ export default function TeacherPortal() {
                 <div className="text-xl font-black text-white">{selectedRecord.wcpm}</div>
               </div>
               <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-center">
-                <span className="text-[10px] uppercase font-bold text-slate-400">Tamang Salita</span>
+                <span className="text-[10px] uppercase font-bold text-slate-400">
+                  {isEn ? "Correct Words" : "Tamang Salita"}
+                </span>
                 <div className="text-xl font-black text-emerald-400">{selectedRecord.correct_words} / {selectedRecord.total_target_words}</div>
               </div>
               <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-center">
-                <span className="text-[10px] uppercase font-bold text-slate-400">Mga Miscue</span>
+                <span className="text-[10px] uppercase font-bold text-slate-400">
+                  {isEn ? "Total Miscues" : "Mga Miscue"}
+                </span>
                 <div className="text-xl font-black text-red-400">{selectedRecord.errors_detected}</div>
               </div>
             </div>
@@ -1097,7 +1167,9 @@ export default function TeacherPortal() {
             {/* Stutter Badges */}
             {selectedRecord.stutter_words && selectedRecord.stutter_words.length > 0 && (
               <div className="mb-6 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20">
-                <span className="text-xs font-bold text-amber-300 block mb-2">Natukoy na Utal / Pag-uulit (Disfluencies):</span>
+                <span className="text-xs font-bold text-amber-300 block mb-2">
+                  {isEn ? "Detected Disfluencies / Repetitions:" : "Natukoy na Utal / Pag-uulit (Disfluencies):"}
+                </span>
                 <div className="flex flex-wrap gap-2">
                   {selectedRecord.stutter_words.map((w, i) => (
                     <span key={i} className="px-2.5 py-1 bg-amber-500/20 text-amber-300 rounded-lg text-xs font-mono font-bold">
@@ -1112,12 +1184,12 @@ export default function TeacherPortal() {
             {selectedRecord.trace_json && selectedRecord.trace_json.length > 0 && (
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-300 block mb-3">
-                  Pagsusuri sa Bawat Salita (Needleman-Wunsch Alignment & MLD):
+                  {isEn ? "Word-by-Word Analysis (Needleman-Wunsch Alignment & MLD):" : "Pagsusuri sa Bawat Salita (Needleman-Wunsch Alignment & MLD):"}
                 </span>
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
                   {selectedRecord.trace_json.map((step, idx) => {
                     let badge = 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
-                    let label = 'TAMA';
+                    let label = isEn ? 'CORRECT' : 'TAMA';
 
                     if (step.is_vowel_shift) {
                       badge = 'bg-blue-500/10 border-blue-500/30 text-blue-300';
@@ -1127,16 +1199,16 @@ export default function TeacherPortal() {
                       label = 'MISPRONUNCIATION';
                     } else if (step.type === 'deletion') {
                       badge = 'bg-amber-500/10 border-amber-500/30 text-amber-300';
-                      label = 'OMISSION (LINAKTAWAN)';
+                      label = isEn ? 'OMISSION (SKIPPED)' : 'OMISSION (LINAKTAWAN)';
                     } else if (step.type === 'insertion') {
                       badge = 'bg-purple-500/10 border-purple-500/30 text-purple-300';
-                      label = 'INSERTION (DAGDAG)';
+                      label = isEn ? 'INSERTION (ADDED)' : 'INSERTION (DAGDAG)';
                     }
 
                     return (
                       <div key={idx} className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${badge}`}>
                         <div>
-                          <strong className="text-white">Target:</strong> {step.target || "-"} &bull; <strong className="text-white">Binigkas:</strong> {step.spoken || "-"}
+                          <strong className="text-white">Target:</strong> {step.target || "-"} &bull; <strong className="text-white">{isEn ? "Spoken:" : "Binigkas:"}</strong> {step.spoken || "-"}
                         </div>
                         <span className="font-mono font-bold text-[10px] uppercase px-2 py-0.5 rounded bg-black/40">
                           {label}
@@ -1153,7 +1225,7 @@ export default function TeacherPortal() {
                 onClick={() => setSelectedRecord(null)}
                 className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-full text-xs"
               >
-                Isara
+                {isEn ? "Close" : "Isara"}
               </button>
             </div>
           </div>

@@ -16,6 +16,7 @@ export const tl = {
   levels: {
     title: "Piliin ang Iyong Antas",
     classroom: "Modo ng Klase",
+    classroom_badge: "BAGO: ITINALAGA NG GURO",
     classroom_desc: "Kumuha ng pagsusulit sa pagbasa na itinalaga ng iyong guro na may takdang oras.",
     start_classroom: "Pumasok sa Klase",
     beginner: "Baguhan",

@@ -322,7 +322,7 @@ export default function App() {
               <div className="mb-6 md:mb-0 md:mr-8">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-xs font-black uppercase tracking-wider mb-2">
                   <span className="w-2 h-2 rounded-full bg-blue-600 animate-ping"></span>
-                  Bago: Itinalaga ng Guro (Teacher Assignment)
+                  {t('levels.classroom_badge')}
                 </div>
                 <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mb-2">
                   {t('levels.classroom') || 'Classroom Mode'}
