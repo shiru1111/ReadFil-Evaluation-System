@@ -164,12 +164,19 @@ def preprocess_audio(input_wav_path, output_wav_path):
     import noisereduce as nr
     reduced_noise_speech = nr.reduce_noise(y=speech, sr=sr, prop_decrease=0.5)
     
-    # We preserve natural pauses and quiet trailing consonants (e.g. 'r' in 'lugar')
-    trimmed = reduced_noise_speech
+    # Trim leading and trailing dead air (silence) while preserving natural pauses and trailing consonants
+    try:
+        trimmed, _ = librosa.effects.trim(reduced_noise_speech, top_db=30, frame_length=512, hop_length=128)
+        # Ensure trimmed audio is not empty (minimum 0.3s)
+        if len(trimmed) < int(sr * 0.3):
+            trimmed = reduced_noise_speech
+    except Exception as e:
+        print(f"[TRIM WARNING] Could not trim dead air: {e}")
+        trimmed = reduced_noise_speech
 
-    # Write cleaned speech array back to output WAV file
+    # Write cleaned and trimmed speech array back to output WAV file
     sf.write(output_wav_path, trimmed, sr)
-    # Return total elapsed audio duration in seconds
+    # Return total elapsed audio duration in seconds (excluding dead air)
     return librosa.get_duration(y=trimmed, sr=sr)
 
 # =================================================================
