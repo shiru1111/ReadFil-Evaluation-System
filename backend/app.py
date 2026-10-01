@@ -626,9 +626,10 @@ def fix_segmentation_errors(target_words, spoken_words):
                 fused_target = target_words[j] + target_words[j + 1]
                 if abs(len(fused_target) - len(fused_spoken)) <= 2:
                     if modified_levenshtein(fused_target, fused_spoken) <= 0.12:
-                        # ONLY snap if there is NO standard Tagalog vowel shift
-                        # AND the consonant skeleton matches
-                        if not has_vowel_shift(fused_target, fused_spoken) and letters_are_subset_of(fused_target, fused_spoken):
+                        # ONLY snap if there is NO standard Tagalog vowel shift,
+                        # NO stutter/repetition, and the consonant skeleton matches
+                        has_stutter = is_stutter(target_words[j], current) or is_stutter(target_words[j + 1], spoken_words[i + 1])
+                        if not has_vowel_shift(fused_target, fused_spoken) and not has_stutter and letters_are_subset_of(fused_target, fused_spoken):
                             optimized.extend([target_words[j], target_words[j + 1]])
                             i += 2
                             matched = True
@@ -2019,7 +2020,7 @@ def evaluate_audio():
                     w2v_expert_raw = re.sub(r'\bkkasamama\b', 'kasama', w2v_expert_raw, flags=re.IGNORECASE)
 
             spoken_words = clean_text(active_raw)
-            if safe_level == 'expert':
+            if safe_level in ['expert', 'classroom'] or 'classroom' in safe_level or 'grade' in safe_level:
                 opt_words = list(spoken_words)
             else:
                 opt_words = fix_segmentation_errors(target_words, spoken_words)
@@ -2033,41 +2034,6 @@ def evaluate_audio():
             if w2v_expert_raw and w2v_expert_raw.strip():
                 w2v_words = clean_text(w2v_expert_raw)
                 w2v_spoken_to_target, target_to_w2v = get_alignment_mapping(target_words, w2v_words)
-
-                # Recover acoustic insertions and repetitions detected by Wav2Vec that Resend smoothed over
-                w2v_insertions = {}
-                last_target = -1
-                for s_idx, w_word in enumerate(w2v_words):
-                    t_idx = w2v_spoken_to_target.get(s_idx)
-                    if t_idx is not None:
-                        last_target = t_idx
-                    else:
-                        w2v_insertions.setdefault(last_target, []).append(w_word)
-
-                resend_insertions = set()
-                last_r_target = -1
-                for r_idx, r_word in enumerate(cleaned_opt):
-                    t_idx = spoken_to_target.get(r_idx)
-                    if t_idx is not None:
-                        last_r_target = t_idx
-                    else:
-                        resend_insertions.add(last_r_target)
-
-                fused_with_insertions = []
-                if -1 in w2v_insertions and -1 not in resend_insertions:
-                    fused_with_insertions.extend(w2v_insertions[-1])
-
-                for r_idx, r_word in enumerate(cleaned_opt):
-                    t_idx = spoken_to_target.get(r_idx)
-                    fused_with_insertions.append(r_word)
-                    if t_idx is not None:
-                        if t_idx in w2v_insertions and t_idx not in resend_insertions:
-                            print(f"[ACOUSTIC INSERTION RECOVERED] After target '{target_words[t_idx]}': inserted {w2v_insertions[t_idx]}")
-                            fused_with_insertions.extend(w2v_insertions[t_idx])
-
-                if len(fused_with_insertions) > len(cleaned_opt):
-                    cleaned_opt = fused_with_insertions
-                    spoken_to_target, target_to_spoken = get_alignment_mapping(target_words, cleaned_opt)
 
             # Check if Resend matches target text or if the user spoke gibberish
             if w2v_expert_raw and w2v_expert_raw.strip():
