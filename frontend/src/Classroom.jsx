@@ -203,39 +203,35 @@ export default function Classroom() {
 
   // 3. Stop Recording
   const stopRecording = () => {
+    if (isProcessing) return;
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
     }
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+    setIsRecording(false);
+    setIsProcessing(true);
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
     }
-
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
-    }
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-    }
-
-    setIsRecording(false);
   };
 
   // 4. Send Audio to Backend for Evaluation & Classroom Logging
   const handleRecordingStopped = async () => {
-    if (audioChunksRef.current.length === 0) return;
+    // Stop microphone tracks
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
 
-    setIsProcessing(true);
-    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-
-    // Check minimum size
-    if (audioBlob.size < 5000) {
+    if (audioChunksRef.current.length === 0) {
       setIsSilenceError(true);
       setIsProcessing(false);
       return;
     }
 
+    const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
     const elapsedSeconds = Math.max(1, Math.round((Date.now() - (startTimeRef.current || Date.now())) / 1000));
 
     try {
@@ -243,25 +239,44 @@ export default function Classroom() {
       formData.append('audio', audioBlob, 'classroom_assessment.webm');
       formData.append('target_text', activePassage.content);
       formData.append('time_taken', elapsedSeconds.toString());
-      formData.append('level', activePassage.grade_level || 'Grade 4');
+      formData.append('level', 'Classroom');
 
       const response = await fetch(`${API_BASE}/api/evaluate`, {
         method: 'POST',
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error(isEn ? "Failed to evaluate speech." : "Bigo sa pagsusuri ng boses.");
-      }
-
       const result = await response.json();
 
-      // Check for silence/no speech
-      if (!result.spoken_text || result.spoken_text.trim() === "" || result.total_spoken_words === 0) {
+      if (!response.ok) {
+        if (result.status === 'empty') {
+          setIsSilenceError(true);
+          setIsProcessing(false);
+          audioChunksRef.current = [];
+          return;
+        }
+        throw new Error(result.error || (isEn ? "Failed to evaluate speech." : "Bigo sa pagsusuri ng boses."));
+      }
+
+      // Check if transcription returned is empty
+      const spokenTranscript = (result.transcription || result.spoken_text || '').trim();
+      if (!spokenTranscript && result.accuracy_rate === 0) {
         setIsSilenceError(true);
         setIsProcessing(false);
+        audioChunksRef.current = [];
         return;
       }
+
+      // Calculate Phil-IRI scores matching Results.jsx standard
+      const targetWcpm = 150;
+      const accRate = parseFloat(result.accuracy_rate) || 0;
+      const readWcpm = parseFloat(result.wcpm) || 0;
+      const accScore = accRate * 0.5;
+      const fluScore = Math.min((readWcpm / targetWcpm) * 50, 50);
+      const composite = Math.round(accScore + fluScore);
+      let philIriLevel = "Frustration";
+      if (composite >= 90) philIriLevel = "Independent";
+      else if (composite >= 75) philIriLevel = "Instructional";
 
       // Save Student Result to SQLite Database for the Teacher
       try {
@@ -272,15 +287,15 @@ export default function Classroom() {
             passage_id: activePassage.id,
             student_name: studentName,
             reading_time_seconds: elapsedSeconds,
-            accuracy_rate: result.accuracy_rate,
-            wcpm: result.wcpm,
-            composite_score: result.composite_score || 0,
-            reading_level: result.reading_level || 'Instructional',
-            total_target_words: result.total_target_words,
-            correct_words: result.correct_words,
-            errors_detected: result.errors_detected,
+            accuracy_rate: accRate,
+            wcpm: readWcpm,
+            composite_score: composite,
+            reading_level: philIriLevel,
+            total_target_words: result.total_target_words || activePassage.content.trim().split(/\s+/).length,
+            correct_words: result.correct_words || 0,
+            errors_detected: result.errors_detected || 0,
             stutter_words: result.stutter_words || [],
-            spoken_text: result.spoken_text || '',
+            spoken_text: spokenTranscript,
             trace: result.trace || []
           })
         });
@@ -290,8 +305,8 @@ export default function Classroom() {
 
       // Save to localStorage for standard Results.jsx view
       localStorage.setItem('user_firstName', studentName);
-      localStorage.setItem('final_accuracy', result.accuracy_rate.toString());
-      localStorage.setItem('final_wcpm', result.wcpm.toString());
+      localStorage.setItem('final_accuracy', accRate.toString());
+      localStorage.setItem('final_wcpm', readWcpm.toString());
       localStorage.setItem('evaluated_level', `Classroom - ${activePassage.title}`);
       localStorage.setItem('reading_logs', JSON.stringify([result]));
 

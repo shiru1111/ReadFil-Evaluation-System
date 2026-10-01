@@ -1959,10 +1959,10 @@ def evaluate_audio():
         target_words = clean_text(target_text)
 
         # =============================================================
-        # BRANCH 1: MODERATE & EXPERT -> RESEND CLOUD STT ONLY
+        # BRANCH 1: MODERATE, EXPERT & CLASSROOM -> RESEND CLOUD STT WITH WAV2VEC FALLBACK
         # =============================================================
-        if safe_level in ['moderate', 'expert']:
-            print(f"[EVALUATION] {level.upper()} mode active: using Resend Cloud STT ONLY...")
+        if safe_level in ['moderate', 'expert', 'classroom'] or 'classroom' in safe_level or 'grade' in safe_level:
+            print(f"[EVALUATION] {level.upper()} mode active: using Resend Cloud STT...")
             resend_raw = transcribe_resend(wav_clean_path, target_words)
             
             # Fallback only if Resend fails or returns empty
@@ -2224,18 +2224,22 @@ def evaluate_audio():
         trace_data, _, _, _ = get_simulation_trace(target_words, final_opt)
 
         # Assemble comprehensive evaluation payload conforming to Phil-IRI specifications
+        total_spoken_tokens = len(clean_text(fused_transcription))
         evaluation_record = {
-            "target_text":      target_text,
-            "transcription":    fused_transcription,
-            "accuracy_rate":    round(accuracy_rate, 2),
-            "wcpm":             round(wcpm, 2),
-            "errors_detected":  best_errors,
-            "correct_words":    final_correct_count,
-            "duration_seconds": round(duration_seconds, 3),
-            "model_used":       "WAV2VEC",
-            "stutter_words":    detected_stutters,
-            "trace":            trace_data,
-            "status":           "success"
+            "target_text":        target_text,
+            "transcription":      fused_transcription,
+            "spoken_text":        fused_transcription,
+            "accuracy_rate":      round(accuracy_rate, 2),
+            "wcpm":               round(wcpm, 2),
+            "errors_detected":    best_errors,
+            "correct_words":      final_correct_count,
+            "total_target_words": total_target_words,
+            "total_spoken_words": total_spoken_tokens,
+            "duration_seconds":   round(duration_seconds, 3),
+            "model_used":         "RESEND" if locals().get('resend_used', False) else "WAV2VEC",
+            "stutter_words":      detected_stutters,
+            "trace":              trace_data,
+            "status":             "success"
         }
 
         # Return JSON payload with 200 OK HTTP status code
