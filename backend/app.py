@@ -2700,6 +2700,33 @@ def teacher_set_active_passages_set():
     result = database.set_active_passages(teacher_id, passage_ids)
     return jsonify(result), 200 if result.get('success') else 400
 
+# PIN MANAGEMENT & CLASSROOM ACCESS GATE
+@app.route('/api/teacher/<int:teacher_id>/pin', methods=['GET'])
+def teacher_get_pin(teacher_id):
+    pin = database.get_teacher_pin(teacher_id)
+    if not pin:
+        res = database.regenerate_teacher_pin(teacher_id)
+        pin = res.get('classroom_pin')
+    return jsonify({"success": True, "classroom_pin": pin}), 200
+
+@app.route('/api/teacher/regenerate-pin', methods=['POST'])
+def teacher_regenerate_pin():
+    data = request.json or {}
+    teacher_id = data.get('teacher_id')
+    if not teacher_id:
+        return jsonify({"success": False, "error": "teacher_id required"}), 400
+    res = database.regenerate_teacher_pin(int(teacher_id))
+    return jsonify(res), (200 if res.get('success') else 500)
+
+@app.route('/api/classroom/verify-pin', methods=['POST'])
+def classroom_verify_pin():
+    data = request.json or {}
+    pin = data.get('pin', '')
+    res = database.verify_classroom_pin(pin)
+    if not res.get('success'):
+        return jsonify(res), 401
+    return jsonify(res), 200
+
 # 3. Public Classroom Mode Endpoint (Student Reads Active Passage Set)
 @app.route('/api/classroom/active-passages', methods=['GET'])
 def classroom_active_passages():
@@ -2740,9 +2767,14 @@ def classroom_submit_result():
     trace_json = data.get('trace', [])
 
     if not teacher_id:
-        # Fallback to active passage teacher_id if not provided
-        act = database.get_active_passage()
-        teacher_id = act['teacher_id'] if act else 1
+        if passage_id:
+            conn = database.get_db_connection()
+            p_row = conn.execute("SELECT teacher_id FROM custom_passages WHERE id = ?", (passage_id,)).fetchone()
+            conn.close()
+            if p_row:
+                teacher_id = p_row['teacher_id']
+        if not teacher_id:
+            return jsonify({"success": False, "error": "teacher_id is required for classroom evaluation records"}), 400
 
     result = database.save_student_result(
         teacher_id=teacher_id,
@@ -2782,6 +2814,28 @@ def teacher_records_export():
         mimetype="text/csv",
         headers={"Content-Disposition": f"attachment; filename=readfil_class_records_teacher_{teacher_id}.csv"}
     )
+
+@app.route('/api/teacher/records/<int:record_id>', methods=['DELETE', 'POST'])
+def teacher_delete_record(record_id):
+    teacher_id = request.args.get('teacher_id', type=int)
+    if not teacher_id:
+        data = request.json or {}
+        teacher_id = data.get('teacher_id')
+    if not teacher_id:
+        return jsonify({"success": False, "error": "teacher_id parameter required"}), 400
+    
+    result = database.delete_student_result(int(teacher_id), int(record_id))
+    return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/teacher/records/clear', methods=['POST', 'DELETE'])
+def teacher_clear_records():
+    data = request.json or {}
+    teacher_id = data.get('teacher_id') or request.args.get('teacher_id', type=int)
+    if not teacher_id:
+        return jsonify({"success": False, "error": "teacher_id parameter required"}), 400
+    
+    result = database.clear_teacher_student_results(int(teacher_id))
+    return jsonify(result), (200 if result.get('success') else 400)
 
 # 5. Token Availability & Health Check
 @app.route('/api/system/token-status', methods=['GET'])

@@ -117,14 +117,20 @@ export default function TeacherPortal() {
   // System Token Status
   const [tokenStatus, setTokenStatus] = useState(null);
 
+  // Classroom PIN State
+  const [classroomPin, setClassroomPin] = useState(teacher?.classroom_pin || '');
+  const [isRegeneratingPin, setIsRegeneratingPin] = useState(false);
+  const [pinFeedback, setPinFeedback] = useState('');
+
   // Load Passages and Records on Login
   useEffect(() => {
-    if (teacher && teacher.id) {
+    if (teacher?.id) {
       fetchPassages();
       fetchRecords();
       fetchTokenStatus();
+      fetchTeacherPin();
     }
-  }, [teacher]);
+  }, [teacher?.id]);
 
   const fetchTokenStatus = async () => {
     try {
@@ -136,6 +142,56 @@ export default function TeacherPortal() {
     } catch (e) {
       console.warn("Could not check token status:", e);
     }
+  };
+
+  const fetchTeacherPin = async () => {
+    if (!teacher?.id) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/${teacher.id}/pin`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.classroom_pin) {
+          setClassroomPin(data.classroom_pin);
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch PIN:", err);
+    }
+  };
+
+  const handleRegeneratePin = async () => {
+    if (!teacher?.id || isRegeneratingPin) return;
+    const confirmMsg = isEn
+      ? "Are you sure you want to generate a new PIN? Old students using the previous PIN will no longer be able to enter."
+      : "Sigurado ka bang nais mong gumawa ng bagong PIN? Ang mga dating estudyante na may lumang PIN ay hindi na makakapasok.";
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsRegeneratingPin(true);
+    setPinFeedback('');
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/regenerate-pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacher_id: teacher.id })
+      });
+      const data = await res.json();
+      if (data.success && data.classroom_pin) {
+        setClassroomPin(data.classroom_pin);
+        setPinFeedback(isEn ? "New PIN generated! Previous PIN invalidated." : "Bagong PIN nabuo! Wala nang bisa ang lumang PIN.");
+        setTimeout(() => setPinFeedback(''), 4000);
+      }
+    } catch (err) {
+      console.error("Error regenerating PIN:", err);
+    } finally {
+      setIsRegeneratingPin(false);
+    }
+  };
+
+  const handleCopyPin = () => {
+    if (!classroomPin) return;
+    navigator.clipboard.writeText(classroomPin);
+    setPinFeedback(isEn ? "PIN copied to clipboard!" : "Kopya na ang PIN sa clipboard!");
+    setTimeout(() => setPinFeedback(''), 3000);
   };
 
   const fetchPassages = async () => {
@@ -193,6 +249,9 @@ export default function TeacherPortal() {
       }
       setTeacher(data.teacher);
       localStorage.setItem('readfil_teacher', JSON.stringify(data.teacher));
+      if (data.teacher?.classroom_pin) {
+        setClassroomPin(data.teacher.classroom_pin);
+      }
     } catch (err) {
       setAuthError(err.message);
     } finally {
@@ -289,6 +348,7 @@ export default function TeacherPortal() {
   // Logout
   const handleLogout = () => {
     setTeacher(null);
+    setClassroomPin('');
     localStorage.removeItem('readfil_teacher');
   };
 
@@ -581,6 +641,74 @@ export default function TeacherPortal() {
   const handleExportCSV = () => {
     if (!teacher) return;
     window.open(`${API_BASE}/api/teacher/records/export?teacher_id=${teacher.id}`, '_blank');
+  };
+
+  // Delete individual student record
+  const handleDeleteRecord = async (recordId, studentName) => {
+    if (!teacher) return;
+    const confirmMsg = isEn
+      ? `Are you sure you want to delete the reading record for "${studentName}"?`
+      : `Sigurado ka bang nais mong burahin ang talaan ng pagbasa para kay "${studentName}"?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/records/${recordId}?teacher_id=${teacher.id}`, {
+        method: 'DELETE'
+      });
+      if (res.status === 404) {
+        alert(isEn
+          ? "The server route was not found (404). Please restart your Python backend server (py app.py) to load the new delete route."
+          : "Hindi pa na-load ang bagong delete route sa server (404). Paki-restart ang iyong Python terminal (py app.py)."
+        );
+        return;
+      }
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRecords(prev => prev.filter(r => r.id !== recordId));
+        if (selectedRecord && selectedRecord.id === recordId) {
+          setSelectedRecord(null);
+        }
+      } else {
+        alert(data.error || (isEn ? "Failed to delete record." : "Bigo sa pagbura ng tala."));
+      }
+    } catch (err) {
+      console.error("Delete record error:", err);
+      alert(isEn ? "An error occurred while deleting record." : "May naganap na error sa pagbura ng tala.");
+    }
+  };
+
+  // Clear all student records for this teacher
+  const handleClearAllRecords = async () => {
+    if (!teacher || records.length === 0) return;
+    const confirmMsg = isEn
+      ? `Are you sure you want to CLEAR ALL ${records.length} student records? This action cannot be undone.`
+      : `Sigurado ka bang nais mong BURAHIN ANG LAHAT ng ${records.length} talaan ng mag-aaral? Hindi na ito maibabalik.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/records/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacher_id: teacher.id })
+      });
+      if (res.status === 404) {
+        alert(isEn
+          ? "The server route was not found (404). Please restart your Python backend server (py app.py) to load the new clear route."
+          : "Hindi pa na-load ang bagong clear route sa server (404). Paki-restart ang iyong Python terminal (py app.py)."
+        );
+        return;
+      }
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRecords([]);
+        setSelectedRecord(null);
+      } else {
+        alert(data.error || (isEn ? "Failed to clear records." : "Bigo sa pagbura ng mga tala."));
+      }
+    } catch (err) {
+      console.error("Clear records error:", err);
+      alert(isEn ? "An error occurred while clearing records." : "May naganap na error sa pagbura ng mga tala.");
+    }
   };
 
   // Filter System Passages in Bank Modal
@@ -962,6 +1090,12 @@ export default function TeacherPortal() {
         </div>
 
         <div className="flex items-center space-x-3">
+          {classroomPin && (
+            <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-xs font-mono font-bold text-[#0096FF]">
+              <span className="text-[10px] text-gray-500 font-sans uppercase">PIN:</span>
+              <span className="tracking-wider">{classroomPin}</span>
+            </div>
+          )}
           <div className="text-right hidden sm:block">
             <div className="text-xs text-gray-500">{isEn ? "Logged in as:" : "Naka-login bilang:"}</div>
             <div className="text-sm font-bold text-slate-800">{teacher.name}</div>
@@ -1048,6 +1182,76 @@ export default function TeacherPortal() {
                 </button>
               </div>
             </div>
+
+            {/* Classroom PIN & Live Access Card */}
+            <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 mb-8 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 text-[#0096FF] flex items-center justify-center flex-shrink-0 border border-blue-100">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 border border-gray-200">
+                      {isEn ? "Classroom PIN" : "PIN ng Silid-Aralan"}
+                    </span>
+                    <span className="flex h-2 w-2 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                  </div>
+                  <h3 className="text-base font-bold text-gray-900 mt-0.5">
+                    {isEn ? "Classroom PIN" : "Classroom PIN"}
+                  </h3>
+                  <p className="text-xs text-gray-500 max-w-xl">
+                    {isEn
+                      ? "Students enter this 6-digit PIN on the Classroom page to enter your reading session."
+                      : "Ilalagay ng mga mag-aaral ang 6-digit PIN na ito sa pahina ng Classroom upang makapasok."}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full md:w-auto">
+                <div className="flex items-center justify-center bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 font-mono font-bold text-xl text-gray-800 tracking-widest select-all">
+                  {classroomPin || "------"}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleCopyPin}
+                    title="Copy PIN"
+                    className="flex-1 sm:flex-none px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors border border-gray-200 shadow-sm"
+                  >
+                    <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                    </svg>
+                    {isEn ? "Copy PIN" : "Kopyahin"}
+                  </button>
+
+                  <button
+                    onClick={handleRegeneratePin}
+                    disabled={isRegeneratingPin}
+                    title="Generate New PIN"
+                    className="flex-1 sm:flex-none px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors border border-gray-200 shadow-sm whitespace-nowrap disabled:opacity-50"
+                  >
+                    <svg className={`w-3.5 h-3.5 text-gray-500 ${isRegeneratingPin ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    {isRegeneratingPin ? (isEn ? "Generating..." : "Bumubuo...") : (isEn ? "Generate New PIN" : "Bagong PIN")}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {pinFeedback && (
+              <div className="mb-6 -mt-4 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-center gap-2 shadow-sm">
+                <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+                {pinFeedback}
+              </div>
+            )}
 
             {/* Custom Duration & Universal Timer Control Banner */}
             <div className="bg-white border border-gray-200 rounded-3xl p-5 sm:p-6 mb-8 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -1338,16 +1542,30 @@ export default function TeacherPortal() {
                 </svg>
               </div>
 
-              <button
-                onClick={handleExportCSV}
-                disabled={records.length === 0}
-                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 disabled:opacity-50 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                </svg>
-                {isEn ? "Export to Excel / CSV" : "I-export sa Excel / CSV"}
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={handleClearAllRecords}
+                  disabled={records.length === 0}
+                  className="px-5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold rounded-2xl text-sm flex items-center justify-center gap-2 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:scale-[1.01] active:scale-[0.99]"
+                  title={isEn ? "Delete all student evaluation records" : "Burahin ang lahat ng talaan"}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  {isEn ? "Clear All Records" : "Burahin Lahat"}
+                </button>
+
+                <button
+                  onClick={handleExportCSV}
+                  disabled={records.length === 0}
+                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 disabled:opacity-50 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                  </svg>
+                  {isEn ? "Export to Excel / CSV" : "I-export sa Excel / CSV"}
+                </button>
+              </div>
             </div>
 
             {/* Records Table */}
@@ -1398,12 +1616,24 @@ export default function TeacherPortal() {
                               {new Date(r.timestamp).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                             </td>
                             <td className="py-4 px-6 text-center">
-                              <button
-                                onClick={() => setSelectedRecord(r)}
-                                className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0096FF] font-bold rounded-lg text-xs transition-colors border border-blue-200"
-                              >
-                                {isEn ? "Details" : "Detalye"}
-                              </button>
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => setSelectedRecord(r)}
+                                  className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0096FF] font-bold rounded-lg text-xs transition-colors border border-blue-200"
+                                >
+                                  {isEn ? "Details" : "Detalye"}
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteRecord(r.id, r.student_name)}
+                                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-bold rounded-lg text-xs transition-colors border border-rose-200 flex items-center gap-1"
+                                  title={isEn ? "Delete record" : "Burahin ang tala"}
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                  <span className="hidden xl:inline">{isEn ? "Delete" : "Burahin"}</span>
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1987,7 +2217,17 @@ export default function TeacherPortal() {
               </div>
             )}
 
-            <div className="mt-6 pt-4 border-t border-gray-200 text-right">
+            <div className="mt-6 pt-4 border-t border-gray-200 flex justify-between items-center">
+              <button
+                onClick={() => handleDeleteRecord(selectedRecord.id, selectedRecord.student_name)}
+                className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-full text-xs transition-colors border border-rose-200 flex items-center gap-1.5"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                <span>{isEn ? "Delete This Record" : "Burahin ang Tala"}</span>
+              </button>
+
               <button
                 onClick={() => setSelectedRecord(null)}
                 className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-slate-800 font-bold rounded-full text-xs transition-colors"

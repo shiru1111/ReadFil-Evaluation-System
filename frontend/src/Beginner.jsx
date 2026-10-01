@@ -4,8 +4,122 @@ import { beginnerPassages } from './data/passages'; // NEW IMPORT
 import { useLanguage } from './contexts/LanguageContext';
 import SoundWaveBackground from './components/SoundWaveBackground';
 
+// Helper to tokenize and normalize words for live satisfaction matching
+const tokenizeWords = (text) => {
+  if (!text) return [];
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/gi, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+};
+
+// Check if two words phonetically or semantically match in Filipino reading
+const isWordMatch = (w1, w2) => {
+  if (!w1 || !w2) return false;
+  if (w1 === w2) return true;
+
+  // Common Filipino shorthand / contractions / variants
+  if ((w1 === 'mga' && w2 === 'manga') || (w1 === 'manga' && w2 === 'mga')) return true;
+  if ((w1 === 'ng' && w2 === 'nang') || (w1 === 'nang' && w2 === 'ng')) return true;
+  if ((w1 === 'may' && w2 === 'mayroon') || (w1 === 'mayroon' && w2 === 'may')) return true;
+  if ((w1 === 'dyan' && w2 === 'diyan') || (w1 === 'diyan' && w2 === 'dyan')) return true;
+  if ((w1 === 'doon' && w2 === 'dun') || (w1 === 'dun' && w2 === 'doon')) return true;
+
+  // Normalize Tagalog vowel shifts (o <-> u, e <-> i)
+  const n1 = w1.replace(/o/g, 'u').replace(/e/g, 'i');
+  const n2 = w2.replace(/o/g, 'u').replace(/e/g, 'i');
+  if (n1 === n2) return true;
+
+  // Prefix / stem match for words >= 4 letters
+  if (w1.length >= 4 && w2.length >= 4) {
+    if (w1.startsWith(w2.slice(0, -1)) || w2.startsWith(w1.slice(0, -1))) return true;
+    if (w1.slice(0, 4) === w2.slice(0, 4)) return true;
+  }
+
+  // Levenshtein distance <= 1 for words >= 4 letters
+  if (Math.abs(w1.length - w2.length) <= 1 && w1.length >= 4) {
+    let diff = 0;
+    let i = 0, j = 0;
+    while (i < n1.length && j < n2.length) {
+      if (n1[i] !== n2[j]) {
+        diff++;
+        if (diff > 1) break;
+        if (n1.length > n2.length) i++;
+        else if (n2.length > n1.length) j++;
+        else { i++; j++; }
+      } else {
+        i++; j++;
+      }
+    }
+    if (diff <= 1) return true;
+  }
+
+  return false;
+};
+
+// Check if the live spoken transcript satisfies all or nearly all words of the passage
+const checkWordsSatisfied = (targetText, spokenText) => {
+  const targetWords = tokenizeWords(targetText);
+  const spokenWords = tokenizeWords(spokenText);
+
+  if (targetWords.length === 0 || spokenWords.length === 0) {
+    return { satisfied: false, matchCount: 0, totalTarget: targetWords.length, matchRatio: 0 };
+  }
+
+  // 1. Sequential matching with 4-word lookahead
+  let targetIdx = 0;
+  let matchCount = 0;
+
+  for (let sIdx = 0; sIdx < spokenWords.length; sIdx++) {
+    const sWord = spokenWords[sIdx];
+    let matchedAhead = -1;
+    for (let lookahead = 0; lookahead <= 4; lookahead++) {
+      const checkIdx = targetIdx + lookahead;
+      if (checkIdx < targetWords.length && isWordMatch(sWord, targetWords[checkIdx])) {
+        matchedAhead = checkIdx;
+        break;
+      }
+    }
+
+    if (matchedAhead !== -1) {
+      matchCount++;
+      targetIdx = matchedAhead + 1;
+    }
+  }
+
+  // 2. Bag-of-words coverage matching
+  let bagMatchCount = 0;
+  const usedSpoken = new Set();
+  for (let t = 0; t < targetWords.length; t++) {
+    for (let s = 0; s < spokenWords.length; s++) {
+      if (!usedSpoken.has(s) && isWordMatch(targetWords[t], spokenWords[s])) {
+        bagMatchCount++;
+        usedSpoken.add(s);
+        break;
+      }
+    }
+  }
+
+  const seqRatio = matchCount / targetWords.length;
+  const bagRatio = bagMatchCount / targetWords.length;
+  const bestRatio = Math.max(seqRatio, bagRatio);
+  const reachedNearEnd = targetIdx >= Math.max(1, targetWords.length - 2);
+
+  // Satisfied if reached near end and matched at least 58%, or overall matched >= 75%
+  const satisfied = (reachedNearEnd && bestRatio >= 0.58) || bestRatio >= 0.75;
+
+  return {
+    satisfied,
+    matchCount: Math.max(matchCount, bagMatchCount),
+    totalTarget: targetWords.length,
+    matchRatio: bestRatio
+  };
+};
+
 export default function Beginner() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const isEn = language === 'en';
   const navigate = useNavigate();
 
   const [isTestReady, setIsTestReady] = useState(() => {
@@ -33,6 +147,7 @@ export default function Beginner() {
   const [isSilence, setIsSilence] = useState(false);
   const [isCountingDown, setIsCountingDown] = useState(false);
   const [countdownValue, setCountdownValue] = useState(0);
+  const [isSatisfiedCompleted, setIsSatisfiedCompleted] = useState(false);
 
   // Memory to store all 25 passages so the Results page can read them
   const [phaseScores, setPhaseScores] = useState([]);
@@ -41,6 +156,17 @@ export default function Beginner() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const stopTimeoutRef = useRef(null);
+  const speechRecRef = useRef(null);
+  const autoStopTimeoutRef = useRef(null);
+  const isRecordingRef = useRef(false);
+  const lastSoundTimeRef = useRef(Date.now());
+  const soundDetectedRef = useRef(false);
+  const speechDurationMsRef = useRef(0);
+  const hasTriggeredAutoStopRef = useRef(false);
+  const silenceCheckIntervalRef = useRef(null);
+  const lastSpeechMatchRatioRef = useRef(0);
+  const isSatisfiedRef = useRef(false);
+  const startTimeRef = useRef(null);
 
   // Refs for the MIC TEST phase
   const testRecorderRef = useRef(null);
@@ -60,7 +186,7 @@ export default function Beginner() {
         const j = Math.floor(Math.random() * (i + 1));
         [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      const selected = shuffled.slice(0, 2);
+      const selected = shuffled.slice(0, 1);
       setTestPassages(selected);
       localStorage.setItem('beginner_passages', JSON.stringify(selected));
     }
@@ -72,10 +198,16 @@ export default function Beginner() {
 
   useEffect(() => {
     return () => {
+      isRecordingRef.current = false;
+      if (silenceCheckIntervalRef.current) clearInterval(silenceCheckIntervalRef.current);
+      if (autoStopTimeoutRef.current) clearTimeout(autoStopTimeoutRef.current);
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
       if (audioContextRef.current) audioContextRef.current.close();
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
       if (stopTimeoutRef.current) clearTimeout(stopTimeoutRef.current);
+      if (speechRecRef.current) {
+        try { speechRecRef.current.abort(); } catch (e) {}
+      }
     };
   }, []);
 
@@ -90,6 +222,44 @@ export default function Beginner() {
     }
     return () => clearInterval(timer);
   }, [isRecording]);
+
+  const stopRecording = () => {
+    if (isProcessing) return;
+    isRecordingRef.current = false;
+    setIsRecording(false);
+    setIsProcessing(true);
+
+    if (silenceCheckIntervalRef.current) {
+      clearInterval(silenceCheckIntervalRef.current);
+      silenceCheckIntervalRef.current = null;
+    }
+    if (autoStopTimeoutRef.current) {
+      clearTimeout(autoStopTimeoutRef.current);
+    }
+    if (speechRecRef.current) {
+      try { speechRecRef.current.abort(); } catch (e) {}
+      speechRecRef.current = null;
+    }
+
+    stopTimeoutRef.current = setTimeout(() => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+    }, 200);
+  };
+
+  const triggerAutoStop = (reason = "completed", delayMs = 300) => {
+    if (hasTriggeredAutoStopRef.current || !isRecordingRef.current) return;
+    hasTriggeredAutoStopRef.current = true;
+    isSatisfiedRef.current = true;
+    setIsSatisfiedCompleted(true);
+    console.log(`[AUTO-STOP TRIGGERED] Beginner Reason: ${reason}. Finalizing audio in ${delayMs}ms...`);
+
+    if (autoStopTimeoutRef.current) clearTimeout(autoStopTimeoutRef.current);
+    autoStopTimeoutRef.current = setTimeout(() => {
+      stopRecording();
+    }, delayMs);
+  };
 
   useEffect(() => {
     if (isCountingDown && countdownValue > 0) {
@@ -135,8 +305,144 @@ export default function Beginner() {
         if (mediaRecorderRef.current.state === 'inactive') {
           mediaRecorderRef.current.start();
         }
+        isRecordingRef.current = true;
+        hasTriggeredAutoStopRef.current = false;
+        isSatisfiedRef.current = false;
+        speechDurationMsRef.current = 0;
+        lastSpeechMatchRatioRef.current = 0;
+        lastSoundTimeRef.current = Date.now();
+        soundDetectedRef.current = false;
+        startTimeRef.current = Date.now();
         setIsRecording(true);
         setElapsedTime(0);
+        setIsSatisfiedCompleted(false);
+
+        // Smart Silence Detection & Voice Activity Auto-Stop
+        // Checks every 100ms via Web Audio API AnalyserNode
+        if (silenceCheckIntervalRef.current) clearInterval(silenceCheckIntervalRef.current);
+        silenceCheckIntervalRef.current = setInterval(() => {
+          if (!isRecordingRef.current || hasTriggeredAutoStopRef.current) return;
+
+          const now = Date.now();
+          const recordingAgeMs = now - (startTimeRef.current || now);
+
+          // Sample audio level
+          if (analyserRef.current) {
+            const bufferLength = analyserRef.current.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyserRef.current.getByteTimeDomainData(dataArray);
+
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+              const val = (dataArray[i] - 128) / 128.0;
+              sum += val * val;
+            }
+            const rms = Math.sqrt(sum / bufferLength);
+
+            // Threshold for human speech activity
+            if (rms > 0.032) {
+              lastSoundTimeRef.current = now;
+              soundDetectedRef.current = true;
+              speechDurationMsRef.current += 100;
+            }
+          }
+
+          // Buffer: Give student at least 1.8 seconds after starting before evaluating silence
+          if (recordingAgeMs < 1800) return;
+
+          const silenceElapsedMs = now - lastSoundTimeRef.current;
+          const totalVoiceMs = speechDurationMsRef.current;
+          const matchRatio = lastSpeechMatchRatioRef.current;
+
+          // Auto-stop 1: Words are satisfied by speech recognizer
+          if (isSatisfiedRef.current) {
+            triggerAutoStop("words_satisfied", 250);
+            return;
+          }
+
+          // Auto-stop 2: High word match (>= 60%) + brief pause (>= 900ms)
+          if (matchRatio >= 0.60 && silenceElapsedMs >= 900) {
+            triggerAutoStop("high_match_silence", 200);
+            return;
+          }
+
+          // Auto-stop 3: Partial match (>= 35%) + pause (>= 1300ms)
+          if (matchRatio >= 0.35 && silenceElapsedMs >= 1300) {
+            triggerAutoStop("partial_match_silence", 200);
+            return;
+          }
+
+          // Auto-stop 4: Finished reading by voice activity!
+          // Student spoke for >= 1200ms and has now stopped talking for >= 1700ms
+          if (totalVoiceMs >= 1200 && silenceElapsedMs >= 1700) {
+            triggerAutoStop("voice_activity_completed", 200);
+            return;
+          }
+        }, 100);
+
+        // Web Speech Recognition for hands-free auto-stop when satisfied
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+          try {
+            if (speechRecRef.current) {
+              try { speechRecRef.current.abort(); } catch (e) {}
+            }
+            const recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            try {
+              recognition.lang = 'tl-PH';
+            } catch (e) {
+              recognition.lang = 'fil-PH';
+            }
+
+            let accumulatedSpoken = '';
+
+            recognition.onresult = (event) => {
+              if (hasTriggeredAutoStopRef.current || !isRecordingRef.current) return;
+
+              let currentInterim = '';
+              for (let i = event.resultIndex; i < event.results.length; i++) {
+                const trans = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                  accumulatedSpoken += ' ' + trans;
+                } else {
+                  currentInterim += ' ' + trans;
+                }
+              }
+
+              const totalSpoken = (accumulatedSpoken + ' ' + currentInterim).trim();
+              const check = checkWordsSatisfied(currentTextRef.current, totalSpoken);
+              lastSpeechMatchRatioRef.current = check.matchRatio;
+
+              if (check.satisfied && !hasTriggeredAutoStopRef.current) {
+                triggerAutoStop("words_satisfied", 300);
+              }
+            };
+
+            recognition.onerror = (e) => {
+              console.warn("[SpeechRecognition] warning:", e.error);
+              if (e.error === 'language-not-supported' && recognition.lang === 'tl-PH') {
+                try {
+                  recognition.lang = 'fil-PH';
+                } catch (err) {}
+              }
+            };
+
+            recognition.onend = () => {
+              if (isRecordingRef.current && !hasTriggeredAutoStopRef.current) {
+                try {
+                  recognition.start();
+                } catch (err) {}
+              }
+            };
+
+            recognition.start();
+            speechRecRef.current = recognition;
+          } catch (e) {
+            console.warn("SpeechRecognition init error:", e);
+          }
+        }
       };
 
       startRecording();
@@ -306,18 +612,14 @@ export default function Beginner() {
     }
   };
 
+
   const toggleRecording = () => {
     if (isProcessing || isCountingDown) return;
     if (isRecording) {
-      setIsProcessing(true);
-      setIsRecording(false);
-      stopTimeoutRef.current = setTimeout(() => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-          mediaRecorderRef.current.stop();
-        }
-      }, 800);
+      stopRecording();
     } else {
       setIsSilence(false);
+      setIsSatisfiedCompleted(false);
       audioChunksRef.current = [];
       setHasRecorded(false);
       setIsCountingDown(true);
@@ -493,20 +795,28 @@ export default function Beginner() {
 
           <div className="flex flex-col items-center justify-center">
             {!hasRecorded && (
-              <div className="relative flex items-center justify-center">
+              <div className="relative flex items-center justify-center w-36 h-36">
                 {isRecording && (
                   <>
-                    <span className="absolute w-36 h-36 rounded-full bg-red-400/30 animate-ping pointer-events-none"></span>
-                    <span className="absolute w-28 h-28 rounded-full bg-[#0096FF]/20 animate-pulse pointer-events-none"></span>
+                    <span className={`absolute inset-0 rounded-full animate-ping pointer-events-none ${isSatisfiedCompleted ? 'bg-emerald-400/40' : 'bg-red-400/30'}`}></span>
+                    <span className={`absolute w-28 h-28 rounded-full animate-pulse pointer-events-none ${isSatisfiedCompleted ? 'bg-emerald-500/30' : 'bg-[#0096FF]/20'}`}></span>
                   </>
                 )}
                 <button
                   onClick={toggleRecording}
                   disabled={isProcessing || isCountingDown}
-                  className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 relative z-10 ${isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-black hover:bg-gray-800'} ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
+                  className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 relative z-10 ${
+                    isSatisfiedCompleted
+                      ? 'bg-emerald-500 scale-105 shadow-emerald-500/40'
+                      : isRecording
+                      ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                      : 'bg-black hover:bg-gray-800'
+                  } ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
                 >
                   <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    {isRecording ? (
+                    {isSatisfiedCompleted ? (
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
+                    ) : isRecording ? (
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
                     ) : (
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
@@ -516,11 +826,26 @@ export default function Beginner() {
               </div>
             )}
 
-            <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-500' : isProcessing ? 'text-[#0096FF] animate-pulse' : isSilence ? 'text-red-600' : 'text-gray-500'}`}>
-              {isRecording ? t("eval.recording") :
-                isProcessing ? t("eval.processing") :
-                  isSilence ? t("eval.no_speech") :
-                    (hasRecorded ? t("eval.graded") : t("eval.click_begin"))}
+            <p className={`mt-4 font-bold text-lg text-center min-h-[1.75rem] transition-colors ${
+              isSatisfiedCompleted
+                ? 'text-emerald-600 font-extrabold animate-pulse'
+                : isRecording
+                ? 'text-red-500'
+                : isProcessing
+                ? 'text-[#0096FF] animate-pulse'
+                : isSilence
+                ? 'text-red-600'
+                : 'text-gray-500'
+            }`}>
+              {isSatisfiedCompleted
+                ? (isEn ? "All words completed! Finalizing evaluation..." : "Kusang natapos ang pagbasa! Isinusumite...")
+                : isRecording
+                ? (isEn ? "Reading in progress... (Auto-stops when finished)" : "Kasalukuyang nagbabasa... (Kusang hihinto pagkatapos)")
+                : isProcessing
+                ? t("eval.processing")
+                : isSilence
+                ? t("eval.no_speech")
+                : (hasRecorded ? t("eval.graded") : t("eval.click_begin"))}
             </p>
 
             {hasRecorded && !isProcessing && (

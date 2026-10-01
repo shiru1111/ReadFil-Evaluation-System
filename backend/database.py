@@ -8,6 +8,7 @@ import sqlite3
 import json
 import io
 import csv
+import random
 from werkzeug.security import generate_password_hash, check_password_hash
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'readfil.db')
@@ -18,6 +19,20 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+def generate_unique_pin():
+    """Generates a random unique 6-digit numeric PIN for classroom access."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        for _ in range(100):
+            pin = f"{random.randint(100000, 999999)}"
+            cursor.execute("SELECT id FROM teachers WHERE classroom_pin = ?", (pin,))
+            if not cursor.fetchone():
+                return pin
+        return f"{random.randint(100000, 999999)}"
+    finally:
+        conn.close()
 
 def init_db():
     """Initializes SQLite database tables and seeds a default teacher + passage if empty."""
@@ -34,9 +49,17 @@ def init_db():
         email TEXT NOT NULL,
         security_question TEXT NOT NULL,
         security_answer_hash TEXT NOT NULL,
+        classroom_pin TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """)
+
+    # Schema migration: Ensure classroom_pin column exists in existing databases
+    cursor.execute("PRAGMA table_info(teachers)")
+    columns = [col['name'] for col in cursor.fetchall()]
+    if 'classroom_pin' not in columns:
+        cursor.execute("ALTER TABLE teachers ADD COLUMN classroom_pin TEXT")
+        conn.commit()
 
     # 2. Custom Passages Table
     cursor.execute("""
@@ -84,15 +107,16 @@ def init_db():
         default_pwd_hash = generate_password_hash("teacher123")
         default_sec_ans_hash = generate_password_hash("filipino")
         cursor.execute("""
-            INSERT INTO teachers (name, username, password_hash, email, security_question, security_answer_hash)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO teachers (name, username, password_hash, email, security_question, security_answer_hash, classroom_pin)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             "Guro Maria Santos",
             "teacher",
             default_pwd_hash,
             "readfilcertificate@gmail.com",
             "Ano ang paborito mong asignatura?",
-            default_sec_ans_hash
+            default_sec_ans_hash,
+            "849201"
         ))
         teacher_id = cursor.lastrowid
 
@@ -113,6 +137,14 @@ def init_db():
             60
         ))
         conn.commit()
+    else:
+        # Ensure any pre-existing teachers without a classroom_pin get assigned one
+        cursor.execute("SELECT id FROM teachers WHERE classroom_pin IS NULL OR classroom_pin = ''")
+        teachers_without_pin = cursor.fetchall()
+        for t in teachers_without_pin:
+            pin = "849201" if t['id'] == 1 else f"{random.randint(100000, 999999)}"
+            cursor.execute("UPDATE teachers SET classroom_pin = ? WHERE id = ?", (pin, t['id']))
+        conn.commit()
 
     conn.close()
 
@@ -121,19 +153,20 @@ def init_db():
 # =================================================================
 
 def register_teacher(name, username, password, email, security_question, security_answer):
-    """Registers a new teacher with hashed credentials."""
+    """Registers a new teacher with hashed credentials and a unique classroom PIN."""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         pwd_hash = generate_password_hash(password)
         ans_hash = generate_password_hash(security_answer.strip().lower())
+        new_pin = generate_unique_pin()
         cursor.execute("""
-            INSERT INTO teachers (name, username, password_hash, email, security_question, security_answer_hash)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (name.strip(), username.strip().lower(), pwd_hash, email.strip().lower(), security_question.strip(), ans_hash))
+            INSERT INTO teachers (name, username, password_hash, email, security_question, security_answer_hash, classroom_pin)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (name.strip(), username.strip().lower(), pwd_hash, email.strip().lower(), security_question.strip(), ans_hash, new_pin))
         conn.commit()
         teacher_id = cursor.lastrowid
-        return {"success": True, "teacher_id": teacher_id, "username": username}
+        return {"success": True, "teacher_id": teacher_id, "username": username, "classroom_pin": new_pin}
     except sqlite3.IntegrityError:
         return {"success": False, "error": "Username already exists. Please choose another username."}
     except Exception as e:
@@ -142,7 +175,7 @@ def register_teacher(name, username, password, email, security_question, securit
         conn.close()
 
 def authenticate_teacher(username, password):
-    """Verifies username and password, returning teacher profile info."""
+    """Verifies username and password, returning teacher profile info including classroom PIN."""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -154,6 +187,13 @@ def authenticate_teacher(username, password):
         if not check_password_hash(teacher['password_hash'], password):
             return {"success": False, "error": "Invalid password."}
 
+        # If existing teacher has no pin, generate one now
+        pin = teacher['classroom_pin']
+        if not pin:
+            pin = generate_unique_pin()
+            cursor.execute("UPDATE teachers SET classroom_pin = ? WHERE id = ?", (pin, teacher['id']))
+            conn.commit()
+
         return {
             "success": True,
             "teacher": {
@@ -161,8 +201,73 @@ def authenticate_teacher(username, password):
                 "name": teacher['name'],
                 "username": teacher['username'],
                 "email": teacher['email'],
-                "security_question": teacher['security_question']
+                "security_question": teacher['security_question'],
+                "classroom_pin": pin
             }
+        }
+    finally:
+        conn.close()
+
+def get_teacher_pin(teacher_id):
+    """Fetches the current active PIN for a teacher."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT classroom_pin FROM teachers WHERE id = ?", (teacher_id,))
+        row = cursor.fetchone()
+        return row['classroom_pin'] if row else None
+    finally:
+        conn.close()
+
+def regenerate_teacher_pin(teacher_id):
+    """
+    Generates and saves a brand new 6-digit classroom PIN for the teacher.
+    Instantly invalidates the previous PIN so old students cannot re-enter.
+    """
+    new_pin = generate_unique_pin()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE teachers SET classroom_pin = ? WHERE id = ?", (new_pin, teacher_id))
+        conn.commit()
+        return {"success": True, "classroom_pin": new_pin}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def verify_classroom_pin(pin):
+    """
+    Validates a student-entered PIN against active teachers.
+    Returns teacher information and their currently active assessment passages.
+    """
+    if not pin:
+        return {"success": False, "error": "Please enter a 6-digit Classroom PIN."}
+    
+    clean_pin = str(pin).strip()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, name, username FROM teachers WHERE classroom_pin = ?", (clean_pin,))
+        teacher = cursor.fetchone()
+        if not teacher:
+            return {
+                "success": False,
+                "error": "Invalid Classroom PIN. Please ask your teacher for today's active PIN."
+            }
+        
+        teacher_id = teacher['id']
+        teacher_name = teacher['name']
+        passages = get_active_passages(teacher_id)
+        
+        return {
+            "success": True,
+            "teacher": {
+                "id": teacher_id,
+                "name": teacher_name,
+                "username": teacher['username']
+            },
+            "passages": passages
         }
     finally:
         conn.close()
@@ -356,6 +461,9 @@ def get_active_passages(teacher_id=None):
                 WHERE p.teacher_id = ? AND p.is_active = 1
                 ORDER BY p.id ASC
             """, (teacher_id,))
+            rows = cursor.fetchall()
+            # Strictly return only this teacher's active passages; never fall back to another teacher
+            return [dict(r) for r in rows] if rows else []
         else:
             cursor.execute("""
                 SELECT p.*, t.name as teacher_name
@@ -364,20 +472,20 @@ def get_active_passages(teacher_id=None):
                 WHERE p.is_active = 1
                 ORDER BY p.id ASC
             """)
-        rows = cursor.fetchall()
-        if rows:
-            return [dict(r) for r in rows]
+            rows = cursor.fetchall()
+            if rows:
+                return [dict(r) for r in rows]
 
-        # If none marked active, fallback to the latest passage as a single item list
-        cursor.execute("""
-            SELECT p.*, t.name as teacher_name
-            FROM custom_passages p
-            JOIN teachers t ON p.teacher_id = t.id
-            ORDER BY p.id DESC
-            LIMIT 1
-        """)
-        fallback_row = cursor.fetchone()
-        return [dict(fallback_row)] if fallback_row else []
+            # If no teacher specified and none marked active, fallback to the latest passage
+            cursor.execute("""
+                SELECT p.*, t.name as teacher_name
+                FROM custom_passages p
+                JOIN teachers t ON p.teacher_id = t.id
+                ORDER BY p.id DESC
+                LIMIT 1
+            """)
+            fallback_row = cursor.fetchone()
+            return [dict(fallback_row)] if fallback_row else []
     finally:
         conn.close()
 
@@ -498,3 +606,32 @@ def export_teacher_results_to_csv(teacher_id):
 
     output.seek(0)
     return output.getvalue()
+
+def delete_student_result(teacher_id, record_id):
+    """Deletes a specific student result record owned by the teacher."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM student_results WHERE id = ? AND teacher_id = ?", (int(record_id), int(teacher_id)))
+        conn.commit()
+        if cursor.rowcount > 0:
+            return {"success": True, "deleted_count": cursor.rowcount}
+        else:
+            return {"success": False, "error": "Record not found or not owned by this teacher."}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def clear_teacher_student_results(teacher_id):
+    """Clears all student result records for a given teacher."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM student_results WHERE teacher_id = ?", (int(teacher_id),))
+        conn.commit()
+        return {"success": True, "deleted_count": cursor.rowcount}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
