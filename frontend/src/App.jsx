@@ -179,16 +179,6 @@ export default function App() {
               {t('nav.simulation')}
             </Link>
           </li>
-          <li>
-            <Link to="/classroom" className="hover:text-[#0096FF] transition-colors font-bold uppercase tracking-wide text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
-              {t('nav.classroom') || 'Classroom'}
-            </Link>
-          </li>
-          <li>
-            <Link to="/teacher" className="hover:text-[#0096FF] transition-colors font-semibold uppercase tracking-wide">
-              {t('nav.teacher') || 'Teacher Portal'}
-            </Link>
-          </li>
           <li><a href="#footer" className="hover:text-[#0096FF] transition-colors">{t('nav.about_us')}</a></li>
         </ul>
 
@@ -233,20 +223,6 @@ export default function App() {
             onClick={() => setIsMobileMenuOpen(false)}
           >
             {t('nav.simulation')}
-          </Link>
-          <Link 
-            to="/classroom" 
-            className="text-left text-blue-600 font-bold hover:text-[#0096FF] transition-colors" 
-            onClick={() => setIsMobileMenuOpen(false)}
-          >
-            {t('nav.classroom') || 'Classroom Mode'}
-          </Link>
-          <Link 
-            to="/teacher" 
-            className="text-left text-gray-800 hover:text-[#0096FF] transition-colors" 
-            onClick={() => setIsMobileMenuOpen(false)}
-          >
-            {t('nav.teacher') || 'Teacher Portal'}
           </Link>
           <a 
             href="#footer" 
