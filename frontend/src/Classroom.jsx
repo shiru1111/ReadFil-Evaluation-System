@@ -10,10 +10,17 @@ export default function Classroom() {
   const isEn = language === 'en';
   const navigate = useNavigate();
 
-  // Active Passage State
+  // Multi-Passage Assessment State
+  const [passagesList, setPassagesList] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [activePassage, setActivePassage] = useState(null);
-  const [isLoadingPassage, setIsLoadingPassage] = useState(true);
+  const [isLoadingPassages, setIsLoadingPassages] = useState(true);
   const [passageError, setPassageError] = useState(null);
+
+  // Multi-Passage Evaluation State
+  const [evalResults, setEvalResults] = useState([]);
+  const [isBetweenPassages, setIsBetweenPassages] = useState(false);
+  const [lastPassageSummary, setLastPassageSummary] = useState(null);
 
   // Student Info State
   const [studentName, setStudentName] = useState(() => {
@@ -42,32 +49,43 @@ export default function Classroom() {
   const timerIntervalRef = useRef(null);
   const startTimeRef = useRef(null);
 
-  // 1. Fetch Active Passage on Mount
+  // 1. Fetch Active Passages on Mount
   useEffect(() => {
-    const fetchActivePassage = async () => {
+    const fetchActivePassages = async () => {
       try {
-        setIsLoadingPassage(true);
-        const res = await fetch(`${API_BASE}/api/classroom/active-passage`);
+        setIsLoadingPassages(true);
+        const res = await fetch(`${API_BASE}/api/classroom/active-passages`);
         if (!res.ok) {
           throw new Error(isEn
-            ? "No active reading passage assigned. Please contact your teacher."
+            ? "No active reading passages found. Please contact your teacher."
             : "Walang aktibong talata sa kasalukuyan. Makipag-ugnayan sa iyong guro."
           );
         }
         const data = await res.json();
-        setActivePassage(data);
-        const duration = parseInt(data.timer_seconds, 10) || 60;
+        const list = (data.passages && data.passages.length > 0) ? data.passages : [];
+
+        if (list.length === 0) {
+          throw new Error(isEn
+            ? "There are no active reading passages assigned for your class. Please ask your teacher to select passages in the Teacher Portal."
+            : "Walang itinalagang aktibong talata para sa iyong klase. Makipag-ugnayan sa iyong guro upang pumili ng mga talata sa Teacher Portal."
+          );
+        }
+
+        setPassagesList(list);
+        setCurrentIndex(0);
+        setActivePassage(list[0]);
+        const duration = parseInt(list[0].timer_seconds, 10) || 60;
         setTotalTimerDuration(duration);
         setTimeLeft(duration);
       } catch (err) {
-        console.error("Error fetching classroom passage:", err);
-        setPassageError(err.message || (isEn ? "Failed to load classroom reading passage." : "Hindi ma-load ang talata sa klase."));
+        console.error("Error fetching classroom passages:", err);
+        setPassageError(err.message || (isEn ? "Failed to load classroom reading passages." : "Hindi ma-load ang mga talata sa klase."));
       } finally {
-        setIsLoadingPassage(false);
+        setIsLoadingPassages(false);
       }
     };
 
-    fetchActivePassage();
+    fetchActivePassages();
   }, [isEn]);
 
   // Cleanup on unmount
@@ -120,7 +138,7 @@ export default function Classroom() {
     renderFrame();
   };
 
-  // 2. Start Assessment Recording
+  // 2. Start Assessment Recording for Current Passage
   const startRecording = async () => {
     if (!studentName.trim()) {
       setIsNameModalOpen(true);
@@ -218,7 +236,7 @@ export default function Classroom() {
     }
   };
 
-  // 4. Send Audio to Backend for Evaluation & Classroom Logging
+  // 4. Send Audio to Backend for Evaluation & Logging
   const handleRecordingStopped = async () => {
     // Stop microphone tracks
     if (streamRef.current) {
@@ -267,7 +285,7 @@ export default function Classroom() {
         return;
       }
 
-      // Calculate Phil-IRI scores matching Results.jsx standard
+      // Calculate Phil-IRI scores for this passage
       const targetWcpm = 150;
       const accRate = parseFloat(result.accuracy_rate) || 0;
       const readWcpm = parseFloat(result.wcpm) || 0;
@@ -278,40 +296,128 @@ export default function Classroom() {
       if (composite >= 90) philIriLevel = "Independent";
       else if (composite >= 75) philIriLevel = "Instructional";
 
-      // Save Student Result to SQLite Database for the Teacher
-      try {
-        await fetch(`${API_BASE}/api/classroom/submit-result`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            passage_id: activePassage.id,
-            student_name: studentName,
-            reading_time_seconds: elapsedSeconds,
-            accuracy_rate: accRate,
-            wcpm: readWcpm,
-            composite_score: composite,
-            reading_level: philIriLevel,
-            total_target_words: result.total_target_words || activePassage.content.trim().split(/\s+/).length,
-            correct_words: result.correct_words || 0,
-            errors_detected: result.errors_detected || 0,
-            stutter_words: result.stutter_words || [],
-            spoken_text: spokenTranscript,
-            trace: result.trace || []
-          })
+      const passageEvalData = {
+        passage_id: activePassage.id,
+        passage_title: activePassage.title,
+        content: activePassage.content,
+        elapsedSeconds,
+        accuracy_rate: accRate,
+        wcpm: readWcpm,
+        composite_score: composite,
+        reading_level: philIriLevel,
+        correct_words: result.correct_words || 0,
+        total_target_words: result.total_target_words || activePassage.content.trim().split(/\s+/).length,
+        errors_detected: result.errors_detected || 0,
+        stutter_words: result.stutter_words || [],
+        spoken_text: spokenTranscript,
+        transcription: spokenTranscript,
+        target_text: activePassage.content,
+        trace: result.trace || [],
+        raw_result: result
+      };
+
+      const updatedResults = [...evalResults, passageEvalData];
+      setEvalResults(updatedResults);
+
+      const hasNextPassage = currentIndex < passagesList.length - 1;
+
+      if (hasNextPassage) {
+        // Show Interstitial Transition to next passage in set
+        const nextPassage = passagesList[currentIndex + 1];
+        setLastPassageSummary({
+          index: currentIndex,
+          title: activePassage.title,
+          accuracy: accRate,
+          wcpm: readWcpm,
+          correct: passageEvalData.correct_words,
+          total: passageEvalData.total_target_words,
+          nextTitle: nextPassage.title,
+          nextTimer: nextPassage.timer_seconds || 10
         });
-      } catch (logErr) {
-        console.warn("Could not save to teacher classroom database:", logErr);
+        setIsBetweenPassages(true);
+      } else {
+        // All Passages in the set are complete!
+        // Calculate consolidated aggregate scores across the entire assessment set:
+        const totalPassages = updatedResults.length;
+        const avgAccuracy = Math.round(
+          updatedResults.reduce((sum, r) => sum + r.accuracy_rate, 0) / totalPassages
+        );
+        const avgWcpm = Math.round(
+          updatedResults.reduce((sum, r) => sum + r.wcpm, 0) / totalPassages
+        );
+        const totalElapsed = updatedResults.reduce((sum, r) => sum + r.elapsedSeconds, 0);
+        const totalCorrect = updatedResults.reduce((sum, r) => sum + r.correct_words, 0);
+        const totalTarget = updatedResults.reduce((sum, r) => sum + r.total_target_words, 0);
+        const totalErrors = updatedResults.reduce((sum, r) => sum + r.errors_detected, 0);
+
+        const allStutters = Array.from(new Set(updatedResults.flatMap(r => r.stutter_words || [])));
+        const allTraces = updatedResults.flatMap(r => r.trace || []);
+
+        const overallAccScore = avgAccuracy * 0.5;
+        const overallFluScore = Math.min((avgWcpm / targetWcpm) * 50, 50);
+        const overallComposite = Math.round(overallAccScore + overallFluScore);
+        let overallPhilIri = "Frustration";
+        if (overallComposite >= 90) overallPhilIri = "Independent";
+        else if (overallComposite >= 75) overallPhilIri = "Instructional";
+
+        const setPassageTitle = totalPassages > 1
+          ? `Set (${totalPassages} Passages): ${updatedResults.map(r => r.passage_title).join(' • ')}`
+          : updatedResults[0].passage_title;
+
+        // Save Consolidated Student Result to SQLite Database for the Teacher
+        try {
+          await fetch(`${API_BASE}/api/classroom/submit-result`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              teacher_id: activePassage.teacher_id,
+              passage_id: activePassage.id,
+              student_name: studentName,
+              passage_title: setPassageTitle,
+              duration_seconds: totalElapsed,
+              accuracy_rate: avgAccuracy,
+              wcpm: avgWcpm,
+              composite_score: overallComposite,
+              reading_level: overallPhilIri,
+              total_target_words: totalTarget,
+              correct_words: totalCorrect,
+              errors_detected: totalErrors,
+              stutter_words: allStutters,
+              trace: allTraces
+            })
+          });
+        } catch (logErr) {
+          console.warn("Could not save to teacher classroom database:", logErr);
+        }
+
+        // Format reading_logs array so Results.jsx can render each passage nicely
+        const logsForResults = updatedResults.map((r, idx) => ({
+          target_text: r.target_text,
+          transcription: r.transcription || r.spoken_text,
+          spoken_text: r.spoken_text,
+          accuracy_rate: r.accuracy_rate,
+          wcpm: r.wcpm,
+          correct_words: r.correct_words,
+          total_target_words: r.total_target_words,
+          errors_detected: r.errors_detected,
+          stutter_words: r.stutter_words,
+          trace: r.trace,
+          level: `Classroom Passage #${idx + 1}: ${r.passage_title}`
+        }));
+
+        // Save to localStorage for standard Results.jsx view
+        localStorage.setItem('user_firstName', studentName);
+        localStorage.setItem('final_accuracy', avgAccuracy.toString());
+        localStorage.setItem('final_wcpm', avgWcpm.toString());
+        localStorage.setItem('evaluated_level', totalPassages > 1
+          ? `Classroom Assessment (${totalPassages} Passages)`
+          : `Classroom - ${activePassage.title}`
+        );
+        localStorage.setItem('reading_logs', JSON.stringify(logsForResults));
+
+        // Redirect to Results Page
+        navigate('/results');
       }
-
-      // Save to localStorage for standard Results.jsx view
-      localStorage.setItem('user_firstName', studentName);
-      localStorage.setItem('final_accuracy', accRate.toString());
-      localStorage.setItem('final_wcpm', readWcpm.toString());
-      localStorage.setItem('evaluated_level', `Classroom - ${activePassage.title}`);
-      localStorage.setItem('reading_logs', JSON.stringify([result]));
-
-      // Redirect to Results Page
-      navigate('/results');
 
     } catch (err) {
       console.error("Evaluation error:", err);
@@ -325,6 +431,22 @@ export default function Classroom() {
     }
   };
 
+  // Proceed to next passage in the active set
+  const handleProceedToNextPassage = () => {
+    const nextIdx = currentIndex + 1;
+    if (nextIdx < passagesList.length) {
+      const nextPassage = passagesList[nextIdx];
+      setCurrentIndex(nextIdx);
+      setActivePassage(nextPassage);
+      const duration = parseInt(nextPassage.timer_seconds, 10) || 60;
+      setTotalTimerDuration(duration);
+      setTimeLeft(duration);
+      setIsBetweenPassages(false);
+      setLastPassageSummary(null);
+      setIsSilenceError(false);
+    }
+  };
+
   const handleSaveStudentName = (e) => {
     e.preventDefault();
     if (!tempName.trim()) return;
@@ -334,12 +456,12 @@ export default function Classroom() {
   };
 
   // Loading Screen
-  if (isLoadingPassage) {
+  if (isLoadingPassages) {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col items-center justify-center p-6">
         <div className="w-16 h-16 border-4 border-[#0096FF] border-t-transparent rounded-full animate-spin mb-4"></div>
         <h2 className="text-xl font-bold text-slate-900">
-          {isEn ? "Fetching active reading passage from teacher..." : "Kinukuha ang aktibong talata mula sa guro..."}
+          {isEn ? "Fetching classroom reading assignment from teacher..." : "Kinukuha ang takdang talata mula sa guro..."}
         </h2>
         <p className="text-gray-500 text-sm mt-1">Connecting to Classroom Assessment Service</p>
       </div>
@@ -347,7 +469,7 @@ export default function Classroom() {
   }
 
   // Error Screen
-  if (passageError || !activePassage) {
+  if (passageError || !activePassage || passagesList.length === 0) {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col items-center justify-center p-6 text-center">
         <div className="bg-white border border-red-200 p-8 rounded-3xl max-w-lg shadow-xl shadow-red-50/50">
@@ -357,11 +479,11 @@ export default function Classroom() {
             </svg>
           </div>
           <h2 className="text-2xl font-black text-slate-900 mb-3">
-            {isEn ? "No Active Passage" : "Walang Aktibong Talata"}
+            {isEn ? "No Active Passages" : "Walang Aktibong Talata"}
           </h2>
           <p className="text-gray-600 mb-6 text-base leading-relaxed">
             {passageError || (isEn
-              ? "There is no active reading passage assigned currently. Please contact your teacher to set an active passage in the Teacher Portal."
+              ? "There are no active reading passages assigned currently. Please contact your teacher to set active passages in the Teacher Portal."
               : "Walang itinalagang aktibong talata sa kasalukuyan. Makipag-ugnayan sa iyong guro upang i-set ang aktibong babasahin sa Teacher Portal."
             )}
           </p>
@@ -379,7 +501,7 @@ export default function Classroom() {
   }
 
   // Timer Color logic
-  const timerPercentage = (timeLeft / totalTimerDuration) * 100;
+  const timerPercentage = totalTimerDuration > 0 ? (timeLeft / totalTimerDuration) * 100 : 0;
   const isTimeCritical = timeLeft <= 10;
 
   return (
@@ -395,6 +517,11 @@ export default function Classroom() {
           <span className="text-xs uppercase px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-bold tracking-wider">
             {isEn ? "Classroom Mode" : "Modo ng Klase"}
           </span>
+          {passagesList.length > 1 && (
+            <span className="hidden sm:inline-flex text-xs font-bold text-slate-700 bg-gray-100 border border-gray-200 px-3 py-0.5 rounded-full">
+              {isEn ? `Passage ${currentIndex + 1} of ${passagesList.length}` : `Talata ${currentIndex + 1} sa ${passagesList.length}`}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center space-x-4">
@@ -417,15 +544,62 @@ export default function Classroom() {
       </header>
 
       {/* Main Reading Container */}
-      <main className="relative z-20 max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+      <main className="relative z-20 max-w-4xl mx-auto px-4 sm:px-6 py-8 sm:py-10">
+        
+        {/* Multi-Passage Sequence Progress Bar */}
+        {passagesList.length > 1 && (
+          <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                {isEn ? "Assessment Progress:" : "Progreso sa Pagsusulit:"}
+              </span>
+              <span className="text-sm font-extrabold text-[#0096FF]">
+                {currentIndex + 1} / {passagesList.length}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              {passagesList.map((p, idx) => {
+                const isDone = idx < currentIndex;
+                const isCurrent = idx === currentIndex;
+                return (
+                  <div
+                    key={p.id || idx}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
+                      isDone
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : isCurrent
+                        ? 'bg-blue-50 text-[#0096FF] border border-blue-200 ring-2 ring-blue-500/20'
+                        : 'bg-gray-50 text-gray-400 border border-gray-200'
+                    }`}
+                  >
+                    <span>#{idx + 1}</span>
+                    <span className="truncate max-w-[90px]">{p.title}</span>
+                    {isDone && (
+                      <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"/>
+                      </svg>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Assignment Card Header */}
         <div className="bg-white border border-gray-200/90 rounded-3xl p-6 sm:p-8 shadow-xl shadow-blue-50/50 mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-gray-100">
             <div>
-              <div className="flex items-center gap-2 mb-1.5">
-                <span className="text-xs font-bold text-[#0096FF] uppercase tracking-wider bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-100">
+              <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                <span className="text-xs font-bold text-[#0096FF] uppercase bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-100">
                   {activePassage.grade_level || "General"}
                 </span>
+                {passagesList.length > 1 && (
+                  <span className="text-xs font-extrabold text-slate-800 bg-gray-100 px-2.5 py-0.5 rounded-md border border-gray-200">
+                    {isEn ? `Passage ${currentIndex + 1} of ${passagesList.length}` : `Talata ${currentIndex + 1} sa ${passagesList.length}`}
+                  </span>
+                )}
                 <span className="text-xs text-gray-500">
                   {isEn ? "Assigned by:" : "Itinalaga ni:"} <strong className="text-slate-700">{activePassage.teacher_name || (isEn ? "Teacher" : "Guro")}</strong>
                 </span>
@@ -524,6 +698,72 @@ export default function Classroom() {
           </div>
         </div>
       </main>
+
+      {/* Interstitial Modal Between Passages */}
+      {isBetweenPassages && lastPassageSummary && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl animate-in zoom-in-95 duration-200 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-4 border border-emerald-200">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+
+            <div className="text-xs uppercase font-extrabold tracking-wider text-emerald-600 mb-1">
+              {isEn
+                ? `Passage ${lastPassageSummary.index + 1} of ${passagesList.length} Complete`
+                : `Natapos ang Talata ${lastPassageSummary.index + 1} sa ${passagesList.length}`}
+            </div>
+
+            <h3 className="text-2xl font-black text-slate-900 mb-4">
+              {lastPassageSummary.title}
+            </h3>
+
+            {/* Quick Metrics Grid */}
+            <div className="grid grid-cols-3 gap-3 bg-gray-50 border border-gray-200 rounded-2xl p-4 mb-6">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-gray-400">Accuracy</span>
+                <div className="text-xl font-black text-[#0096FF]">{Math.round(lastPassageSummary.accuracy)}%</div>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-gray-400">WCPM</span>
+                <div className="text-xl font-black text-slate-800">{Math.round(lastPassageSummary.wcpm)}</div>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-gray-400">Words</span>
+                <div className="text-xl font-black text-slate-800">{lastPassageSummary.correct}/{lastPassageSummary.total}</div>
+              </div>
+            </div>
+
+            {/* Next Passage Preview */}
+            <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-4 mb-6 text-left">
+              <div className="text-xs font-bold text-[#0096FF] uppercase mb-1">
+                {isEn ? "Up Next in Assessment Set:" : "Susunod sa Pagsusulit:"}
+              </div>
+              <div className="text-base font-bold text-slate-900">
+                {lastPassageSummary.nextTitle}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                {isEn ? `Timer limit: ${lastPassageSummary.nextTimer} seconds` : `Takdang oras: ${lastPassageSummary.nextTimer} segundo`}
+              </div>
+            </div>
+
+            <button
+              onClick={handleProceedToNextPassage}
+              className="w-full py-4 bg-gradient-to-r from-blue-600 to-[#0096FF] hover:from-blue-700 hover:to-blue-600 text-white font-black text-base rounded-2xl shadow-lg shadow-blue-500/25 transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+            >
+              <span>
+                {isEn
+                  ? `Proceed to Passage ${currentIndex + 2} of ${passagesList.length}`
+                  : `Magpatuloy sa Talata ${currentIndex + 2} sa ${passagesList.length}`}
+              </span>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Student Name Modal */}
       {isNameModalOpen && (

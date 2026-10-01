@@ -2681,14 +2681,42 @@ def teacher_set_global_timer():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# 3. Public Classroom Mode Endpoint (Student Reads Active Passage)
+@app.route('/api/teacher/passages/<int:passage_id>/toggle-active', methods=['POST'])
+def teacher_toggle_passage_active(passage_id):
+    data = request.json or {}
+    teacher_id = data.get('teacher_id')
+    if not teacher_id:
+        return jsonify({"error": "teacher_id required"}), 400
+    result = database.toggle_passage_active(passage_id, teacher_id)
+    return jsonify(result), 200 if result.get('success') else 400
+
+@app.route('/api/teacher/passages/set-active-set', methods=['POST'])
+def teacher_set_active_passages_set():
+    data = request.json or {}
+    teacher_id = data.get('teacher_id')
+    passage_ids = data.get('passage_ids', [])
+    if not teacher_id:
+        return jsonify({"error": "teacher_id required"}), 400
+    result = database.set_active_passages(teacher_id, passage_ids)
+    return jsonify(result), 200 if result.get('success') else 400
+
+# 3. Public Classroom Mode Endpoint (Student Reads Active Passage Set)
+@app.route('/api/classroom/active-passages', methods=['GET'])
+def classroom_active_passages():
+    teacher_id = request.args.get('teacher_id', type=int)
+    passages = database.get_active_passages(teacher_id)
+    return jsonify({"passages": passages}), 200
+
 @app.route('/api/classroom/active-passage', methods=['GET'])
 def classroom_active_passage():
     teacher_id = request.args.get('teacher_id', type=int)
-    passage = database.get_active_passage(teacher_id)
-    if not passage:
+    passages = database.get_active_passages(teacher_id)
+    if not passages:
         return jsonify({"error": "No active passage found. Please contact your teacher."}), 404
-    return jsonify(passage), 200
+    first_passage = dict(passages[0])
+    first_passage["passages"] = passages
+    first_passage["total_passages"] = len(passages)
+    return jsonify(first_passage), 200
 
 # 4. Student Results Logging & Monitoring
 @app.route('/api/classroom/submit-result', methods=['POST'])
@@ -2702,7 +2730,9 @@ def classroom_submit_result():
     wcpm = data.get('wcpm', 0.0)
     composite_score = data.get('composite_score', 0.0)
     reading_level = data.get('reading_level', 'Instructional')
-    duration_seconds = data.get('duration_seconds', 0.0)
+    duration_seconds = data.get('duration_seconds')
+    if duration_seconds is None:
+        duration_seconds = data.get('reading_time_seconds', 0.0)
     correct_words = data.get('correct_words', 0)
     total_target_words = data.get('total_target_words', 0)
     errors_detected = data.get('errors_detected', 0)

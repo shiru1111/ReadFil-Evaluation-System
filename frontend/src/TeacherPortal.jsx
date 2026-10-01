@@ -100,6 +100,13 @@ export default function TeacherPortal() {
   const [bankCategory, setBankCategory] = useState('all');
   const [bankSearch, setBankSearch] = useState('');
   const [bankImportingId, setBankImportingId] = useState(null);
+  const [bankSelectedIds, setBankSelectedIds] = useState([]);
+  const [bankBatchImporting, setBankBatchImporting] = useState(false);
+
+  // Set Configuration Modal State
+  const [isManageSetModalOpen, setIsManageSetModalOpen] = useState(false);
+  const [tempActiveIds, setTempActiveIds] = useState([]);
+  const [isSavingSet, setIsSavingSet] = useState(false);
 
   // Student Records State
   const [records, setRecords] = useState([]);
@@ -365,7 +372,58 @@ export default function TeacherPortal() {
     }
   };
 
-  // Set Passage as Active for Classroom Mode
+  // Toggle passage active state in assessment set
+  const handleTogglePassageActive = async (passageId) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/passages/${passageId}/toggle-active`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacher_id: teacher.id })
+      });
+      if (res.ok) {
+        fetchPassages();
+      }
+    } catch (err) {
+      console.error("Error toggling passage active state:", err);
+    }
+  };
+
+  // Select all passages for classroom assessment
+  const handleSelectAllPassages = async () => {
+    if (!teacher || passages.length === 0) return;
+    try {
+      const allIds = passages.map(p => p.id);
+      const res = await fetch(`${API_BASE}/api/teacher/passages/set-active-set`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacher_id: teacher.id, passage_ids: allIds })
+      });
+      if (res.ok) {
+        fetchPassages();
+      }
+    } catch (err) {
+      console.error("Error selecting all passages:", err);
+    }
+  };
+
+  // Deselect all passages from assessment set
+  const handleClearAllPassages = async () => {
+    if (!teacher) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/passages/set-active-set`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacher_id: teacher.id, passage_ids: [] })
+      });
+      if (res.ok) {
+        fetchPassages();
+      }
+    } catch (err) {
+      console.error("Error clearing all passages:", err);
+    }
+  };
+
+  // Set Single Passage as Active for Classroom Mode
   const handleActivatePassage = async (passageId) => {
     try {
       const res = await fetch(`${API_BASE}/api/teacher/passages/${passageId}/activate`, {
@@ -400,7 +458,7 @@ export default function TeacherPortal() {
   };
 
   // Import Passage from built-in repository (Choose from our passages)
-  const handleImportFromBank = async (item) => {
+  const handleImportFromBank = async (item, makeActive = false) => {
     if (!teacher) return;
     setBankImportingId(item.id);
     try {
@@ -414,7 +472,7 @@ export default function TeacherPortal() {
           content: item.content,
           grade_level: item.grade || 'General',
           timer_seconds: timerVal,
-          is_active: passages.length === 0
+          is_active: makeActive || passages.length === 0
         })
       });
       if (res.ok) {
@@ -425,6 +483,77 @@ export default function TeacherPortal() {
       console.error("Error importing passage from bank:", err);
     } finally {
       setBankImportingId(null);
+    }
+  };
+
+  // Batch import multiple selected passages from bank
+  const handleBatchImportFromBank = async (makeActive = true) => {
+    if (!teacher || bankSelectedIds.length === 0) return;
+    setBankBatchImporting(true);
+    try {
+      const timerVal = Math.max(5, parseInt(globalTimerDuration, 10) || 10);
+      for (const id of bankSelectedIds) {
+        const item = systemPassageCatalog.find(p => p.id === id);
+        if (item) {
+          await fetch(`${API_BASE}/api/teacher/passages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              teacher_id: teacher.id,
+              title: item.title,
+              content: item.content,
+              grade_level: item.grade || 'General',
+              timer_seconds: timerVal,
+              is_active: makeActive
+            })
+          });
+        }
+      }
+      fetchPassages();
+      setBankSelectedIds([]);
+      setIsPassageBankModalOpen(false);
+    } catch (err) {
+      console.error("Error in batch importing passages:", err);
+    } finally {
+      setBankBatchImporting(false);
+    }
+  };
+
+  const handleToggleBankSelect = (id) => {
+    setBankSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  // Open Configure Assessment Set Modal
+  const openManageSetModal = () => {
+    setTempActiveIds(passages.filter(p => p.is_active).map(p => p.id));
+    setIsManageSetModalOpen(true);
+  };
+
+  const handleToggleTempActiveId = (id) => {
+    setTempActiveIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const handleSaveActiveSet = async () => {
+    if (!teacher) return;
+    setIsSavingSet(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/passages/set-active-set`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacher_id: teacher.id, passage_ids: tempActiveIds })
+      });
+      if (res.ok) {
+        setIsManageSetModalOpen(false);
+        fetchPassages();
+      }
+    } catch (err) {
+      console.error("Error saving active set:", err);
+    } finally {
+      setIsSavingSet(false);
     }
   };
 
@@ -971,6 +1100,49 @@ export default function TeacherPortal() {
               </div>
             </div>
 
+            {/* Active Assessment Set Summary Bar */}
+            {passages.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-blue-50/70 border border-blue-200/80 rounded-2xl px-5 py-3.5 mb-6 shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="text-sm font-extrabold text-slate-800">
+                    {isEn ? "Classroom Assessment Set:" : "Pagsusulit ng Klase:"}
+                  </span>
+                  <span className="text-sm font-black text-[#0096FF]">
+                    {passages.filter(p => p.is_active).length} {isEn ? "Passage(s) Active" : "Talata ang Napili"}
+                  </span>
+                  <span className="text-xs text-gray-500 hidden sm:inline">
+                    {isEn ? "(Students will read these in sequence)" : "(Babasahin ito ng mag-aaral nang sunod-sunod)"}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={openManageSetModal}
+                    className="text-xs font-bold text-[#0096FF] bg-white border border-[#0096FF]/40 hover:bg-blue-50 px-3 py-1.5 rounded-xl transition-all shadow-sm flex items-center gap-1.5"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                    {isEn ? "Configure Assessment Set" : "Isaayos ang Pagsusulit"}
+                  </button>
+                  <button
+                    onClick={handleSelectAllPassages}
+                    className="text-xs font-bold text-[#0096FF] hover:underline px-2.5 py-1 rounded-lg hover:bg-blue-100 transition-colors"
+                  >
+                    {isEn ? "Select All" : "Piliin Lahat"}
+                  </button>
+                  <span className="text-gray-300">|</span>
+                  <button
+                    onClick={handleClearAllPassages}
+                    className="text-xs font-bold text-gray-600 hover:text-red-600 hover:underline px-2.5 py-1 rounded-lg hover:bg-red-50 transition-colors"
+                  >
+                    {isEn ? "Deselect All" : "Alisin Lahat"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Passage Cards Grid */}
             {passages.length === 0 ? (
               <div className="bg-white border border-gray-200 rounded-3xl p-12 text-center shadow-sm">
@@ -1004,6 +1176,8 @@ export default function TeacherPortal() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {passages.map((p) => {
                   const wordCount = p.content.trim().split(/\s+/).length;
+                  const activeList = passages.filter(x => x.is_active);
+                  const activeSeq = activeList.findIndex(x => x.id === p.id) + 1;
                   return (
                     <div
                       key={p.id}
@@ -1021,12 +1195,12 @@ export default function TeacherPortal() {
                           </span>
                           {p.is_active ? (
                             <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
-                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-                              {isEn ? "ACTIVE FOR CLASS" : "AKTIBO SA KLASE"}
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                              {isEn ? `Passage #${activeSeq} in Set` : `Talata #${activeSeq} sa Set`}
                             </span>
                           ) : (
                             <span className="text-xs font-semibold text-gray-400">
-                              {isEn ? "Inactive" : "Hindi Aktibo"}
+                              {isEn ? "Not in Assessment" : "Hindi Kasama"}
                             </span>
                           )}
                         </div>
@@ -1054,17 +1228,30 @@ export default function TeacherPortal() {
 
                       {/* Card Action Buttons */}
                       <div className="flex flex-col gap-2">
-                        {!p.is_active && (
-                          <button
-                            onClick={() => handleActivatePassage(p.id)}
-                            className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
-                          >
-                            <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                            </svg>
-                            {isEn ? "Set as Active for Class" : "Gawing Aktibo para sa Klase"}
-                          </button>
-                        )}
+                        <button
+                          onClick={() => handleTogglePassageActive(p.id)}
+                          className={`w-full py-2.5 border rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                            p.is_active
+                              ? 'bg-emerald-50 hover:bg-red-50 text-emerald-700 hover:text-red-700 border-emerald-300 hover:border-red-300'
+                              : 'bg-white hover:bg-emerald-50 text-gray-700 hover:text-emerald-700 border-gray-300 hover:border-emerald-300 shadow-sm'
+                          }`}
+                        >
+                          {p.is_active ? (
+                            <>
+                              <svg className="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                              </svg>
+                              <span>{isEn ? "In Assessment (Click to Remove)" : "Kasama sa Pagsusulit (I-click para Alisin)"}</span>
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                              </svg>
+                              <span>{isEn ? "Add to Class Assessment Set" : "Isama sa Pagsusulit ng Klase"}</span>
+                            </>
+                          )}
+                        </button>
                         <div className="flex gap-2">
                           <button
                             onClick={() => openEditModal(p)}
@@ -1289,6 +1476,43 @@ export default function TeacherPortal() {
               </div>
             </div>
 
+            {/* Batch Selection Toolbar */}
+            {bankSelectedIds.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-blue-50 border border-blue-200 rounded-2xl p-3 mb-4 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#0096FF] animate-pulse"></span>
+                  <span className="text-xs font-black text-slate-800">
+                    {bankSelectedIds.length} {isEn ? "passages selected" : "talata ang napili"}
+                  </span>
+                  <button
+                    onClick={() => setBankSelectedIds([])}
+                    className="text-xs text-gray-500 hover:text-red-600 underline ml-2 font-medium"
+                  >
+                    {isEn ? "Clear Selection" : "Alisin ang Pagkakapili"}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleBatchImportFromBank(false)}
+                    disabled={bankBatchImporting}
+                    className="px-3 py-1.5 bg-white border border-gray-300 text-slate-700 hover:bg-gray-50 text-xs font-bold rounded-xl transition-all shadow-sm disabled:opacity-50"
+                  >
+                    {isEn ? "Add to Library Only" : "Idagdag sa Library Lamang"}
+                  </button>
+                  <button
+                    onClick={() => handleBatchImportFromBank(true)}
+                    disabled={bankBatchImporting}
+                    className="px-4 py-1.5 bg-[#0096FF] hover:bg-blue-600 text-white text-xs font-bold rounded-xl shadow-md shadow-blue-500/20 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                    </svg>
+                    {isEn ? "Add to Class Assessment Set" : "Idagdag sa Pagsusulit ng Klase"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Passages List */}
             <div className="flex-1 overflow-y-auto space-y-3.5 pr-2">
               {filteredBankPassages.length === 0 ? (
@@ -1298,48 +1522,198 @@ export default function TeacherPortal() {
               ) : (
                 filteredBankPassages.map((item) => {
                   const words = item.content.trim().split(/\s+/).length;
+                  const isChecked = bankSelectedIds.includes(item.id);
                   return (
                     <div
                       key={item.id}
-                      className="bg-gray-50/70 border border-gray-200 rounded-2xl p-4 sm:p-5 hover:border-blue-300 transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
+                      className={`border rounded-2xl p-4 sm:p-5 transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${
+                        isChecked
+                          ? 'bg-blue-50/50 border-[#0096FF] shadow-sm'
+                          : 'bg-gray-50/70 border-gray-200 hover:border-blue-300'
+                      }`}
                     >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <span className="text-[11px] font-bold text-[#0096FF] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">
-                            {item.level}
-                          </span>
-                          <span className="text-xs text-gray-400">&bull;</span>
-                          <span className="text-xs text-gray-500">{item.source}</span>
-                          <span className="text-xs text-gray-400">&bull;</span>
-                          <span className="text-xs font-semibold text-gray-600">{words} {isEn ? "words" : "salita"}</span>
+                      <div className="flex items-start gap-3 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => handleToggleBankSelect(item.id)}
+                          className="mt-1 w-4 h-4 text-[#0096FF] rounded border-gray-300 focus:ring-[#0096FF] cursor-pointer"
+                        />
+                        <div className="flex-1">
+                          <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                            <span className="text-[11px] font-bold text-[#0096FF] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">
+                              {item.level}
+                            </span>
+                            <span className="text-xs text-gray-400">&bull;</span>
+                            <span className="text-xs text-gray-500">{item.source}</span>
+                            <span className="text-xs text-gray-400">&bull;</span>
+                            <span className="text-xs font-semibold text-gray-600">{words} {isEn ? "words" : "salita"}</span>
+                          </div>
+                          <h4 className="text-base font-bold text-slate-900 mb-1">{item.title}</h4>
+                          <p className="text-slate-600 text-xs line-clamp-2 leading-relaxed font-serif">
+                            {item.content}
+                          </p>
                         </div>
-                        <h4 className="text-base font-bold text-slate-900 mb-1">{item.title}</h4>
-                        <p className="text-slate-600 text-xs line-clamp-2 leading-relaxed font-serif">
-                          {item.content}
-                        </p>
                       </div>
 
-                      <button
-                        onClick={() => handleImportFromBank(item)}
-                        disabled={bankImportingId === item.id}
-                        className="px-4 py-2.5 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl text-xs whitespace-nowrap shadow-sm transition-all hover:scale-[1.02] disabled:opacity-50"
-                      >
-                        {bankImportingId === item.id
-                          ? (isEn ? "Adding..." : "Idinadagdag...")
-                          : (isEn ? "Add to My Passages" : "Idagdag sa Aking Talata")}
-                      </button>
+                      <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                        <button
+                          onClick={() => handleImportFromBank(item, false)}
+                          disabled={bankImportingId === item.id}
+                          className="px-3 py-2 bg-white hover:bg-gray-100 text-slate-700 border border-gray-300 font-bold rounded-xl text-xs whitespace-nowrap shadow-sm transition-all disabled:opacity-50"
+                        >
+                          {isEn ? "Library Only" : "Library Lamang"}
+                        </button>
+                        <button
+                          onClick={() => handleImportFromBank(item, true)}
+                          disabled={bankImportingId === item.id}
+                          className="px-4 py-2 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl text-xs whitespace-nowrap shadow-md shadow-blue-500/20 transition-all flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                          </svg>
+                          {bankImportingId === item.id
+                            ? (isEn ? "Adding..." : "Idinadagdag...")
+                            : (isEn ? "Add to Class Set" : "Idagdag sa Set ng Klase")}
+                        </button>
+                      </div>
                     </div>
                   );
                 })
               )}
             </div>
 
-            <div className="pt-4 mt-4 border-t border-gray-200 text-right">
+            <div className="pt-4 mt-4 border-t border-gray-200 flex justify-between items-center">
+              <span className="text-xs text-gray-500">
+                {isEn
+                  ? `${filteredBankPassages.length} passages available in Phil-IRI bank`
+                  : `${filteredBankPassages.length} talata ang maaaring piliin`}
+              </span>
               <button
                 onClick={() => setIsPassageBankModalOpen(false)}
                 className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-slate-700 font-bold rounded-full text-xs transition-colors"
               >
                 {isEn ? "Close" : "Isara"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* -------------------------------------------------------------
+          MODAL: CONFIGURE CLASSROOM ASSESSMENT SET
+          ------------------------------------------------------------- */}
+      {isManageSetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-start mb-4 pb-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-2xl font-black text-slate-900">
+                  {isEn ? "Configure Classroom Assessment Set" : "Isaayos ang Pagsusulit ng Klase"}
+                </h3>
+                <p className="text-gray-500 text-sm mt-0.5">
+                  {isEn
+                    ? "Select the passages that students will read sequentially in Classroom Mode."
+                    : "Piliin ang mga talatang babasahin ng mag-aaral nang sunod-sunod sa Classroom Mode."}
+                </p>
+              </div>
+              <button
+                onClick={() => setIsManageSetModalOpen(false)}
+                className="p-2 text-gray-400 hover:text-slate-900 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 mb-4 bg-blue-50/60 border border-blue-200 rounded-2xl p-3">
+              <span className="text-xs font-bold text-[#0096FF]">
+                {tempActiveIds.length} {isEn ? "of" : "sa"} {passages.length} {isEn ? "passages active in assessment set" : "talata ang kasama sa pagsusulit"}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTempActiveIds(passages.map(p => p.id))}
+                  className="text-xs font-bold text-[#0096FF] hover:underline px-2 py-1"
+                >
+                  {isEn ? "Select All" : "Piliin Lahat"}
+                </button>
+                <span className="text-gray-300">|</span>
+                <button
+                  type="button"
+                  onClick={() => setTempActiveIds([])}
+                  className="text-xs font-bold text-gray-600 hover:text-red-600 hover:underline px-2 py-1"
+                >
+                  {isEn ? "Clear All" : "Alisin Lahat"}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-2">
+              {passages.map((p) => {
+                const isChecked = tempActiveIds.includes(p.id);
+                const order = isChecked ? tempActiveIds.indexOf(p.id) + 1 : null;
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => handleToggleTempActiveId(p.id)}
+                    className={`flex items-center justify-between p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                      isChecked
+                        ? 'bg-blue-50/50 border-[#0096FF] shadow-sm'
+                        : 'bg-white border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {}}
+                        className="w-4 h-4 text-[#0096FF] rounded border-gray-300 focus:ring-[#0096FF] cursor-pointer"
+                      />
+                      <div>
+                        <div className="text-sm font-bold text-slate-900">{p.title}</div>
+                        <div className="text-xs text-gray-500 flex items-center gap-2 mt-0.5">
+                          <span>{p.grade_level || "General"}</span>
+                          <span>&bull;</span>
+                          <span>{p.timer_seconds || 60}s timer</span>
+                          <span>&bull;</span>
+                          <span>{p.content.trim().split(/\s+/).length} words</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {isChecked ? (
+                      <span className="text-xs font-extrabold text-[#0096FF] bg-blue-100 border border-blue-200 px-2.5 py-0.5 rounded-full">
+                        Passage #{order}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">
+                        {isEn ? "Inactive" : "Hindi Aktibo"}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="pt-4 mt-4 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsManageSetModalOpen(false)}
+                className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-slate-700 font-bold rounded-xl text-xs transition-colors"
+              >
+                {isEn ? "Cancel" : "Kanselahin"}
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveActiveSet}
+                disabled={isSavingSet}
+                className="px-6 py-2.5 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl text-xs shadow-md shadow-blue-500/25 transition-all disabled:opacity-50"
+              >
+                {isSavingSet
+                  ? (isEn ? "Saving..." : "Inililigtas...")
+                  : (isEn ? `Save Assessment Set (${tempActiveIds.length})` : `I-save ang Pagsusulit (${tempActiveIds.length})`)}
               </button>
             </div>
           </div>

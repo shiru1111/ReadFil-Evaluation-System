@@ -286,6 +286,44 @@ def activate_passage(passage_id, teacher_id):
     finally:
         conn.close()
 
+def toggle_passage_active(passage_id, teacher_id):
+    """Toggles active state of a passage for the class assessment set."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE custom_passages
+            SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END
+            WHERE id = ? AND teacher_id = ?
+        """, (passage_id, teacher_id))
+        conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def set_active_passages(teacher_id, passage_ids):
+    """Sets a specific list of passage IDs as the active assessment set."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE custom_passages SET is_active = 0 WHERE teacher_id = ?", (teacher_id,))
+        if passage_ids:
+            clean_ids = [int(pid) for pid in passage_ids]
+            placeholders = ','.join(['?'] * len(clean_ids))
+            cursor.execute(f"""
+                UPDATE custom_passages
+                SET is_active = 1
+                WHERE teacher_id = ? AND id IN ({placeholders})
+            """, [teacher_id] + clean_ids)
+        conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
 def update_all_passages_timer(teacher_id, timer_seconds):
     """Sets the timer duration for all passages owned by the teacher."""
     conn = get_db_connection()
@@ -303,11 +341,9 @@ def update_all_passages_timer(teacher_id, timer_seconds):
     finally:
         conn.close()
 
-def get_active_passage(teacher_id=None):
+def get_active_passages(teacher_id=None):
     """
-    Returns the currently active passage.
-    If teacher_id is provided, gets that teacher's active passage.
-    Otherwise, returns the latest active passage in the system or the fallback default.
+    Returns all currently active passages for the classroom assessment set.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -318,7 +354,7 @@ def get_active_passage(teacher_id=None):
                 FROM custom_passages p
                 JOIN teachers t ON p.teacher_id = t.id
                 WHERE p.teacher_id = ? AND p.is_active = 1
-                LIMIT 1
+                ORDER BY p.id ASC
             """, (teacher_id,))
         else:
             cursor.execute("""
@@ -326,15 +362,13 @@ def get_active_passage(teacher_id=None):
                 FROM custom_passages p
                 JOIN teachers t ON p.teacher_id = t.id
                 WHERE p.is_active = 1
-                ORDER BY p.id DESC
-                LIMIT 1
+                ORDER BY p.id ASC
             """)
-        
-        row = cursor.fetchone()
-        if row:
-            return dict(row)
-        
-        # If none marked active, return the most recent passage
+        rows = cursor.fetchall()
+        if rows:
+            return [dict(r) for r in rows]
+
+        # If none marked active, fallback to the latest passage as a single item list
         cursor.execute("""
             SELECT p.*, t.name as teacher_name
             FROM custom_passages p
@@ -343,9 +377,16 @@ def get_active_passage(teacher_id=None):
             LIMIT 1
         """)
         fallback_row = cursor.fetchone()
-        return dict(fallback_row) if fallback_row else None
+        return [dict(fallback_row)] if fallback_row else []
     finally:
         conn.close()
+
+def get_active_passage(teacher_id=None):
+    """
+    Returns the currently active passage (or the first in the active set).
+    """
+    passages = get_active_passages(teacher_id)
+    return passages[0] if passages else None
 
 # =================================================================
 # STUDENT RESULTS LOGGING & MONITORING
