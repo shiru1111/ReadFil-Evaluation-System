@@ -296,10 +296,6 @@ export default function App() {
           <div className="mb-8 bg-gradient-to-r from-blue-600 via-indigo-600 to-[#0096FF] p-[2px] rounded-2xl sm:rounded-[2rem] shadow-xl hover:-translate-y-2 transition-transform">
             <div className="bg-white p-6 sm:p-8 lg:p-10 rounded-2xl sm:rounded-[2rem] flex flex-col md:flex-row items-center justify-between text-center md:text-left h-full w-full">
               <div className="mb-6 md:mb-0 md:mr-8">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-xs font-black uppercase tracking-wider mb-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-600 animate-ping"></span>
-                  {t('levels.classroom_badge')}
-                </div>
                 <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mb-2">
                   {t('levels.classroom') || 'Classroom Mode'}
                 </h3>

@@ -161,12 +161,9 @@ export default function TeacherPortal() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || (isEn ? "Failed to complete registration." : "Hindi ma-proseso ang pagrehistro."));
+        throw new Error(data.error || (isEn ? "Registration failed." : "Nabigo ang pagpaparehistro."));
       }
-      setAuthSuccess(isEn
-        ? "Registration successful! You may now log in with your credentials."
-        : "Matagumpay na nakarehistro! Maaari ka nang mag-login gamit ang iyong account."
-      );
+      setAuthSuccess(isEn ? "Account registered successfully! You can now log in." : "Matagumpay na narehistro ang account! Maaari ka nang mag-login.");
       setAuthMode('login');
       setLoginUsername(regUsername);
     } catch (err) {
@@ -176,13 +173,17 @@ export default function TeacherPortal() {
     }
   };
 
-  // Handle Forgot Password - Step 1: Query security question
+  // Handle Forgot Password - Step 1: Query Question
   const handleForgotStep1 = async (e) => {
     e.preventDefault();
     setAuthLoading(true);
     setAuthError('');
     try {
-      const res = await fetch(`${API_BASE}/api/teacher/security-question/${encodeURIComponent(forgotUsername)}`);
+      const res = await fetch(`${API_BASE}/api/teacher/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: forgotUsername })
+      });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || (isEn ? "Username not found." : "Hindi nahanap ang username."));
@@ -196,13 +197,13 @@ export default function TeacherPortal() {
     }
   };
 
-  // Handle Forgot Password - Step 2: Reset password
+  // Handle Forgot Password - Step 2: Reset
   const handleForgotStep2 = async (e) => {
     e.preventDefault();
     setAuthLoading(true);
     setAuthError('');
     try {
-      const res = await fetch(`${API_BASE}/api/teacher/forgot-password/reset`, {
+      const res = await fetch(`${API_BASE}/api/teacher/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -213,14 +214,10 @@ export default function TeacherPortal() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || (isEn ? "Could not reset password." : "Hindi maitakda ang bagong password."));
+        throw new Error(data.error || (isEn ? "Verification failed." : "Nabigo ang beripikasyon."));
       }
-      setAuthSuccess(isEn
-        ? "Password successfully reset! You can now log in."
-        : "Matagumpay na napalitan ang iyong password! Maaari ka nang mag-login."
-      );
+      setAuthSuccess(isEn ? "Password reset successfully! Please log in." : "Matagumpay na nabago ang password! Pakisuyong mag-login.");
       setAuthMode('login');
-      setLoginUsername(forgotUsername);
       setForgotStep(1);
     } catch (err) {
       setAuthError(err.message);
@@ -229,12 +226,13 @@ export default function TeacherPortal() {
     }
   };
 
+  // Logout
   const handleLogout = () => {
-    localStorage.removeItem('readfil_teacher');
     setTeacher(null);
+    localStorage.removeItem('readfil_teacher');
   };
 
-  // Save / Update Custom Passage
+  // Create or Update Passage
   const handleSavePassage = async (e) => {
     e.preventDefault();
     if (!passageTitle.trim() || !passageContent.trim()) return;
@@ -359,53 +357,53 @@ export default function TeacherPortal() {
   // -------------------------------------------------------------
   if (!teacher) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white font-sans relative flex flex-col justify-between">
-        <SoundWaveBackground opacity={0.15} />
+      <div className="min-h-screen bg-slate-50/60 text-slate-900 font-sans relative flex flex-col justify-between">
+        <SoundWaveBackground opacity={0.08} />
 
         {/* Top Bar */}
-        <header className="relative z-20 border-b border-slate-800 bg-slate-950/80 backdrop-blur-md px-6 sm:px-12 py-4 flex justify-between items-center">
+        <header className="relative z-20 border-b border-gray-200 bg-white/80 backdrop-blur-md px-6 sm:px-12 py-4 flex justify-between items-center shadow-sm">
           <Link to="/" className="text-2xl font-black text-[#0096FF] tracking-tight hover:opacity-90">
             ReadFil
           </Link>
-          <Link to="/" className="text-xs uppercase font-bold text-gray-400 hover:text-white px-3 py-1.5 rounded-lg border border-slate-800 hover:border-slate-700 transition-all">
+          <Link to="/" className="text-xs uppercase font-bold text-gray-600 hover:text-slate-900 px-3.5 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300 bg-white transition-all shadow-sm">
             {isEn ? "Return to Home" : "Bumalik sa Simula"}
           </Link>
         </header>
 
         {/* Auth Card */}
         <main className="relative z-20 flex-grow flex items-center justify-center p-4 sm:p-6 my-8">
-          <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-10 max-w-md w-full shadow-2xl backdrop-blur-md">
+          <div className="bg-white border border-gray-200/90 rounded-3xl p-6 sm:p-10 max-w-md w-full shadow-xl shadow-blue-50/50 backdrop-blur-md">
             <div className="text-center mb-8">
               <div className="w-14 h-14 bg-gradient-to-tr from-[#0096FF] to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-blue-500/20">
                 <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
                 </svg>
               </div>
-              <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+              <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
                 {isEn ? "Teacher Portal" : "Portal ng Guro"}
               </h1>
-              <p className="text-slate-400 text-sm mt-1">Classroom Monitoring & Passage Management</p>
+              <p className="text-gray-500 text-sm mt-1">Classroom Monitoring & Passage Management</p>
             </div>
 
             {/* Error / Success Notifications */}
             {authError && (
-              <div className="mb-6 p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+              <div className="mb-6 p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-600 text-sm">
                 {authError}
               </div>
             )}
             {authSuccess && (
-              <div className="mb-6 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm">
+              <div className="mb-6 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">
                 {authSuccess}
               </div>
             )}
 
             {/* TAB SELECTOR: LOGIN / REGISTER */}
             {authMode !== 'forgot' && (
-              <div className="flex bg-slate-950 p-1 rounded-2xl border border-slate-800 mb-6">
+              <div className="flex bg-gray-100 p-1 rounded-2xl border border-gray-200 mb-6">
                 <button
                   onClick={() => { setAuthMode('login'); setAuthError(''); }}
                   className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${
-                    authMode === 'login' ? 'bg-[#0096FF] text-white shadow-md' : 'text-slate-400 hover:text-white'
+                    authMode === 'login' ? 'bg-white text-[#0096FF] shadow-sm' : 'text-gray-500 hover:text-slate-900'
                   }`}
                 >
                   {isEn ? "Log In" : "Mag-Login"}
@@ -413,7 +411,7 @@ export default function TeacherPortal() {
                 <button
                   onClick={() => { setAuthMode('register'); setAuthError(''); }}
                   className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${
-                    authMode === 'register' ? 'bg-[#0096FF] text-white shadow-md' : 'text-slate-400 hover:text-white'
+                    authMode === 'register' ? 'bg-white text-[#0096FF] shadow-sm' : 'text-gray-500 hover:text-slate-900'
                   }`}
                 >
                   {isEn ? "Register" : "Magrehistro"}
@@ -425,7 +423,7 @@ export default function TeacherPortal() {
             {authMode === 'login' && (
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
                     {isEn ? "Username" : "Username"}
                   </label>
                   <input
@@ -434,12 +432,12 @@ export default function TeacherPortal() {
                     value={loginUsername}
                     onChange={(e) => setLoginUsername(e.target.value)}
                     placeholder="e.g. teacher"
-                    className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
                     {isEn ? "Password" : "Password"}
                   </label>
                   <input
@@ -448,39 +446,35 @@ export default function TeacherPortal() {
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
                   />
                 </div>
 
-                <div className="text-right">
+                <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={() => { setAuthMode('forgot'); setForgotStep(1); setAuthError(''); setAuthSuccess(''); }}
-                    className="text-xs font-semibold text-[#0096FF] hover:underline"
+                    onClick={() => { setAuthMode('forgot'); setForgotStep(1); setAuthError(''); }}
+                    className="text-xs text-gray-500 hover:text-[#0096FF] transition-colors"
                   >
-                    {isEn ? "Forgot password?" : "Nakalimutan ang password?"}
+                    {isEn ? "Forgot Password?" : "Nakalimutan ang Password?"}
                   </button>
                 </div>
 
                 <button
                   type="submit"
                   disabled={authLoading}
-                  className="w-full py-3.5 bg-gradient-to-r from-[#0096FF] to-[#005FA3] hover:from-blue-500 hover:to-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50"
+                  className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-[#0096FF] hover:from-blue-700 hover:to-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50"
                 >
-                  {authLoading ? (isEn ? "Signing in..." : "Pumapasok...") : (isEn ? "Sign In to Dashboard" : "Pumasok sa Dashboard")}
+                  {authLoading ? (isEn ? "Authenticating..." : "Sumusuri...") : (isEn ? "Sign In to Portal" : "Mag-sign In sa Portal")}
                 </button>
-
-                <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-[11px] text-slate-400 text-center">
-                  💡 <em>{isEn ? "Default test credentials:" : "Default test login:"}</em> Username: <strong>teacher</strong> | Password: <strong>teacher123</strong>
-                </div>
               </form>
             )}
 
             {/* 2. REGISTER FORM */}
             {authMode === 'register' && (
-              <form onSubmit={handleRegister} className="space-y-4">
+              <form onSubmit={handleRegister} className="space-y-3.5">
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
                     {isEn ? "Full Name" : "Buong Pangalan"}
                   </label>
                   <input
@@ -488,38 +482,41 @@ export default function TeacherPortal() {
                     required
                     value={regName}
                     onChange={(e) => setRegName(e.target.value)}
-                    placeholder="Teacher Maria Santos"
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
+                    placeholder="e.g. Maria Santos"
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">Username</label>
-                    <input
-                      type="text"
-                      required
-                      value={regUsername}
-                      onChange={(e) => setRegUsername(e.target.value)}
-                      placeholder="mariasantos"
-                      className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">Email</label>
-                    <input
-                      type="email"
-                      required
-                      value={regEmail}
-                      onChange={(e) => setRegEmail(e.target.value)}
-                      placeholder="maria@school.edu"
-                      className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
+                    {isEn ? "Username" : "Username"}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={regUsername}
+                    onChange={(e) => setRegUsername(e.target.value)}
+                    placeholder="e.g. teacher_maria"
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
+                  />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
+                    {isEn ? "Email" : "Email"}
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={regEmail}
+                    onChange={(e) => setRegEmail(e.target.value)}
+                    placeholder="teacher@school.edu.ph"
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
                     {isEn ? "Password" : "Password"}
                   </label>
                   <input
@@ -528,24 +525,24 @@ export default function TeacherPortal() {
                     value={regPassword}
                     onChange={(e) => setRegPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
-                    {isEn ? "Security Question (Recovery)" : "Tanong sa Seguridad (Recovery)"}
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
+                    {isEn ? "Security Question (For Password Recovery)" : "Tanong sa Seguridad (Para sa Pagbawi)"}
                   </label>
                   <select
                     value={regSecurityQuestion}
                     onChange={(e) => setRegSecurityQuestion(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:outline-none focus:border-[#0096FF]"
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 text-xs focus:outline-none focus:border-[#0096FF] focus:bg-white"
                   >
                     <option value={isEn ? "What is the name of your favorite teacher?" : "Ano ang pangalan ng paborito mong guro?"}>
                       {isEn ? "What is the name of your favorite teacher?" : "Ano ang pangalan ng paborito mong guro?"}
                     </option>
-                    <option value={isEn ? "What was the name of your first school?" : "Ano ang pangalan ng iyong unang paaralan?"}>
-                      {isEn ? "What was the name of your first school?" : "Ano ang pangalan ng iyong unang paaralan?"}
+                    <option value={isEn ? "What was the name of your first elementary school?" : "Ano ang pangalan ng iyong unang mababang paaralan?"}>
+                      {isEn ? "What was the name of your first elementary school?" : "Ano ang pangalan ng iyong unang mababang paaralan?"}
                     </option>
                     <option value={isEn ? "What is your favorite subject?" : "Ano ang paborito mong asignatura?"}>
                       {isEn ? "What is your favorite subject?" : "Ano ang paborito mong asignatura?"}
@@ -557,7 +554,7 @@ export default function TeacherPortal() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
                     {isEn ? "Answer" : "Sagot sa Tanong"}
                   </label>
                   <input
@@ -566,14 +563,14 @@ export default function TeacherPortal() {
                     value={regSecurityAnswer}
                     onChange={(e) => setRegSecurityAnswer(e.target.value)}
                     placeholder={isEn ? "Type your security answer..." : "Ilagay ang iyong sagot..."}
-                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
                   />
                 </div>
 
                 <button
                   type="submit"
                   disabled={authLoading}
-                  className="w-full py-3.5 bg-gradient-to-r from-[#0096FF] to-[#005FA3] hover:from-blue-500 hover:to-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50"
+                  className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-[#0096FF] hover:from-blue-700 hover:to-blue-600 text-white font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50"
                 >
                   {authLoading ? (isEn ? "Registering..." : "Nirerehistro...") : (isEn ? "Create Teacher Account" : "Gumawa ng Teacher Account")}
                 </button>
@@ -583,10 +580,10 @@ export default function TeacherPortal() {
             {/* 3. FORGOT PASSWORD FLOW */}
             {authMode === 'forgot' && (
               <div>
-                <h3 className="text-lg font-bold text-white mb-2">
+                <h3 className="text-lg font-bold text-slate-900 mb-2">
                   {isEn ? "Recover Password" : "I-recover ang Password"}
                 </h3>
-                <p className="text-slate-400 text-xs mb-4">
+                <p className="text-gray-500 text-xs mb-4">
                   {forgotStep === 1
                     ? (isEn ? "Enter your username to retrieve your registered security question." : "Ilagay ang iyong username upang makuha ang iyong tanong sa seguridad.")
                     : (isEn ? "Answer your security question to set a new password." : "Sagutin ang iyong tanong sa seguridad upang makapag-set ng bagong password.")}
@@ -595,14 +592,14 @@ export default function TeacherPortal() {
                 {forgotStep === 1 ? (
                   <form onSubmit={handleForgotStep1} className="space-y-4">
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">Username</label>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">Username</label>
                       <input
                         type="text"
                         required
                         value={forgotUsername}
                         onChange={(e) => setForgotUsername(e.target.value)}
                         placeholder={isEn ? "Type your username..." : "I-type ang iyong username..."}
-                        className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
+                        className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
                       />
                     </div>
 
@@ -610,14 +607,14 @@ export default function TeacherPortal() {
                       <button
                         type="button"
                         onClick={() => { setAuthMode('login'); setAuthError(''); }}
-                        className="w-1/3 py-3 rounded-xl border border-slate-700 text-slate-300 font-bold text-sm hover:bg-slate-800"
+                        className="w-1/3 py-3 rounded-xl border border-gray-300 text-gray-700 font-bold text-sm hover:bg-gray-100"
                       >
                         {isEn ? "Back" : "Bumalik"}
                       </button>
                       <button
                         type="submit"
                         disabled={authLoading}
-                        className="w-2/3 py-3 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl transition-colors disabled:opacity-50 text-sm"
+                        className="w-2/3 py-3 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl transition-colors disabled:opacity-50 text-sm shadow-md shadow-blue-500/20"
                       >
                         {authLoading ? (isEn ? "Verifying..." : "Sinusuri...") : (isEn ? "Continue" : "Ipagpatuloy")}
                       </button>
@@ -625,12 +622,12 @@ export default function TeacherPortal() {
                   </form>
                 ) : (
                   <form onSubmit={handleForgotStep2} className="space-y-4">
-                    <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300">
+                    <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs text-blue-800">
                       <strong>{isEn ? "Question:" : "Tanong:"}</strong> {forgotSecurityQuestion}
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
                         {isEn ? "Your Answer" : "Iyong Sagot"}
                       </label>
                       <input
@@ -639,12 +636,12 @@ export default function TeacherPortal() {
                         value={forgotSecurityAnswer}
                         onChange={(e) => setForgotSecurityAnswer(e.target.value)}
                         placeholder={isEn ? "Type your answer..." : "I-type ang iyong sagot..."}
-                        className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
                         {isEn ? "New Password" : "Bagong Password"}
                       </label>
                       <input
@@ -653,7 +650,7 @@ export default function TeacherPortal() {
                         value={forgotNewPassword}
                         onChange={(e) => setForgotNewPassword(e.target.value)}
                         placeholder="••••••••"
-                        className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
+                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
                       />
                     </div>
 
@@ -661,14 +658,14 @@ export default function TeacherPortal() {
                       <button
                         type="button"
                         onClick={() => setForgotStep(1)}
-                        className="w-1/3 py-3 rounded-xl border border-slate-700 text-slate-300 font-bold text-sm hover:bg-slate-800"
+                        className="w-1/3 py-3 rounded-xl border border-gray-300 text-gray-700 font-bold text-sm hover:bg-gray-100"
                       >
                         {isEn ? "Back" : "Bumalik"}
                       </button>
                       <button
                         type="submit"
                         disabled={authLoading}
-                        className="w-2/3 py-3 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl transition-colors disabled:opacity-50 text-sm"
+                        className="w-2/3 py-3 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl transition-colors disabled:opacity-50 text-sm shadow-md shadow-blue-500/20"
                       >
                         {authLoading ? (isEn ? "Resetting..." : "Inilalapat...") : (isEn ? "Reset Password" : "I-reset ang Password")}
                       </button>
@@ -680,7 +677,7 @@ export default function TeacherPortal() {
           </div>
         </main>
 
-        <footer className="relative z-20 py-4 text-center text-xs text-slate-500 border-t border-slate-900">
+        <footer className="relative z-20 py-4 text-center text-xs text-gray-500 border-t border-gray-200">
           ReadFil Classroom Monitoring & Assessment System &bull; SQLite Persistence
         </footer>
       </div>
@@ -691,21 +688,21 @@ export default function TeacherPortal() {
   // RENDER: LOGGED IN TEACHER DASHBOARD
   // -------------------------------------------------------------
   return (
-    <div className="min-h-screen bg-slate-950 text-white font-sans relative overflow-x-hidden">
-      <SoundWaveBackground opacity={0.12} />
+    <div className="min-h-screen bg-slate-50/60 text-slate-900 font-sans relative overflow-x-hidden">
+      <SoundWaveBackground opacity={0.08} />
 
       {/* Top Navbar */}
-      <header className="relative z-20 border-b border-slate-800 bg-slate-950/85 backdrop-blur-md px-6 sm:px-12 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <header className="relative z-20 border-b border-gray-200 bg-white/85 backdrop-blur-md px-6 sm:px-12 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
         <div className="flex items-center space-x-4">
           <Link to="/" className="text-2xl font-black text-[#0096FF] tracking-tight hover:opacity-90">
             ReadFil
           </Link>
-          <span className="text-xs uppercase font-bold px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
+          <span className="text-xs uppercase font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
             {isEn ? "Teacher Portal" : "Portal ng Guro"}
           </span>
           {tokenStatus && (
-            <span className="hidden lg:inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span className="hidden lg:inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
               {tokenStatus.cloud_stt_configured ? (isEn ? "Cloud STT Online (Token Active)" : "Cloud STT Online (Token Aktibo)") : (isEn ? "Local Wav2Vec Mode" : "Local Wav2Vec Mode")}
             </span>
           )}
@@ -713,12 +710,12 @@ export default function TeacherPortal() {
 
         <div className="flex items-center space-x-3">
           <div className="text-right hidden sm:block">
-            <div className="text-xs text-slate-400">{isEn ? "Logged in as:" : "Naka-login bilang:"}</div>
-            <div className="text-sm font-bold text-white">{teacher.name}</div>
+            <div className="text-xs text-gray-500">{isEn ? "Logged in as:" : "Naka-login bilang:"}</div>
+            <div className="text-sm font-bold text-slate-800">{teacher.name}</div>
           </div>
           <button
             onClick={handleLogout}
-            className="text-xs uppercase font-bold text-red-400 hover:text-white hover:bg-red-500/20 px-3.5 py-2 rounded-xl border border-red-500/30 transition-all"
+            className="text-xs uppercase font-bold text-red-600 hover:text-white hover:bg-red-600 px-3.5 py-2 rounded-xl border border-red-200 transition-all shadow-sm"
           >
             {isEn ? "Log Out" : "Mag-Logout"}
           </button>
@@ -728,13 +725,13 @@ export default function TeacherPortal() {
       {/* Main Content Area */}
       <main className="relative z-20 max-w-7xl mx-auto px-4 sm:px-8 py-8">
         {/* Navigation Tabs */}
-        <div className="flex border-b border-slate-800 mb-8 gap-2">
+        <div className="flex border-b border-gray-200 mb-8 gap-2">
           <button
             onClick={() => setActiveTab('passages')}
             className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${
               activeTab === 'passages'
-                ? 'border-[#0096FF] text-[#0096FF] bg-blue-500/10 rounded-t-xl'
-                : 'border-transparent text-slate-400 hover:text-white'
+                ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
+                : 'border-transparent text-gray-500 hover:text-slate-900'
             }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -747,8 +744,8 @@ export default function TeacherPortal() {
             onClick={() => setActiveTab('students')}
             className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${
               activeTab === 'students'
-                ? 'border-[#0096FF] text-[#0096FF] bg-blue-500/10 rounded-t-xl'
-                : 'border-transparent text-slate-400 hover:text-white'
+                ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
+                : 'border-transparent text-gray-500 hover:text-slate-900'
             }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -765,10 +762,10 @@ export default function TeacherPortal() {
           <div>
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <div>
-                <h2 className="text-2xl font-black text-white">
+                <h2 className="text-2xl font-black text-slate-900">
                   {isEn ? "Reading Passages" : "Mga Talata sa Pagbasa"}
                 </h2>
-                <p className="text-slate-400 text-sm">
+                <p className="text-gray-500 text-sm">
                   {isEn
                     ? "Create, edit, and set active reading passages for Classroom Mode assessment."
                     : "Gumawa at pumili ng talatang babasahin ng buong klase sa Classroom Mode."}
@@ -783,15 +780,15 @@ export default function TeacherPortal() {
             </div>
 
             {passages.length === 0 ? (
-              <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-12 text-center">
-                <div className="w-16 h-16 bg-slate-800 text-slate-400 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl font-bold">📄</div>
-                <h3 className="text-lg font-bold text-white mb-1">
+              <div className="bg-white border border-gray-200 rounded-3xl p-12 text-center shadow-sm">
+                <div className="w-16 h-16 bg-gray-100 text-gray-400 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl font-bold">📄</div>
+                <h3 className="text-lg font-bold text-slate-900 mb-1">
                   {isEn ? "No Saved Passages" : "Walang Naka-save na Talata"}
                 </h3>
-                <p className="text-slate-400 text-sm mb-6">
+                <p className="text-gray-500 text-sm mb-6">
                   {isEn ? "Get started by creating your first passage for students." : "Magsimula sa pamamagitan ng paglikha ng iyong unang babasahin para sa mga mag-aaral."}
                 </p>
-                <button onClick={openCreateModal} className="px-6 py-2.5 bg-[#0096FF] text-white font-bold rounded-xl text-sm">
+                <button onClick={openCreateModal} className="px-6 py-2.5 bg-[#0096FF] text-white font-bold rounded-xl text-sm shadow-md shadow-blue-500/20">
                   {isEn ? "Create Passage Now" : "Gumawa ng Talata Ngayon"}
                 </button>
               </div>
@@ -802,36 +799,36 @@ export default function TeacherPortal() {
                   return (
                     <div
                       key={p.id}
-                      className={`relative bg-slate-900/90 border rounded-3xl p-6 shadow-xl flex flex-col justify-between transition-all ${
+                      className={`relative bg-white border rounded-3xl p-6 shadow-sm hover:shadow-md flex flex-col justify-between transition-all ${
                         p.is_active
-                          ? 'border-emerald-500/60 ring-2 ring-emerald-500/20 shadow-emerald-500/10'
-                          : 'border-slate-800 hover:border-slate-700'
+                          ? 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/15 shadow-emerald-500/5'
+                          : 'border-gray-200 hover:border-gray-300'
                       }`}
                     >
                       <div>
                         {/* Header Badges */}
                         <div className="flex items-center justify-between gap-2 mb-3">
-                          <span className="text-xs font-bold text-[#0096FF] uppercase bg-[#0096FF]/10 px-2.5 py-0.5 rounded-md border border-[#0096FF]/20">
+                          <span className="text-xs font-bold text-[#0096FF] uppercase bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-100">
                             {p.grade_level || "General"}
                           </span>
                           {p.is_active ? (
-                            <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-400 bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 rounded-full">
-                              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                            <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
                               {isEn ? "ACTIVE FOR CLASS" : "AKTIBO SA KLASE"}
                             </span>
                           ) : (
-                            <span className="text-xs font-semibold text-slate-500">
+                            <span className="text-xs font-semibold text-gray-400">
                               {isEn ? "Inactive" : "Hindi Aktibo"}
                             </span>
                           )}
                         </div>
 
-                        <h3 className="text-xl font-bold text-white mb-2 tracking-tight">{p.title}</h3>
-                        <p className="text-slate-300 text-sm line-clamp-3 mb-4 leading-relaxed font-serif">
+                        <h3 className="text-xl font-bold text-slate-900 mb-2 tracking-tight">{p.title}</h3>
+                        <p className="text-slate-600 text-sm line-clamp-3 mb-4 leading-relaxed font-serif">
                           {p.content}
                         </p>
 
-                        <div className="flex items-center gap-4 text-xs text-slate-400 mb-6 pb-4 border-b border-slate-800">
+                        <div className="flex items-center gap-4 text-xs text-gray-500 mb-6 pb-4 border-b border-gray-100">
                           <span>⏱️ <strong>{p.timer_seconds || 60}s</strong> timer</span>
                           <span>📝 <strong>{wordCount}</strong> {isEn ? "words" : "salita"}</span>
                         </div>
@@ -842,7 +839,7 @@ export default function TeacherPortal() {
                         {!p.is_active && (
                           <button
                             onClick={() => handleActivatePassage(p.id)}
-                            className="w-full py-2 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
+                            className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
                           >
                             ✓ {isEn ? "Set as Active for Class" : "Gawing Aktibo para sa Klase"}
                           </button>
@@ -850,13 +847,13 @@ export default function TeacherPortal() {
                         <div className="flex gap-2">
                           <button
                             onClick={() => openEditModal(p)}
-                            className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs transition-colors"
+                            className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 text-slate-700 font-bold rounded-xl text-xs transition-colors border border-gray-200"
                           >
                             {isEn ? "Edit" : "I-edit"}
                           </button>
                           <button
                             onClick={() => handleDeletePassage(p.id)}
-                            className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 font-bold rounded-xl text-xs transition-colors"
+                            className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold rounded-xl text-xs transition-colors"
                           >
                             {isEn ? "Delete" : "Tanggalin"}
                           </button>
@@ -877,40 +874,40 @@ export default function TeacherPortal() {
           <div>
             {/* Stat Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-              <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-lg">
-                <span className="text-xs uppercase font-bold text-slate-400">
+              <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                <span className="text-xs uppercase font-bold text-gray-500">
                   {isEn ? "Total Assessments" : "Kabuuang Pagsusuri"}
                 </span>
-                <div className="text-3xl font-black text-white mt-1">{totalStudents}</div>
-                <div className="text-[11px] text-slate-500 mt-1">
+                <div className="text-3xl font-black text-slate-900 mt-1">{totalStudents}</div>
+                <div className="text-[11px] text-gray-400 mt-1">
                   {isEn ? "logged student records" : "mga naitalang resulta"}
                 </div>
               </div>
 
-              <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-lg">
-                <span className="text-xs uppercase font-bold text-slate-400">
+              <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                <span className="text-xs uppercase font-bold text-gray-500">
                   {isEn ? "Average Accuracy" : "Karaniwang Accuracy"}
                 </span>
                 <div className="text-3xl font-black text-[#0096FF] mt-1">{avgAccuracy}%</div>
-                <div className="text-[11px] text-slate-500 mt-1">Reading Accuracy Rate</div>
+                <div className="text-[11px] text-gray-400 mt-1">Reading Accuracy Rate</div>
               </div>
 
-              <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-lg">
-                <span className="text-xs uppercase font-bold text-slate-400">
+              <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                <span className="text-xs uppercase font-bold text-gray-500">
                   {isEn ? "Average WCPM" : "Karaniwang WCPM"}
                 </span>
-                <div className="text-3xl font-black text-blue-400 mt-1">{avgWcpm}</div>
-                <div className="text-[11px] text-slate-500 mt-1">Words Correct / Minute</div>
+                <div className="text-3xl font-black text-blue-600 mt-1">{avgWcpm}</div>
+                <div className="text-[11px] text-gray-400 mt-1">Words Correct / Minute</div>
               </div>
 
-              <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-lg flex flex-col justify-between">
-                <span className="text-xs uppercase font-bold text-slate-400">
+              <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm flex flex-col justify-between">
+                <span className="text-xs uppercase font-bold text-gray-500">
                   {isEn ? "Phil-IRI Level" : "Phil-IRI Antas"}
                 </span>
                 <div className="flex gap-2 text-xs font-bold mt-2">
-                  <span className="text-emerald-400">{independentCount} Ind</span>
-                  <span className="text-amber-400">{instructionalCount} Ins</span>
-                  <span className="text-red-400">{frustrationCount} Fru</span>
+                  <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">{independentCount} Ind</span>
+                  <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">{instructionalCount} Ins</span>
+                  <span className="px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">{frustrationCount} Fru</span>
                 </div>
               </div>
             </div>
@@ -926,9 +923,9 @@ export default function TeacherPortal() {
                     setSearchQuery(e.target.value);
                     fetchRecords(e.target.value);
                   }}
-                  className="w-full px-4 py-2.5 pl-10 bg-slate-900 border border-slate-800 rounded-2xl text-sm text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
+                  className="w-full px-4 py-2.5 pl-10 bg-white border border-gray-200 rounded-2xl text-sm text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] shadow-sm"
                 />
-                <svg className="w-5 h-5 text-slate-500 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
                 </svg>
               </div>
@@ -946,11 +943,11 @@ export default function TeacherPortal() {
             </div>
 
             {/* Records Table */}
-            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
+            <div className="bg-white border border-gray-200 rounded-3xl overflow-hidden shadow-sm">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
-                    <tr className="bg-slate-950/80 border-b border-slate-800 text-slate-400 text-xs uppercase font-bold tracking-wider">
+                    <tr className="bg-gray-50 border-b border-gray-200 text-gray-600 text-xs uppercase font-bold tracking-wider">
                       <th className="py-4 px-6">{isEn ? "Student" : "Mag-aaral"}</th>
                       <th className="py-4 px-6">{isEn ? "Passage" : "Babasahin"}</th>
                       <th className="py-4 px-6">Accuracy</th>
@@ -961,10 +958,10 @@ export default function TeacherPortal() {
                       <th className="py-4 px-6 text-center">{isEn ? "Action" : "Aksyon"}</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60">
+                  <tbody className="divide-y divide-gray-100">
                     {records.length === 0 ? (
                       <tr>
-                        <td colSpan="8" className="py-12 text-center text-slate-500 font-medium">
+                        <td colSpan="8" className="py-12 text-center text-gray-400 font-medium">
                           {recordsLoading
                             ? (isEn ? "Retrieving records..." : "Kinukuha ang talaan...")
                             : (isEn ? "No student results found." : "Walang nahanap na resulta ng mag-aaral.")}
@@ -972,30 +969,30 @@ export default function TeacherPortal() {
                       </tr>
                     ) : (
                       records.map((r) => {
-                        let levelBadge = 'bg-slate-800 text-slate-300';
-                        if (r.reading_level === 'Independent') levelBadge = 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-                        else if (r.reading_level === 'Instructional') levelBadge = 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
-                        else if (r.reading_level === 'Frustration') levelBadge = 'bg-red-500/20 text-red-400 border border-red-500/30';
+                        let levelBadge = 'bg-gray-100 text-gray-700 border border-gray-200';
+                        if (r.reading_level === 'Independent') levelBadge = 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+                        else if (r.reading_level === 'Instructional') levelBadge = 'bg-amber-50 text-amber-700 border border-amber-200';
+                        else if (r.reading_level === 'Frustration') levelBadge = 'bg-red-50 text-red-700 border border-red-200';
 
                         return (
-                          <tr key={r.id} className="hover:bg-slate-800/40 transition-colors">
-                            <td className="py-4 px-6 font-bold text-white">{r.student_name}</td>
-                            <td className="py-4 px-6 text-slate-300">{r.passage_title}</td>
+                          <tr key={r.id} className="hover:bg-blue-50/40 transition-colors">
+                            <td className="py-4 px-6 font-bold text-slate-900">{r.student_name}</td>
+                            <td className="py-4 px-6 text-slate-700">{r.passage_title}</td>
                             <td className="py-4 px-6 font-mono font-bold text-[#0096FF]">{r.accuracy_rate}%</td>
-                            <td className="py-4 px-6 font-mono font-bold text-slate-200">{r.wcpm}</td>
-                            <td className="py-4 px-6 font-mono text-slate-300">{r.composite_score}</td>
+                            <td className="py-4 px-6 font-mono font-bold text-slate-800">{r.wcpm}</td>
+                            <td className="py-4 px-6 font-mono text-slate-600">{r.composite_score}</td>
                             <td className="py-4 px-6">
                               <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${levelBadge}`}>
                                 {r.reading_level}
                               </span>
                             </td>
-                            <td className="py-4 px-6 text-xs text-slate-400">
+                            <td className="py-4 px-6 text-xs text-gray-500">
                               {new Date(r.timestamp).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                             </td>
                             <td className="py-4 px-6 text-center">
                               <button
                                 onClick={() => setSelectedRecord(r)}
-                                className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-[#0096FF] font-bold rounded-lg text-xs transition-colors border border-blue-500/20"
+                                className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0096FF] font-bold rounded-lg text-xs transition-colors border border-blue-200"
                               >
                                 {isEn ? "Details" : "Detalye"}
                               </button>
@@ -1016,14 +1013,14 @@ export default function TeacherPortal() {
           MODAL: ADD / EDIT PASSAGE
           ------------------------------------------------------------- */}
       {isPassageModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-2xl font-black text-white mb-1">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-2xl font-black text-slate-900 mb-1">
               {editingPassage
                 ? (isEn ? "Edit Passage" : "I-edit ang Talata")
                 : (isEn ? "Add New Passage" : "Magdagdag ng Bagong Talata")}
             </h3>
-            <p className="text-slate-400 text-sm mb-6">
+            <p className="text-gray-500 text-sm mb-6">
               {isEn
                 ? "Set the title, content, and reading timer limit for your class assessment."
                 : "Itakda ang pamagat, nilalaman, at takdang oras ng pagbasa para sa iyong klase."}
@@ -1031,7 +1028,7 @@ export default function TeacherPortal() {
 
             <form onSubmit={handleSavePassage} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
                   {isEn ? "Passage Title" : "Pamagat ng Talata"}
                 </label>
                 <input
@@ -1040,19 +1037,19 @@ export default function TeacherPortal() {
                   value={passageTitle}
                   onChange={(e) => setPassageTitle(e.target.value)}
                   placeholder={isEn ? "e.g. The Honest Farmer" : "Hal. Ang Masipag na Magsasaka"}
-                  className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF]"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
                     {isEn ? "Grade Level" : "Baitang / Antas"}
                   </label>
                   <select
                     value={passageGrade}
                     onChange={(e) => setPassageGrade(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#0096FF]"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:border-[#0096FF] focus:bg-white"
                   >
                     <option value="Grade 4">Grade 4</option>
                     <option value="Grade 5">Grade 5</option>
@@ -1063,13 +1060,13 @@ export default function TeacherPortal() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
                     {isEn ? "Reading Timer Limit" : "Oras ng Pagbasa (Segundo)"}
                   </label>
                   <select
                     value={passageTimer}
                     onChange={(e) => setPassageTimer(parseInt(e.target.value, 10))}
-                    className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-[#0096FF]"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:border-[#0096FF] focus:bg-white"
                   >
                     <option value={30}>{isEn ? "30 Seconds" : "30 Segundo"}</option>
                     <option value={45}>{isEn ? "45 Seconds" : "45 Segundo"}</option>
@@ -1081,7 +1078,7 @@ export default function TeacherPortal() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1.5">
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
                   {isEn ? "Passage Content (Tagalog)" : "Nilalaman ng Babasahing Talata (Tagalog)"}
                 </label>
                 <textarea
@@ -1090,25 +1087,25 @@ export default function TeacherPortal() {
                   value={passageContent}
                   onChange={(e) => setPassageContent(e.target.value)}
                   placeholder={isEn ? "Type or paste the complete reading paragraph here..." : "I-type o i-paste ang buong talata dito..."}
-                  className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-[#0096FF] leading-relaxed font-serif text-sm"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white leading-relaxed font-serif text-sm"
                 ></textarea>
-                <div className="text-right text-[11px] text-slate-500 mt-1">
+                <div className="text-right text-[11px] text-gray-400 mt-1">
                   {isEn ? "Word Count:" : "Bilang ng Salita:"} {passageContent.trim() ? passageContent.trim().split(/\s+/).length : 0}
                 </div>
               </div>
 
-              <div className="flex gap-3 justify-end pt-4 border-t border-slate-800">
+              <div className="flex gap-3 justify-end pt-4 border-t border-gray-200">
                 <button
                   type="button"
                   onClick={() => setIsPassageModalOpen(false)}
-                  className="px-5 py-2.5 rounded-full text-slate-400 hover:text-white font-bold text-sm"
+                  className="px-5 py-2.5 rounded-full text-gray-500 hover:text-slate-900 font-bold text-sm"
                 >
                   {isEn ? "Cancel" : "Kanselahin"}
                 </button>
                 <button
                   type="submit"
                   disabled={passageSaving}
-                  className="px-6 py-2.5 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-full text-sm transition-colors disabled:opacity-50"
+                  className="px-6 py-2.5 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-full text-sm transition-colors disabled:opacity-50 shadow-md shadow-blue-500/20"
                 >
                   {passageSaving ? (isEn ? "Saving..." : "Inililigtas...") : (isEn ? "Save Passage" : "I-save ang Talata")}
                 </button>
@@ -1122,19 +1119,19 @@ export default function TeacherPortal() {
           MODAL: STUDENT MISCUE BREAKDOWN
           ------------------------------------------------------------- */}
       {selectedRecord && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-start mb-6 pb-4 border-b border-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-6 pb-4 border-b border-gray-200">
               <div>
-                <span className="text-xs uppercase font-bold text-slate-400">
+                <span className="text-xs uppercase font-bold text-gray-500">
                   {isEn ? "Detailed Student Evaluation" : "Detalyadong Pagsusuri ng Mag-aaral"}
                 </span>
-                <h3 className="text-2xl font-black text-white">{selectedRecord.student_name}</h3>
+                <h3 className="text-2xl font-black text-slate-900">{selectedRecord.student_name}</h3>
                 <p className="text-sm text-[#0096FF] font-medium">{selectedRecord.passage_title}</p>
               </div>
               <button
                 onClick={() => setSelectedRecord(null)}
-                className="p-2 text-slate-400 hover:text-white rounded-full bg-slate-800"
+                className="p-2 text-gray-400 hover:text-slate-900 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
               >
                 ✕
               </button>
@@ -1142,37 +1139,37 @@ export default function TeacherPortal() {
 
             {/* Score Grid */}
             <div className="grid grid-cols-4 gap-3 mb-6">
-              <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-center">
-                <span className="text-[10px] uppercase font-bold text-slate-400">Accuracy</span>
+              <div className="bg-gray-50 p-3 rounded-2xl border border-gray-200 text-center">
+                <span className="text-[10px] uppercase font-bold text-gray-500">Accuracy</span>
                 <div className="text-xl font-black text-[#0096FF]">{selectedRecord.accuracy_rate}%</div>
               </div>
-              <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-center">
-                <span className="text-[10px] uppercase font-bold text-slate-400">WCPM</span>
-                <div className="text-xl font-black text-white">{selectedRecord.wcpm}</div>
+              <div className="bg-gray-50 p-3 rounded-2xl border border-gray-200 text-center">
+                <span className="text-[10px] uppercase font-bold text-gray-500">WCPM</span>
+                <div className="text-xl font-black text-slate-900">{selectedRecord.wcpm}</div>
               </div>
-              <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-center">
-                <span className="text-[10px] uppercase font-bold text-slate-400">
+              <div className="bg-gray-50 p-3 rounded-2xl border border-gray-200 text-center">
+                <span className="text-[10px] uppercase font-bold text-gray-500">
                   {isEn ? "Correct Words" : "Tamang Salita"}
                 </span>
-                <div className="text-xl font-black text-emerald-400">{selectedRecord.correct_words} / {selectedRecord.total_target_words}</div>
+                <div className="text-xl font-black text-emerald-600">{selectedRecord.correct_words} / {selectedRecord.total_target_words}</div>
               </div>
-              <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 text-center">
-                <span className="text-[10px] uppercase font-bold text-slate-400">
+              <div className="bg-gray-50 p-3 rounded-2xl border border-gray-200 text-center">
+                <span className="text-[10px] uppercase font-bold text-gray-500">
                   {isEn ? "Total Miscues" : "Mga Miscue"}
                 </span>
-                <div className="text-xl font-black text-red-400">{selectedRecord.errors_detected}</div>
+                <div className="text-xl font-black text-red-600">{selectedRecord.errors_detected}</div>
               </div>
             </div>
 
             {/* Stutter Badges */}
             {selectedRecord.stutter_words && selectedRecord.stutter_words.length > 0 && (
-              <div className="mb-6 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20">
-                <span className="text-xs font-bold text-amber-300 block mb-2">
+              <div className="mb-6 p-4 rounded-2xl bg-amber-50 border border-amber-200">
+                <span className="text-xs font-bold text-amber-800 block mb-2">
                   {isEn ? "Detected Disfluencies / Repetitions:" : "Natukoy na Utal / Pag-uulit (Disfluencies):"}
                 </span>
                 <div className="flex flex-wrap gap-2">
                   {selectedRecord.stutter_words.map((w, i) => (
-                    <span key={i} className="px-2.5 py-1 bg-amber-500/20 text-amber-300 rounded-lg text-xs font-mono font-bold">
+                    <span key={i} className="px-2.5 py-1 bg-amber-100 text-amber-800 rounded-lg text-xs font-mono font-bold border border-amber-200">
                       {w}
                     </span>
                   ))}
@@ -1183,34 +1180,34 @@ export default function TeacherPortal() {
             {/* Step-by-Step Alignment Trace */}
             {selectedRecord.trace_json && selectedRecord.trace_json.length > 0 && (
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-300 block mb-3">
+                <span className="text-xs font-bold uppercase tracking-wider text-gray-700 block mb-3">
                   {isEn ? "Word-by-Word Analysis (Needleman-Wunsch Alignment & MLD):" : "Pagsusuri sa Bawat Salita (Needleman-Wunsch Alignment & MLD):"}
                 </span>
                 <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
                   {selectedRecord.trace_json.map((step, idx) => {
-                    let badge = 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
+                    let badge = 'bg-emerald-50 border-emerald-200 text-emerald-800';
                     let label = isEn ? 'CORRECT' : 'TAMA';
 
                     if (step.is_vowel_shift) {
-                      badge = 'bg-blue-500/10 border-blue-500/30 text-blue-300';
+                      badge = 'bg-blue-50 border-blue-200 text-blue-800';
                       label = 'DIALECT VOWEL SHIFT';
                     } else if (step.type === 'substitution') {
-                      badge = 'bg-red-500/10 border-red-500/30 text-red-300';
+                      badge = 'bg-red-50 border-red-200 text-red-800';
                       label = 'MISPRONUNCIATION';
                     } else if (step.type === 'deletion') {
-                      badge = 'bg-amber-500/10 border-amber-500/30 text-amber-300';
+                      badge = 'bg-amber-50 border-amber-200 text-amber-800';
                       label = isEn ? 'OMISSION (SKIPPED)' : 'OMISSION (LINAKTAWAN)';
                     } else if (step.type === 'insertion') {
-                      badge = 'bg-purple-500/10 border-purple-500/30 text-purple-300';
+                      badge = 'bg-purple-50 border-purple-200 text-purple-800';
                       label = isEn ? 'INSERTION (ADDED)' : 'INSERTION (DAGDAG)';
                     }
 
                     return (
                       <div key={idx} className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${badge}`}>
                         <div>
-                          <strong className="text-white">Target:</strong> {step.target || "-"} &bull; <strong className="text-white">{isEn ? "Spoken:" : "Binigkas:"}</strong> {step.spoken || "-"}
+                          <strong className="text-slate-900">Target:</strong> {step.target || "-"} &bull; <strong className="text-slate-900">{isEn ? "Spoken:" : "Binigkas:"}</strong> {step.spoken || "-"}
                         </div>
-                        <span className="font-mono font-bold text-[10px] uppercase px-2 py-0.5 rounded bg-black/40">
+                        <span className="font-mono font-bold text-[10px] uppercase px-2 py-0.5 rounded bg-white/80 border border-current">
                           {label}
                         </span>
                       </div>
@@ -1220,10 +1217,10 @@ export default function TeacherPortal() {
               </div>
             )}
 
-            <div className="mt-6 pt-4 border-t border-slate-800 text-right">
+            <div className="mt-6 pt-4 border-t border-gray-200 text-right">
               <button
                 onClick={() => setSelectedRecord(null)}
-                className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-full text-xs"
+                className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-slate-800 font-bold rounded-full text-xs transition-colors"
               >
                 {isEn ? "Close" : "Isara"}
               </button>
