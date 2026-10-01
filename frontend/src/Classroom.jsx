@@ -59,6 +59,191 @@ const isWordMatch = (w1, w2) => {
   return false;
 };
 
+// Calculate normalized Levenshtein distance (0.0 = identical, 1.0 = completely different)
+const wordSimilarity = (w1, w2) => {
+  if (!w1 || !w2) return 1.0;
+  if (w1 === w2) return 0.0;
+  const len1 = w1.length;
+  const len2 = w2.length;
+  const dp = Array.from({ length: len1 + 1 }, () => new Int16Array(len2 + 1));
+  for (let i = 0; i <= len1; i++) dp[i][0] = i;
+  for (let j = 0; j <= len2; j++) dp[0][j] = j;
+  for (let i = 1; i <= len1; i++) {
+    for (let j = 1; j <= len2; j++) {
+      const cost = w1[i - 1] === w2[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  const maxLen = Math.max(len1, len2);
+  return maxLen === 0 ? 0.0 : dp[len1][len2] / maxLen;
+};
+
+// Needleman-Wunsch Alignment (NWA) - Global Sequence Alignment for Real-time Classroom Reading
+const needlemanWunschAlign = (targetWords, spokenWords) => {
+  const m = targetWords.length;
+  const n = spokenWords.length;
+  if (m === 0 || n === 0) {
+    return {
+      lastWordAligned: false,
+      lastWordMatched: false,
+      alignedMatches: 0,
+      totalTarget: m,
+      alignRatio: 0,
+      targetToSpoken: {}
+    };
+  }
+
+  const MATCH = 5.0;
+  const MISMATCH = -2.0;
+  const GAP = -2.0;
+
+  const score = Array.from({ length: m + 1 }, () => new Float32Array(n + 1));
+  const pointers = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(''));
+
+  for (let i = 0; i <= m; i++) {
+    score[i][0] = GAP * i;
+    pointers[i][0] = 'U';
+  }
+  for (let j = 0; j <= n; j++) {
+    score[0][j] = GAP * j;
+    pointers[0][j] = 'L';
+  }
+  pointers[0][0] = '';
+
+  for (let i = 1; i <= m; i++) {
+    const tWord = targetWords[i - 1];
+    for (let j = 1; j <= n; j++) {
+      const sWord = spokenWords[j - 1];
+      let matchScore;
+      if (tWord === sWord || isWordMatch(tWord, sWord)) {
+        matchScore = score[i - 1][j - 1] + MATCH;
+      } else {
+        const dist = wordSimilarity(tWord, sWord);
+        if (dist <= 0.4) {
+          matchScore = score[i - 1][j - 1] + (MATCH * (1.0 - dist));
+        } else {
+          matchScore = score[i - 1][j - 1] + MISMATCH;
+        }
+      }
+
+      const delScore = score[i - 1][j] + GAP;
+      const insScore = score[i][j - 1] + GAP;
+
+      let best = matchScore;
+      let ptr = 'D';
+      if (delScore > best) {
+        best = delScore;
+        ptr = 'U';
+      }
+      if (insScore > best) {
+        best = insScore;
+        ptr = 'L';
+      }
+
+      score[i][j] = best;
+      pointers[i][j] = ptr;
+    }
+  }
+
+  // Backtrack from bottom-right (m, n) to origin (0, 0)
+  let i = m, j = n;
+  const targetToSpoken = {};
+  let alignedMatches = 0;
+
+  while (i > 0 || j > 0) {
+    const ptr = pointers[i][j];
+    if (ptr === 'D') {
+      const tWord = targetWords[i - 1];
+      const sWord = spokenWords[j - 1];
+      targetToSpoken[i - 1] = sWord;
+      if (tWord === sWord || isWordMatch(tWord, sWord) || wordSimilarity(tWord, sWord) <= 0.45) {
+        alignedMatches++;
+      }
+      i--;
+      j--;
+    } else if (ptr === 'U') {
+      targetToSpoken[i - 1] = null;
+      i--;
+    } else {
+      // 'L'
+      j--;
+    }
+  }
+
+  const lastTargetIdx = m - 1;
+  const lastTargetWord = targetWords[lastTargetIdx];
+  const lastSpokenAligned = targetToSpoken[lastTargetIdx];
+
+  const lastWordMatched = !!(
+    lastSpokenAligned &&
+    (lastSpokenAligned === lastTargetWord ||
+     isWordMatch(lastTargetWord, lastSpokenAligned) ||
+     wordSimilarity(lastTargetWord, lastSpokenAligned) <= 0.45)
+  );
+
+  const alignRatio = alignedMatches / m;
+
+  // The passage reading is completed if:
+  // 1. The last target word is matched on the NWA alignment path
+  // 2. The student has read a substantial portion of the passage:
+  //    - for short passages (<= 3 words): at least 2 words or all words matched
+  //    - for standard passages: at least 50% of the words matched
+  const isSatisfied = lastWordMatched && (
+    m <= 2 ? (alignedMatches >= Math.max(1, m)) :
+    m <= 4 ? (alignedMatches >= 2) :
+    (alignRatio >= 0.50 || alignedMatches >= Math.ceil(m * 0.55))
+  );
+
+  return {
+    lastWordAligned: isSatisfied,
+    lastWordMatched,
+    alignedMatches,
+    totalTarget: m,
+    alignRatio,
+    targetToSpoken
+  };
+};
+
+// Play gentle completion chime on auto-stop so student is immediately notified
+const playCompletionChime = () => {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+    
+    // Note 1: C5 (523.25 Hz)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(523.25, now);
+    gain1.gain.setValueAtTime(0.12, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.22);
+
+    // Note 2: E5 (659.25 Hz)
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(659.25, now + 0.10);
+    gain2.gain.setValueAtTime(0.15, now + 0.10);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.10);
+    osc2.stop(now + 0.35);
+  } catch (e) {
+    console.warn("Could not play completion chime:", e);
+  }
+};
+
 // Check if the live spoken transcript satisfies all or nearly all words of the passage
 const checkWordsSatisfied = (targetText, spokenText) => {
   const targetWords = tokenizeWords(targetText);
@@ -188,6 +373,9 @@ export default function Classroom() {
   const silenceCheckIntervalRef = useRef(null);
   const lastSpeechMatchRatioRef = useRef(0);
   const isSatisfiedRef = useRef(false);
+  const endTimeRef = useRef(null);
+  const noiseFloorRef = useRef(0.02);
+  const hasSpokenRef = useRef(false);
 
   // Media Refs
   const mediaRecorderRef = useRef(null);
@@ -398,18 +586,6 @@ export default function Classroom() {
       animationRef.current = requestAnimationFrame(renderFrame);
       analyserRef.current.getByteTimeDomainData(dataArray);
 
-      // Track voice activity for silence detection
-      let sum = 0;
-      for (let i = 0; i < bufferLength; i++) {
-        const val = (dataArray[i] - 128) / 128.0;
-        sum += val * val;
-      }
-      const rms = Math.sqrt(sum / bufferLength);
-      if (rms > 0.032) {
-        lastSoundTimeRef.current = Date.now();
-        soundDetectedRef.current = true;
-      }
-
       ctx.fillStyle = '#f8fafc';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.lineWidth = 3;
@@ -434,20 +610,36 @@ export default function Classroom() {
     renderFrame();
   };
 
-  // Smart Hands-Free Auto-Stop Trigger
-  const triggerAutoStop = (reason = "completed", delayMs = 300) => {
+  // Smart Hands-Free Auto-Stop Trigger (Immediate on NWA last word alignment or silence)
+  const triggerAutoStop = (reason = "completed", delayMs = 0) => {
     if (hasTriggeredAutoStopRef.current || !isRecordingRef.current) return;
     hasTriggeredAutoStopRef.current = true;
     isSatisfiedRef.current = true;
     setIsSatisfiedCompleted(true);
-    console.log(`[AUTO-STOP TRIGGERED] Reason: ${reason}. Finalizing audio in ${delayMs}ms...`);
+    endTimeRef.current = Date.now();
+    console.log(`[AUTO-STOP TRIGGERED] Reason: ${reason}. Finalizing audio immediately (delay: ${delayMs}ms)...`);
 
-    if (autoStopTimeoutRef.current) clearTimeout(autoStopTimeoutRef.current);
-    autoStopTimeoutRef.current = setTimeout(() => {
+    // Play completion chime so student has instant audible notification that they are done
+    playCompletionChime();
+
+    // Immediately stop and freeze the countdown timer so no extra seconds tick away
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+
+    if (delayMs <= 0) {
       if (isRecordingRef.current) {
         stopRecording();
       }
-    }, delayMs);
+    } else {
+      if (autoStopTimeoutRef.current) clearTimeout(autoStopTimeoutRef.current);
+      autoStopTimeoutRef.current = setTimeout(() => {
+        if (isRecordingRef.current) {
+          stopRecording();
+        }
+      }, delayMs);
+    }
   };
 
   // 2. Start Assessment Recording for Current Passage
@@ -463,10 +655,13 @@ export default function Classroom() {
       audioChunksRef.current = [];
       lastSoundTimeRef.current = Date.now();
       soundDetectedRef.current = false;
+      hasSpokenRef.current = false;
       speechDurationMsRef.current = 0;
       hasTriggeredAutoStopRef.current = false;
       lastSpeechMatchRatioRef.current = 0;
       isSatisfiedRef.current = false;
+      noiseFloorRef.current = 0.02;
+      endTimeRef.current = null;
       isRecordingRef.current = true;
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -517,7 +712,7 @@ export default function Classroom() {
       setIsRecording(true);
       startTimeRef.current = Date.now();
 
-      // Live Speech Recognition: Auto-stops as soon as words are satisfied
+      // Live Speech Recognition: Auto-stops as soon as last word aligns on NWA
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SpeechRecognition) {
         try {
@@ -527,11 +722,8 @@ export default function Classroom() {
           const recognition = new SpeechRecognition();
           recognition.continuous = true;
           recognition.interimResults = true;
-          try {
-            recognition.lang = 'tl-PH';
-          } catch (e) {
-            recognition.lang = 'fil-PH';
-          }
+          // Set to 'fil-PH' by default for Chrome on Windows
+          recognition.lang = 'fil-PH';
 
           let accumulatedSpoken = '';
 
@@ -549,19 +741,34 @@ export default function Classroom() {
             }
 
             const totalSpoken = (accumulatedSpoken + ' ' + currentInterim).trim();
-            const check = checkWordsSatisfied(activePassage?.content, totalSpoken);
-            lastSpeechMatchRatioRef.current = check.matchRatio;
+            const targetWords = tokenizeWords(activePassage?.content);
+            const spokenWords = tokenizeWords(totalSpoken);
 
+            // Execute Needleman-Wunsch Alignment (NWA)
+            const nwa = needlemanWunschAlign(targetWords, spokenWords);
+            lastSpeechMatchRatioRef.current = nwa.alignRatio;
+
+            // When the last word is aligned on NWA, stop immediately!
+            if (nwa.lastWordAligned && !hasTriggeredAutoStopRef.current) {
+              console.log("[NWA AUTO-STOP] Last word aligned on NWA! Stopping immediately without delay.");
+              triggerAutoStop("last_word_aligned_nwa", 0);
+              return;
+            }
+
+            // Secondary live satisfaction fallback
+            const check = checkWordsSatisfied(activePassage?.content, totalSpoken);
             if (check.satisfied && !hasTriggeredAutoStopRef.current) {
-              triggerAutoStop("words_satisfied", 300);
+              triggerAutoStop("words_satisfied", 0);
             }
           };
 
           recognition.onerror = (e) => {
-            console.warn("[SpeechRecognition] warning:", e.error);
-            if (e.error === 'language-not-supported' && recognition.lang === 'tl-PH') {
+            console.warn("[SpeechRecognition] event error:", e.error);
+            // Fallback gracefully if fil-PH is not available on non-Chrome browsers
+            if (e.error === 'language-not-supported' && recognition.lang === 'fil-PH') {
               try {
-                recognition.lang = 'fil-PH';
+                recognition.lang = 'tl-PH';
+                recognition.start();
               } catch (err) {}
             }
           };
@@ -581,8 +788,7 @@ export default function Classroom() {
         }
       }
 
-      // Smart Silence Detection & Voice Activity Auto-Stop
-      // Checks every 100ms via Web Audio API AnalyserNode
+      // High-Frequency Voice Activity & Silence Detection (checks every 60ms)
       if (silenceCheckIntervalRef.current) clearInterval(silenceCheckIntervalRef.current);
       silenceCheckIntervalRef.current = setInterval(() => {
         if (!isRecordingRef.current || hasTriggeredAutoStopRef.current) return;
@@ -603,46 +809,48 @@ export default function Classroom() {
           }
           const rms = Math.sqrt(sum / bufferLength);
 
-          // Threshold for human speech activity
-          if (rms > 0.032) {
+          // Calibrate ambient noise floor during initial 250ms
+          if (recordingAgeMs < 250) {
+            noiseFloorRef.current = Math.max(0.015, Math.min(0.06, rms * 1.15));
+          }
+
+          // Dynamic speech activity threshold based on ambient noise
+          const speechThreshold = Math.max(0.038, noiseFloorRef.current * 1.7);
+          if (rms > speechThreshold) {
             lastSoundTimeRef.current = now;
             soundDetectedRef.current = true;
-            speechDurationMsRef.current += 100;
+            hasSpokenRef.current = true;
+            speechDurationMsRef.current += 60;
           }
         }
 
-        // Buffer: Give student at least 1.8 seconds after clicking/starting before evaluating silence
-        if (recordingAgeMs < 1800) return;
+        // Brief buffer: 650ms grace period before evaluating silence
+        if (recordingAgeMs < 650) return;
 
         const silenceElapsedMs = now - lastSoundTimeRef.current;
         const totalVoiceMs = speechDurationMsRef.current;
         const matchRatio = lastSpeechMatchRatioRef.current;
 
-        // Auto-stop 1: Words are satisfied by speech recognizer
+        // Auto-stop 1: Words are satisfied by NWA or recognizer
         if (isSatisfiedRef.current) {
-          triggerAutoStop("words_satisfied", 250);
+          triggerAutoStop("words_satisfied", 0);
           return;
         }
 
-        // Auto-stop 2: High word match (>= 60%) + brief pause (>= 900ms)
-        if (matchRatio >= 0.60 && silenceElapsedMs >= 900) {
-          triggerAutoStop("high_match_silence", 200);
+        // Auto-stop 2: Moderate/High word match (>= 45%) + brief pause (>= 350ms)
+        if (matchRatio >= 0.45 && silenceElapsedMs >= 350) {
+          triggerAutoStop("high_match_silence", 0);
           return;
         }
 
-        // Auto-stop 3: Partial match (>= 35%) + pause (>= 1300ms)
-        if (matchRatio >= 0.35 && silenceElapsedMs >= 1300) {
-          triggerAutoStop("partial_match_silence", 200);
+        // Auto-stop 3: Voice Activity Completed!
+        // Student spoke for >= 300ms (typical for short phrases like "Magtulungan tayo dito")
+        // and has now stopped talking for >= 550ms!
+        if (hasSpokenRef.current && totalVoiceMs >= 300 && silenceElapsedMs >= 550) {
+          triggerAutoStop("voice_activity_completed", 0);
           return;
         }
-
-        // Auto-stop 4: Finished reading by voice activity!
-        // Student spoke for >= 1200ms and has now stopped talking for >= 1700ms
-        if (totalVoiceMs >= 1200 && silenceElapsedMs >= 1700) {
-          triggerAutoStop("voice_activity_completed", 200);
-          return;
-        }
-      }, 100);
+      }, 60);
 
       // Start Countdown Timer: Fallback limit if speech doesn't stop or is ongoing
       setTimeLeft(totalTimerDuration);
@@ -704,12 +912,17 @@ export default function Classroom() {
     if (isProcessing) return;
     isRecordingRef.current = false;
 
+    if (!endTimeRef.current) {
+      endTimeRef.current = Date.now();
+    }
+
     if (silenceCheckIntervalRef.current) {
       clearInterval(silenceCheckIntervalRef.current);
       silenceCheckIntervalRef.current = null;
     }
     if (autoStopTimeoutRef.current) {
       clearTimeout(autoStopTimeoutRef.current);
+      autoStopTimeoutRef.current = null;
     }
     if (recognitionRef.current) {
       try {
@@ -719,9 +932,11 @@ export default function Classroom() {
     }
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
     }
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
     }
     setIsRecording(false);
     setIsProcessing(true);
@@ -733,7 +948,7 @@ export default function Classroom() {
 
   // 4. Send Audio to Backend for Evaluation & Logging
   const handleRecordingStopped = async () => {
-    // Stop microphone tracks
+    // Stop microphone tracks immediately so no residual sound is captured
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
     }
@@ -745,7 +960,11 @@ export default function Classroom() {
     }
 
     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-    const elapsedSeconds = Math.max(1, Math.round((Date.now() - (startTimeRef.current || Date.now())) / 1000));
+    const endT = endTimeRef.current || Date.now();
+    const startT = startTimeRef.current || endT;
+    const rawElapsed = (endT - startT) / 1000;
+    // Deduct the trailing silence buffer (0.40s) if stopped via silence detection so WCPM reflects actual reading speed
+    const elapsedSeconds = Math.max(0.5, parseFloat((rawElapsed > 0.9 ? rawElapsed - 0.40 : rawElapsed).toFixed(2)));
 
     try {
       const formData = new FormData();
@@ -791,11 +1010,16 @@ export default function Classroom() {
       if (composite >= 90) philIriLevel = "Independent";
       else if (composite >= 75) philIriLevel = "Instructional";
 
+      const actualDuration = result.duration_seconds && result.duration_seconds > 0
+        ? parseFloat(result.duration_seconds)
+        : parseFloat(elapsedSeconds);
+
       const passageEvalData = {
         passage_id: activePassage.id,
         passage_title: activePassage.title,
         content: activePassage.content,
-        elapsedSeconds,
+        elapsedSeconds: actualDuration,
+        duration_seconds: actualDuration,
         accuracy_rate: accRate,
         wcpm: readWcpm,
         composite_score: composite,
@@ -841,7 +1065,9 @@ export default function Classroom() {
         const avgWcpm = Math.round(
           updatedResults.reduce((sum, r) => sum + r.wcpm, 0) / totalPassages
         );
-        const totalElapsed = updatedResults.reduce((sum, r) => sum + r.elapsedSeconds, 0);
+        const totalElapsed = parseFloat(
+          updatedResults.reduce((sum, r) => sum + (r.duration_seconds || r.elapsedSeconds), 0).toFixed(2)
+        );
         const totalCorrect = updatedResults.reduce((sum, r) => sum + r.correct_words, 0);
         const totalTarget = updatedResults.reduce((sum, r) => sum + r.total_target_words, 0);
         const totalErrors = updatedResults.reduce((sum, r) => sum + r.errors_detected, 0);
@@ -886,7 +1112,7 @@ export default function Classroom() {
           console.warn("Could not save to teacher classroom database:", logErr);
         }
 
-        // Format reading_logs array so Results.jsx can render each passage nicely
+        // Format reading_logs array so Results.jsx can render each passage nicely with duration_seconds
         const logsForResults = updatedResults.map((r, idx) => ({
           target_text: r.target_text,
           transcription: r.transcription || r.spoken_text,
@@ -898,6 +1124,7 @@ export default function Classroom() {
           errors_detected: r.errors_detected,
           stutter_words: r.stutter_words,
           trace: r.trace,
+          duration_seconds: r.duration_seconds || r.elapsedSeconds,
           level: `Classroom Passage #${idx + 1}: ${r.passage_title}`
         }));
 
@@ -1385,22 +1612,14 @@ export default function Classroom() {
           </div>
         )}
 
-        {/* Title Header */}
-        <div className="text-center mb-8">
-          <div className="flex flex-wrap items-center justify-center gap-2 mb-2">
-            <span className="text-xs font-bold text-[#0096FF] uppercase bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
-              {activePassage.grade_level || "Classroom"}
-            </span>
-            <span className="text-xs text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
-              {isEn ? "Assigned by:" : "Itinalaga ni:"} <strong className="text-slate-700">{activePassage.teacher_name || (isEn ? "Teacher" : "Guro")}</strong>
-            </span>
-          </div>
-          <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight mb-2">
-            {activePassage.title}
-          </h1>
-          <p className="text-gray-600 text-sm sm:text-base">
-            {isEn ? "Read the passage aloud clearly when recording begins." : "Basahin nang malinaw ang talata kapag nagsimula na ang pagre-record."}
-          </p>
+        {/* Assignment Badges */}
+        <div className="flex flex-wrap items-center justify-center gap-2 mb-6">
+          <span className="text-xs font-bold text-[#0096FF] uppercase bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
+            {activePassage.grade_level || "Classroom"}
+          </span>
+          <span className="text-xs text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
+            {isEn ? "Assigned by:" : "Itinalaga ni:"} <strong className="text-slate-700">{activePassage.teacher_name || (isEn ? "Teacher" : "Guro")}</strong>
+          </span>
         </div>
 
         {/* Reading Material Card - Matching Easy / Beginner UI */}
@@ -1446,6 +1665,31 @@ export default function Classroom() {
             </div>
           </div>
         </div>
+
+        {/* Prominent Visual Completion Notification Banner */}
+        {isSatisfiedCompleted && (
+          <div className="w-full max-w-xl mx-auto mb-6 px-6 py-4 bg-emerald-500 text-white font-extrabold text-base sm:text-lg rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-emerald-500/30 animate-pulse border-2 border-emerald-400">
+            <svg className="w-7 h-7 text-white flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+            </svg>
+            <span>{isEn ? "Reading completed! Finalizing evaluation..." : "Tapos na ang pagbasa! Isinusumite ang marka..."}</span>
+          </div>
+        )}
+
+        {/* Quick Finish Button while recording so reader can immediately finish in 0ms on demand */}
+        {isRecording && !isSatisfiedCompleted && (
+          <div className="flex justify-center mb-4">
+            <button
+              onClick={() => triggerAutoStop("manual_done_button", 0)}
+              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm uppercase tracking-wider rounded-full shadow-lg shadow-emerald-600/30 flex items-center gap-2 transform active:scale-95 transition-all hover:scale-105 border border-emerald-400/40"
+            >
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+              </svg>
+              <span>{isEn ? "I'm Done Reading" : "Tapos Na Ako Magbasa"}</span>
+            </button>
+          </div>
+        )}
 
         {/* Hidden Canvas for Visualizer Audio Processing */}
         <canvas ref={canvasRef} className="hidden" width={400} height={40} />
