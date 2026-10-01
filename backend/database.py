@@ -286,6 +286,23 @@ def activate_passage(passage_id, teacher_id):
     finally:
         conn.close()
 
+def update_all_passages_timer(teacher_id, timer_seconds):
+    """Sets the timer duration for all passages owned by the teacher."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE custom_passages
+            SET timer_seconds = ?
+            WHERE teacher_id = ?
+        """, (int(timer_seconds), int(teacher_id)))
+        conn.commit()
+        return {"success": True, "updated_count": cursor.rowcount}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
 def get_active_passage(teacher_id=None):
     """
     Returns the currently active passage.

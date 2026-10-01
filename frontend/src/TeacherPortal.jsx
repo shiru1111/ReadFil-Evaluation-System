@@ -2,8 +2,40 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useLanguage } from './contexts/LanguageContext';
 import SoundWaveBackground from './components/SoundWaveBackground';
+import { beginnerPassages, moderatePassages, expertPassages } from './data/passages';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
+
+// System Phil-IRI Passage Catalog
+const systemPassageCatalog = [
+  ...beginnerPassages.map((p, idx) => ({
+    id: `beg-${idx}`,
+    category: 'Beginner',
+    level: 'Beginner (Grade 1-3)',
+    grade: 'Grade 3',
+    title: p.text.split(' ').slice(0, 4).join(' ') + (p.text.split(' ').length > 4 ? '...' : ''),
+    content: p.text,
+    source: p.source || 'Phil-IRI Oral Reading Manual'
+  })),
+  ...moderatePassages.map((p, idx) => ({
+    id: `mod-${idx}`,
+    category: 'Moderate',
+    level: 'Moderate (Grade 4-6)',
+    grade: 'Grade 5',
+    title: p.text.split(' ').slice(0, 5).join(' ') + (p.text.split(' ').length > 5 ? '...' : ''),
+    content: p.text,
+    source: p.source || 'Phil-IRI Oral Reading Manual'
+  })),
+  ...expertPassages.map((p, idx) => ({
+    id: `exp-${idx}`,
+    category: 'Expert',
+    level: 'Expert (Grade 7+)',
+    grade: 'Grade 7',
+    title: p.source ? p.source.split(' ni ')[0] : (p.text.split(' ').slice(0, 4).join(' ') + '...'),
+    content: p.text,
+    source: p.source || 'Classical Tagalog Literature'
+  }))
+];
 
 export default function TeacherPortal() {
   const { language } = useLanguage();
@@ -44,6 +76,13 @@ export default function TeacherPortal() {
   // Dashboard Active Tab: 'passages' | 'students'
   const [activeTab, setActiveTab] = useState('passages');
 
+  // Global / Default Timer Duration for Teacher
+  const [globalTimerDuration, setGlobalTimerDuration] = useState(() => {
+    return parseInt(localStorage.getItem('readfil_teacher_default_timer'), 10) || 10;
+  });
+  const [globalTimerSaving, setGlobalTimerSaving] = useState(false);
+  const [globalTimerFeedback, setGlobalTimerFeedback] = useState('');
+
   // Passages State
   const [passages, setPassages] = useState([]);
   const [isPassageModalOpen, setIsPassageModalOpen] = useState(false);
@@ -51,8 +90,16 @@ export default function TeacherPortal() {
   const [passageTitle, setPassageTitle] = useState('');
   const [passageContent, setPassageContent] = useState('');
   const [passageGrade, setPassageGrade] = useState('Grade 4');
-  const [passageTimer, setPassageTimer] = useState(60);
+  const [passageTimer, setPassageTimer] = useState(() => {
+    return parseInt(localStorage.getItem('readfil_teacher_default_timer'), 10) || 10;
+  });
   const [passageSaving, setPassageSaving] = useState(false);
+
+  // Passage Bank Modal State (Choose from our passages)
+  const [isPassageBankModalOpen, setIsPassageBankModalOpen] = useState(false);
+  const [bankCategory, setBankCategory] = useState('all');
+  const [bankSearch, setBankSearch] = useState('');
+  const [bankImportingId, setBankImportingId] = useState(null);
 
   // Student Records State
   const [records, setRecords] = useState([]);
@@ -90,7 +137,13 @@ export default function TeacherPortal() {
       const res = await fetch(`${API_BASE}/api/teacher/passages?teacher_id=${teacher.id}`);
       if (res.ok) {
         const data = await res.json();
-        setPassages(data.passages || []);
+        const list = data.passages || [];
+        setPassages(list);
+        // If there's an active passage with timer, use it as baseline
+        const active = list.find(p => p.is_active);
+        if (active && active.timer_seconds && !localStorage.getItem('readfil_teacher_default_timer')) {
+          setGlobalTimerDuration(active.timer_seconds);
+        }
       }
     } catch (err) {
       console.error("Error fetching passages:", err);
@@ -173,7 +226,7 @@ export default function TeacherPortal() {
     }
   };
 
-  // Handle Forgot Password - Step 1: Query Question
+  // Handle Forgot Password - Step 1
   const handleForgotStep1 = async (e) => {
     e.preventDefault();
     setAuthLoading(true);
@@ -197,7 +250,7 @@ export default function TeacherPortal() {
     }
   };
 
-  // Handle Forgot Password - Step 2: Reset
+  // Handle Forgot Password - Step 2
   const handleForgotStep2 = async (e) => {
     e.preventDefault();
     setAuthLoading(true);
@@ -232,10 +285,42 @@ export default function TeacherPortal() {
     localStorage.removeItem('readfil_teacher');
   };
 
+  // Apply Global Custom Duration across all passages
+  const handleApplyGlobalTimer = async () => {
+    if (!teacher) return;
+    const duration = Math.max(5, parseInt(globalTimerDuration, 10) || 10);
+    setGlobalTimerSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/set-global-timer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          teacher_id: teacher.id,
+          timer_seconds: duration
+        })
+      });
+      if (res.ok) {
+        localStorage.setItem('readfil_teacher_default_timer', duration.toString());
+        setPassageTimer(duration);
+        setGlobalTimerFeedback(
+          isEn ? `Applied ${duration}s duration to all passages!` : `Inilapat ang ${duration}s tagal sa lahat ng talata!`
+        );
+        setTimeout(() => setGlobalTimerFeedback(''), 4000);
+        fetchPassages();
+      }
+    } catch (err) {
+      console.error("Error setting global timer:", err);
+    } finally {
+      setGlobalTimerSaving(false);
+    }
+  };
+
   // Create or Update Passage
   const handleSavePassage = async (e) => {
     e.preventDefault();
     if (!passageTitle.trim() || !passageContent.trim()) return;
+
+    const timerVal = Math.max(5, parseInt(passageTimer, 10) || 10);
 
     setPassageSaving(true);
     try {
@@ -248,7 +333,7 @@ export default function TeacherPortal() {
             title: passageTitle,
             content: passageContent,
             grade_level: passageGrade,
-            timer_seconds: parseInt(passageTimer, 10) || 60
+            timer_seconds: timerVal
           })
         });
         if (!res.ok) throw new Error(isEn ? "Failed to update passage." : "Hindi ma-update ang talata.");
@@ -261,7 +346,7 @@ export default function TeacherPortal() {
             title: passageTitle,
             content: passageContent,
             grade_level: passageGrade,
-            timer_seconds: parseInt(passageTimer, 10) || 60,
+            timer_seconds: timerVal,
             is_active: passages.length === 0
           })
         });
@@ -314,13 +399,42 @@ export default function TeacherPortal() {
     }
   };
 
+  // Import Passage from built-in repository (Choose from our passages)
+  const handleImportFromBank = async (item) => {
+    if (!teacher) return;
+    setBankImportingId(item.id);
+    try {
+      const timerVal = Math.max(5, parseInt(globalTimerDuration, 10) || 10);
+      const res = await fetch(`${API_BASE}/api/teacher/passages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          teacher_id: teacher.id,
+          title: item.title,
+          content: item.content,
+          grade_level: item.grade || 'General',
+          timer_seconds: timerVal,
+          is_active: passages.length === 0
+        })
+      });
+      if (res.ok) {
+        fetchPassages();
+        setIsPassageBankModalOpen(false);
+      }
+    } catch (err) {
+      console.error("Error importing passage from bank:", err);
+    } finally {
+      setBankImportingId(null);
+    }
+  };
+
   // Open Edit Modal
   const openEditModal = (p) => {
     setEditingPassage(p);
     setPassageTitle(p.title);
     setPassageContent(p.content);
     setPassageGrade(p.grade_level || 'Grade 4');
-    setPassageTimer(p.timer_seconds || 60);
+    setPassageTimer(p.timer_seconds || parseInt(globalTimerDuration, 10) || 10);
     setIsPassageModalOpen(true);
   };
 
@@ -330,7 +444,7 @@ export default function TeacherPortal() {
     setPassageTitle('');
     setPassageContent('');
     setPassageGrade('Grade 4');
-    setPassageTimer(60);
+    setPassageTimer(parseInt(globalTimerDuration, 10) || 10);
     setIsPassageModalOpen(true);
   };
 
@@ -339,6 +453,16 @@ export default function TeacherPortal() {
     if (!teacher) return;
     window.open(`${API_BASE}/api/teacher/records/export?teacher_id=${teacher.id}`, '_blank');
   };
+
+  // Filter System Passages in Bank Modal
+  const filteredBankPassages = systemPassageCatalog.filter(p => {
+    const matchesCategory = bankCategory === 'all' || p.category === bankCategory;
+    const matchesSearch = !bankSearch.trim() ||
+      p.title.toLowerCase().includes(bankSearch.toLowerCase()) ||
+      p.content.toLowerCase().includes(bankSearch.toLowerCase()) ||
+      p.source.toLowerCase().includes(bankSearch.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
 
   // Calculate Student Stats
   const totalStudents = records.length;
@@ -760,37 +884,121 @@ export default function TeacherPortal() {
             ------------------------------------------------------------- */}
         {activeTab === 'passages' && (
           <div>
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+            {/* Header with Title and Action Buttons */}
+            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-6">
               <div>
                 <h2 className="text-2xl font-black text-slate-900">
                   {isEn ? "Reading Passages" : "Mga Talata sa Pagbasa"}
                 </h2>
                 <p className="text-gray-500 text-sm">
                   {isEn
-                    ? "Create, edit, and set active reading passages for Classroom Mode assessment."
-                    : "Gumawa at pumili ng talatang babasahin ng buong klase sa Classroom Mode."}
+                    ? "Manage your set of custom passages or choose from our validated Phil-IRI passage repository."
+                    : "Pamahalaan ang iyong mga talata o pumili mula sa opisyal na repository ng Phil-IRI."}
                 </p>
               </div>
-              <button
-                onClick={openCreateModal}
-                className="px-6 py-3 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-2xl shadow-lg shadow-blue-500/20 flex items-center gap-2 transition-transform hover:scale-[1.02]"
-              >
-                <span className="text-xl leading-none">+</span> {isEn ? "Add New Passage" : "Magdagdag ng Bagong Talata"}
-              </button>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => setIsPassageBankModalOpen(true)}
+                  className="px-5 py-3 bg-white hover:bg-gray-50 text-[#0096FF] border border-[#0096FF]/30 font-bold rounded-2xl shadow-sm flex items-center gap-2 transition-transform hover:scale-[1.02]"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                  </svg>
+                  {isEn ? "Choose from Passage Bank" : "Pumili sa Bangko ng Talata"}
+                </button>
+
+                <button
+                  onClick={openCreateModal}
+                  className="px-6 py-3 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-2xl shadow-lg shadow-blue-500/20 flex items-center gap-2 transition-transform hover:scale-[1.02]"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/>
+                  </svg>
+                  {isEn ? "Add Custom Passage" : "Magdagdag ng Talata"}
+                </button>
+              </div>
             </div>
 
+            {/* Custom Duration & Universal Timer Control Banner */}
+            <div className="bg-white border border-gray-200 rounded-3xl p-5 sm:p-6 mb-8 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-blue-50 text-[#0096FF] flex items-center justify-center flex-shrink-0 border border-blue-100">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-base font-bold text-slate-900">
+                    {isEn ? "Class Assessment Timer Duration" : "Oras ng Pagsusulit para sa Klase"}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {isEn
+                      ? "Set a custom duration (e.g. 10s) and apply it to every passage in your class set."
+                      : "Magtakda ng pasadyang tagal (hal. 10s) at ilapat sa bawat talata sa iyong klase."}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 w-full md:w-auto">
+                <div className="flex items-center bg-gray-50 border border-gray-300 rounded-xl px-3 py-2 focus-within:border-[#0096FF] focus-within:bg-white shadow-inner">
+                  <input
+                    type="number"
+                    min="5"
+                    max="600"
+                    value={globalTimerDuration}
+                    onChange={(e) => setGlobalTimerDuration(e.target.value)}
+                    className="w-16 text-center font-black text-slate-900 bg-transparent focus:outline-none text-base"
+                  />
+                  <span className="text-xs font-bold text-gray-500 ml-1">sec</span>
+                </div>
+
+                <button
+                  onClick={handleApplyGlobalTimer}
+                  disabled={globalTimerSaving}
+                  className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-[#0096FF] hover:from-blue-700 hover:to-blue-600 text-white font-bold rounded-xl text-xs transition-all shadow-md shadow-blue-500/20 whitespace-nowrap disabled:opacity-50"
+                >
+                  {globalTimerSaving
+                    ? (isEn ? "Applying..." : "Inilalapat...")
+                    : (isEn ? "Apply to All Passages" : "Ilapat sa Lahat ng Talata")}
+                </button>
+
+                {globalTimerFeedback && (
+                  <span className="text-xs font-bold text-emerald-600 whitespace-nowrap animate-pulse">
+                    {globalTimerFeedback}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Passage Cards Grid */}
             {passages.length === 0 ? (
               <div className="bg-white border border-gray-200 rounded-3xl p-12 text-center shadow-sm">
-                <div className="w-16 h-16 bg-gray-100 text-gray-400 rounded-2xl flex items-center justify-center mx-auto mb-4 text-2xl font-bold">📄</div>
+                <div className="w-16 h-16 bg-gray-100 text-gray-400 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                  </svg>
+                </div>
                 <h3 className="text-lg font-bold text-slate-900 mb-1">
                   {isEn ? "No Saved Passages" : "Walang Naka-save na Talata"}
                 </h3>
                 <p className="text-gray-500 text-sm mb-6">
-                  {isEn ? "Get started by creating your first passage for students." : "Magsimula sa pamamagitan ng paglikha ng iyong unang babasahin para sa mga mag-aaral."}
+                  {isEn ? "Get started by choosing a passage from our Phil-IRI repository or creating a custom one." : "Magsimula sa pamamagitan ng pagpili ng talata mula sa repository o paggawa ng bago."}
                 </p>
-                <button onClick={openCreateModal} className="px-6 py-2.5 bg-[#0096FF] text-white font-bold rounded-xl text-sm shadow-md shadow-blue-500/20">
-                  {isEn ? "Create Passage Now" : "Gumawa ng Talata Ngayon"}
-                </button>
+                <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                  <button
+                    onClick={() => setIsPassageBankModalOpen(true)}
+                    className="px-6 py-2.5 bg-white border border-[#0096FF] text-[#0096FF] font-bold rounded-xl text-sm shadow-sm"
+                  >
+                    {isEn ? "Choose from Passage Bank" : "Pumili sa Bangko ng Talata"}
+                  </button>
+                  <button
+                    onClick={openCreateModal}
+                    className="px-6 py-2.5 bg-[#0096FF] text-white font-bold rounded-xl text-sm shadow-md shadow-blue-500/20"
+                  >
+                    {isEn ? "Create Custom Passage" : "Gumawa ng Bagong Talata"}
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -829,8 +1037,18 @@ export default function TeacherPortal() {
                         </p>
 
                         <div className="flex items-center gap-4 text-xs text-gray-500 mb-6 pb-4 border-b border-gray-100">
-                          <span>⏱️ <strong>{p.timer_seconds || 60}s</strong> timer</span>
-                          <span>📝 <strong>{wordCount}</strong> {isEn ? "words" : "salita"}</span>
+                          <span className="flex items-center gap-1.5">
+                            <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <strong>{p.timer_seconds || 60}s</strong> {isEn ? "timer" : "oras"}
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <strong>{wordCount}</strong> {isEn ? "words" : "salita"}
+                          </span>
                         </div>
                       </div>
 
@@ -841,7 +1059,10 @@ export default function TeacherPortal() {
                             onClick={() => handleActivatePassage(p.id)}
                             className="w-full py-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
                           >
-                            ✓ {isEn ? "Set as Active for Class" : "Gawing Aktibo para sa Klase"}
+                            <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                            {isEn ? "Set as Active for Class" : "Gawing Aktibo para sa Klase"}
                           </button>
                         )}
                         <div className="flex gap-2">
@@ -1010,6 +1231,122 @@ export default function TeacherPortal() {
       </main>
 
       {/* -------------------------------------------------------------
+          MODAL: CHOOSE FROM SYSTEM PASSAGE BANK
+          ------------------------------------------------------------- */}
+      {isPassageBankModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-4xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-start mb-4 pb-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-2xl font-black text-slate-900">
+                  {isEn ? "Phil-IRI Reading Passage Bank" : "Bangko ng mga Talata sa Pagbasa"}
+                </h3>
+                <p className="text-gray-500 text-sm mt-0.5">
+                  {isEn
+                    ? "Select any verified reading passage to add to your classroom assignments set."
+                    : "Pumili ng anumang napatunayang talata upang idagdag sa iyong klase."}
+                </p>
+              </div>
+              <button
+                onClick={() => setIsPassageBankModalOpen(false)}
+                className="p-2 text-gray-400 hover:text-slate-900 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Filter Tabs and Search Bar */}
+            <div className="flex flex-col sm:flex-row gap-3 justify-between items-stretch sm:items-center mb-6">
+              <div className="flex bg-gray-100 p-1 rounded-2xl border border-gray-200 gap-1 overflow-x-auto">
+                {['all', 'Beginner', 'Moderate', 'Expert'].map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setBankCategory(cat)}
+                    className={`px-4 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                      bankCategory === cat
+                        ? 'bg-white text-[#0096FF] shadow-sm'
+                        : 'text-gray-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {cat === 'all' ? (isEn ? 'All Levels' : 'Lahat ng Antas') : cat}
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative flex-1 sm:max-w-xs">
+                <input
+                  type="text"
+                  value={bankSearch}
+                  onChange={(e) => setBankSearch(e.target.value)}
+                  placeholder={isEn ? "Search passages..." : "Maghanap ng talata..."}
+                  className="w-full px-3.5 py-2 pl-9 bg-gray-50 border border-gray-300 rounded-xl text-xs text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
+                />
+                <svg className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+              </div>
+            </div>
+
+            {/* Passages List */}
+            <div className="flex-1 overflow-y-auto space-y-3.5 pr-2">
+              {filteredBankPassages.length === 0 ? (
+                <div className="text-center py-12 text-gray-400 text-sm">
+                  {isEn ? "No passages match your filter." : "Walang nahanap na talata na tumutugma sa filter."}
+                </div>
+              ) : (
+                filteredBankPassages.map((item) => {
+                  const words = item.content.trim().split(/\s+/).length;
+                  return (
+                    <div
+                      key={item.id}
+                      className="bg-gray-50/70 border border-gray-200 rounded-2xl p-4 sm:p-5 hover:border-blue-300 transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="text-[11px] font-bold text-[#0096FF] bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">
+                            {item.level}
+                          </span>
+                          <span className="text-xs text-gray-400">&bull;</span>
+                          <span className="text-xs text-gray-500">{item.source}</span>
+                          <span className="text-xs text-gray-400">&bull;</span>
+                          <span className="text-xs font-semibold text-gray-600">{words} {isEn ? "words" : "salita"}</span>
+                        </div>
+                        <h4 className="text-base font-bold text-slate-900 mb-1">{item.title}</h4>
+                        <p className="text-slate-600 text-xs line-clamp-2 leading-relaxed font-serif">
+                          {item.content}
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => handleImportFromBank(item)}
+                        disabled={bankImportingId === item.id}
+                        className="px-4 py-2.5 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl text-xs whitespace-nowrap shadow-sm transition-all hover:scale-[1.02] disabled:opacity-50"
+                      >
+                        {bankImportingId === item.id
+                          ? (isEn ? "Adding..." : "Idinadagdag...")
+                          : (isEn ? "Add to My Passages" : "Idagdag sa Aking Talata")}
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="pt-4 mt-4 border-t border-gray-200 text-right">
+              <button
+                onClick={() => setIsPassageBankModalOpen(false)}
+                className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-slate-700 font-bold rounded-full text-xs transition-colors"
+              >
+                {isEn ? "Close" : "Isara"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* -------------------------------------------------------------
           MODAL: ADD / EDIT PASSAGE
           ------------------------------------------------------------- */}
       {isPassageModalOpen && (
@@ -1022,9 +1359,47 @@ export default function TeacherPortal() {
             </h3>
             <p className="text-gray-500 text-sm mb-6">
               {isEn
-                ? "Set the title, content, and reading timer limit for your class assessment."
+                ? "Set the title, content, and custom reading duration for your class assessment."
                 : "Itakda ang pamagat, nilalaman, at takdang oras ng pagbasa para sa iyong klase."}
             </p>
+
+            {/* Quick Fill Dropdown from Passage Bank */}
+            {!editingPassage && (
+              <div className="mb-5 p-3.5 bg-blue-50/60 border border-blue-100 rounded-2xl">
+                <label className="block text-xs font-bold text-[#0096FF] uppercase tracking-wider mb-1.5">
+                  {isEn ? "Quick Fill from Passage Bank (Optional):" : "Mabilisang Pili mula sa Bangko ng Talata:"}
+                </label>
+                <select
+                  onChange={(e) => {
+                    const selected = systemPassageCatalog.find(p => p.id === e.target.value);
+                    if (selected) {
+                      setPassageTitle(selected.title);
+                      setPassageContent(selected.content);
+                      setPassageGrade(selected.grade);
+                    }
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-blue-200 rounded-xl text-slate-800 text-xs focus:outline-none focus:border-[#0096FF]"
+                  defaultValue=""
+                >
+                  <option value="" disabled>{isEn ? "-- Select a passage to auto-fill --" : "-- Pumili ng talata upang i-autofill --"}</option>
+                  <optgroup label={isEn ? "Beginner (Grade 1-3)" : "Baguhan (Baitang 1-3)"}>
+                    {systemPassageCatalog.filter(p => p.category === 'Beginner').slice(0, 15).map(p => (
+                      <option key={p.id} value={p.id}>{p.title}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label={isEn ? "Moderate (Grade 4-6)" : "Katamtaman (Baitang 4-6)"}>
+                    {systemPassageCatalog.filter(p => p.category === 'Moderate').slice(0, 15).map(p => (
+                      <option key={p.id} value={p.id}>{p.title}</option>
+                    ))}
+                  </optgroup>
+                  <optgroup label={isEn ? "Expert (Grade 7+)" : "Eksperto (Baitang 7+)"}>
+                    {systemPassageCatalog.filter(p => p.category === 'Expert').slice(0, 15).map(p => (
+                      <option key={p.id} value={p.id}>{p.title}</option>
+                    ))}
+                  </optgroup>
+                </select>
+              </div>
+            )}
 
             <form onSubmit={handleSavePassage} className="space-y-4">
               <div>
@@ -1037,7 +1412,7 @@ export default function TeacherPortal() {
                   value={passageTitle}
                   onChange={(e) => setPassageTitle(e.target.value)}
                   placeholder={isEn ? "e.g. The Honest Farmer" : "Hal. Ang Masipag na Magsasaka"}
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white text-sm font-medium"
                 />
               </div>
 
@@ -1061,19 +1436,38 @@ export default function TeacherPortal() {
 
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
-                    {isEn ? "Reading Timer Limit" : "Oras ng Pagbasa (Segundo)"}
+                    {isEn ? "Reading Timer (Seconds)" : "Oras ng Pagbasa (Segundo)"}
                   </label>
-                  <select
-                    value={passageTimer}
-                    onChange={(e) => setPassageTimer(parseInt(e.target.value, 10))}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:border-[#0096FF] focus:bg-white"
-                  >
-                    <option value={30}>{isEn ? "30 Seconds" : "30 Segundo"}</option>
-                    <option value={45}>{isEn ? "45 Seconds" : "45 Segundo"}</option>
-                    <option value={60}>{isEn ? "60 Seconds (1 Min)" : "60 Segundo (1 Minuto)"}</option>
-                    <option value={90}>{isEn ? "90 Seconds (1.5 Mins)" : "90 Segundo (1.5 Minuto)"}</option>
-                    <option value={120}>{isEn ? "120 Seconds (2 Mins)" : "120 Segundo (2 Minuto)"}</option>
-                  </select>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="5"
+                      max="600"
+                      required
+                      value={passageTimer}
+                      onChange={(e) => setPassageTimer(e.target.value)}
+                      placeholder="e.g. 10"
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 text-sm font-bold focus:outline-none focus:border-[#0096FF] focus:bg-white"
+                    />
+                    <span className="absolute right-4 top-3 text-xs text-gray-400 font-semibold">sec</span>
+                  </div>
+                  {/* Quick Preset Buttons */}
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {[10, 15, 20, 30, 45, 60, 90].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setPassageTimer(preset)}
+                        className={`px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors ${
+                          parseInt(passageTimer, 10) === preset
+                            ? 'bg-[#0096FF] text-white border-[#0096FF]'
+                            : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'
+                        }`}
+                      >
+                        {preset}s
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -1133,7 +1527,9 @@ export default function TeacherPortal() {
                 onClick={() => setSelectedRecord(null)}
                 className="p-2 text-gray-400 hover:text-slate-900 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
               >
-                ✕
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
 

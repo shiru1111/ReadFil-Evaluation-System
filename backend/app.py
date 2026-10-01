@@ -2667,6 +2667,20 @@ def teacher_activate_passage(passage_id):
     result = database.activate_passage(passage_id, teacher_id)
     return jsonify(result), 200 if result.get('success') else 400
 
+@app.route('/api/teacher/set-global-timer', methods=['POST'])
+def teacher_set_global_timer():
+    data = request.json or {}
+    teacher_id = data.get('teacher_id')
+    timer_seconds = data.get('timer_seconds')
+    if not teacher_id or timer_seconds is None:
+        return jsonify({"error": "teacher_id and timer_seconds required"}), 400
+    try:
+        timer_int = max(5, int(timer_seconds))
+        result = database.update_all_passages_timer(teacher_id, timer_int)
+        return jsonify(result), 200 if result.get('success') else 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
 # 3. Public Classroom Mode Endpoint (Student Reads Active Passage)
 @app.route('/api/classroom/active-passage', methods=['GET'])
 def classroom_active_passage():
