@@ -755,9 +755,9 @@ export default function Classroom() {
               return;
             }
 
-            // Secondary live satisfaction fallback
+            // Secondary live satisfaction fallback: only trigger if student completed almost the whole passage (>= 85%)
             const check = checkWordsSatisfied(activePassage?.content, totalSpoken);
-            if (check.satisfied && !hasTriggeredAutoStopRef.current) {
+            if (check.satisfied && check.matchRatio >= 0.85 && !hasTriggeredAutoStopRef.current) {
               triggerAutoStop("words_satisfied", 0);
             }
           };
@@ -831,23 +831,23 @@ export default function Classroom() {
         const totalVoiceMs = speechDurationMsRef.current;
         const matchRatio = lastSpeechMatchRatioRef.current;
 
-        // Auto-stop 1: Words are satisfied by NWA or recognizer
+        // Auto-stop 1: Words are satisfied by NWA or recognizer (last word reached!)
         if (isSatisfiedRef.current) {
           triggerAutoStop("words_satisfied", 0);
           return;
         }
 
-        // Auto-stop 2: Moderate/High word match (>= 45%) + brief pause (>= 350ms)
-        if (matchRatio >= 0.45 && silenceElapsedMs >= 350) {
-          triggerAutoStop("high_match_silence", 0);
+        // Auto-stop 2: If almost the whole passage has been recognized (>= 85%) and there is a pause (>= 750ms)
+        if (matchRatio >= 0.85 && silenceElapsedMs >= 750) {
+          triggerAutoStop("high_match_completed", 0);
           return;
         }
 
-        // Auto-stop 3: Voice Activity Completed!
-        // Student spoke for >= 300ms (typical for short phrases like "Magtulungan tayo dito")
-        // and has now stopped talking for >= 550ms!
-        if (hasSpokenRef.current && totalVoiceMs >= 300 && silenceElapsedMs >= 550) {
-          triggerAutoStop("voice_activity_completed", 0);
+        // Auto-stop 3: Student has completely stopped speaking / gave up
+        // Give 2.5 seconds of silence so students who hesitate or pause to sound out words
+        // are NEVER cut off mid-sentence!
+        if (hasSpokenRef.current && totalVoiceMs >= 250 && silenceElapsedMs >= 2500) {
+          triggerAutoStop("prolonged_silence_finish", 0);
           return;
         }
       }, 60);
@@ -963,8 +963,10 @@ export default function Classroom() {
     const endT = endTimeRef.current || Date.now();
     const startT = startTimeRef.current || endT;
     const rawElapsed = (endT - startT) / 1000;
-    // Deduct the trailing silence buffer (0.40s) if stopped via silence detection so WCPM reflects actual reading speed
-    const elapsedSeconds = Math.max(0.5, parseFloat((rawElapsed > 0.9 ? rawElapsed - 0.40 : rawElapsed).toFixed(2)));
+    // If stopped via prolonged silence (student stopped talking 2.5s ago), deduct the 2.2s silence wait
+    // so their WCPM is calculated strictly on their actual speaking time!
+    const silenceDeduction = (!isSatisfiedRef.current && rawElapsed > 2.8) ? 2.2 : (rawElapsed > 1.2 ? 0.35 : 0);
+    const elapsedSeconds = Math.max(0.5, parseFloat((rawElapsed - silenceDeduction).toFixed(2)));
 
     try {
       const formData = new FormData();
