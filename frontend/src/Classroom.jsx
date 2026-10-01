@@ -179,16 +179,20 @@ const needlemanWunschAlign = (targetWords, spokenWords) => {
   const lastSpokenAligned = targetToSpoken[lastTargetIdx];
 
   const lastWordMatched = !!(
-    lastSpokenAligned &&
-    (lastSpokenAligned === lastTargetWord ||
-     isWordMatch(lastTargetWord, lastSpokenAligned) ||
-     wordSimilarity(lastTargetWord, lastSpokenAligned) <= 0.45)
+    (lastSpokenAligned &&
+      (lastSpokenAligned === lastTargetWord ||
+       isWordMatch(lastTargetWord, lastSpokenAligned) ||
+       wordSimilarity(lastTargetWord, lastSpokenAligned) <= 0.45)) ||
+    (spokenWords.length > 0 &&
+      (spokenWords[spokenWords.length - 1] === lastTargetWord ||
+       isWordMatch(lastTargetWord, spokenWords[spokenWords.length - 1]) ||
+       wordSimilarity(lastTargetWord, spokenWords[spokenWords.length - 1]) <= 0.45))
   );
 
   const alignRatio = alignedMatches / m;
 
   // The passage reading is completed if:
-  // 1. The last target word is matched on the NWA alignment path
+  // 1. The last target word is matched on the NWA alignment path or uttered at the end
   // 2. The student has read a substantial portion of the passage:
   //    - for short passages (<= 3 words): at least 2 words or all words matched
   //    - for standard passages: at least 50% of the words matched
@@ -725,22 +729,21 @@ export default function Classroom() {
           // Set to 'fil-PH' by default for Chrome on Windows
           recognition.lang = 'fil-PH';
 
-          let accumulatedSpoken = '';
-
           recognition.onresult = (event) => {
             if (hasTriggeredAutoStopRef.current || !isRecordingRef.current) return;
 
-            let currentInterim = '';
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-              const trans = event.results[i][0].transcript;
+            let finalTranscript = '';
+            let interimTranscript = '';
+            for (let i = 0; i < event.results.length; i++) {
+              const piece = event.results[i][0].transcript;
               if (event.results[i].isFinal) {
-                accumulatedSpoken += ' ' + trans;
+                finalTranscript += piece + ' ';
               } else {
-                currentInterim += ' ' + trans;
+                interimTranscript += piece + ' ';
               }
             }
 
-            const totalSpoken = (accumulatedSpoken + ' ' + currentInterim).trim();
+            const totalSpoken = (finalTranscript + ' ' + interimTranscript).trim();
             const targetWords = tokenizeWords(activePassage?.content);
             const spokenWords = tokenizeWords(totalSpoken);
 
@@ -755,10 +758,10 @@ export default function Classroom() {
               return;
             }
 
-            // Secondary live satisfaction fallback: only trigger if student completed almost the whole passage (>= 85%)
+            // Secondary live satisfaction fallback matching Easy / Beginner UI
             const check = checkWordsSatisfied(activePassage?.content, totalSpoken);
-            if (check.satisfied && check.matchRatio >= 0.85 && !hasTriggeredAutoStopRef.current) {
-              triggerAutoStop("words_satisfied", 0);
+            if (check.satisfied && !hasTriggeredAutoStopRef.current) {
+              triggerAutoStop("words_satisfied", 150);
             }
           };
 
