@@ -164,20 +164,21 @@ def preprocess_audio(input_wav_path, output_wav_path):
     import noisereduce as nr
     reduced_noise_speech = nr.reduce_noise(y=speech, sr=sr, prop_decrease=0.5)
     
-    # Trim leading and trailing dead air (silence) while preserving natural pauses and trailing consonants
+    # Trim dead air to measure actual reading duration for WCPM calculation
     try:
-        trimmed, _ = librosa.effects.trim(reduced_noise_speech, top_db=30, frame_length=512, hop_length=128)
-        # Ensure trimmed audio is not empty (minimum 0.3s)
+        # Use safe 40 dB threshold to avoid clipping soft speech or whispers
+        trimmed, _ = librosa.effects.trim(reduced_noise_speech, top_db=40, frame_length=512, hop_length=128)
         if len(trimmed) < int(sr * 0.3):
             trimmed = reduced_noise_speech
+        duration = librosa.get_duration(y=trimmed, sr=sr)
     except Exception as e:
         print(f"[TRIM WARNING] Could not trim dead air: {e}")
-        trimmed = reduced_noise_speech
+        duration = librosa.get_duration(y=reduced_noise_speech, sr=sr)
 
-    # Write cleaned and trimmed speech array back to output WAV file
-    sf.write(output_wav_path, trimmed, sr)
-    # Return total elapsed audio duration in seconds (excluding dead air)
-    return librosa.get_duration(y=trimmed, sr=sr)
+    # Write the complete noise-reduced speech to output WAV so Wav2Vec and STT hear every word and insertion
+    sf.write(output_wav_path, reduced_noise_speech, sr)
+    # Return total active reading duration in seconds (excluding dead air)
+    return duration
 
 # =================================================================
 # 2. ACOUSTIC TRANSCRIPTION ENGINE (WAV2VEC 2.0 CTC DECODING)
@@ -1991,7 +1992,7 @@ def evaluate_audio():
             active_raw = normalize_tagalog_numbers(active_raw, target_words)
 
             w2v_expert_raw = ""
-            if safe_level in ['moderate', 'expert']:
+            if safe_level in ['moderate', 'expert', 'classroom'] or 'classroom' in safe_level or 'grade' in safe_level:
                 try:
                     w2v_expert_raw = transcribe_wav2vec(wav_clean_path)
                     print(f"[WAV2VEC] Acoustic check OK: '{w2v_expert_raw}'")
@@ -2027,12 +2028,49 @@ def evaluate_audio():
             spoken_to_target, target_to_spoken = get_alignment_mapping(target_words, cleaned_opt)
 
             target_to_w2v = {}
+            w2v_spoken_to_target = {}
+            w2v_words = []
             if w2v_expert_raw and w2v_expert_raw.strip():
                 w2v_words = clean_text(w2v_expert_raw)
-                _, target_to_w2v = get_alignment_mapping(target_words, w2v_words)
+                w2v_spoken_to_target, target_to_w2v = get_alignment_mapping(target_words, w2v_words)
 
-            # In Expert mode: Check if Resend matches target text or if the user spoke gibberish
-            if safe_level == 'expert' and w2v_expert_raw and w2v_expert_raw.strip():
+                # Recover acoustic insertions and repetitions detected by Wav2Vec that Resend smoothed over
+                w2v_insertions = {}
+                last_target = -1
+                for s_idx, w_word in enumerate(w2v_words):
+                    t_idx = w2v_spoken_to_target.get(s_idx)
+                    if t_idx is not None:
+                        last_target = t_idx
+                    else:
+                        w2v_insertions.setdefault(last_target, []).append(w_word)
+
+                resend_insertions = set()
+                last_r_target = -1
+                for r_idx, r_word in enumerate(cleaned_opt):
+                    t_idx = spoken_to_target.get(r_idx)
+                    if t_idx is not None:
+                        last_r_target = t_idx
+                    else:
+                        resend_insertions.add(last_r_target)
+
+                fused_with_insertions = []
+                if -1 in w2v_insertions and -1 not in resend_insertions:
+                    fused_with_insertions.extend(w2v_insertions[-1])
+
+                for r_idx, r_word in enumerate(cleaned_opt):
+                    t_idx = spoken_to_target.get(r_idx)
+                    fused_with_insertions.append(r_word)
+                    if t_idx is not None:
+                        if t_idx in w2v_insertions and t_idx not in resend_insertions:
+                            print(f"[ACOUSTIC INSERTION RECOVERED] After target '{target_words[t_idx]}': inserted {w2v_insertions[t_idx]}")
+                            fused_with_insertions.extend(w2v_insertions[t_idx])
+
+                if len(fused_with_insertions) > len(cleaned_opt):
+                    cleaned_opt = fused_with_insertions
+                    spoken_to_target, target_to_spoken = get_alignment_mapping(target_words, cleaned_opt)
+
+            # Check if Resend matches target text or if the user spoke gibberish
+            if w2v_expert_raw and w2v_expert_raw.strip():
                 # Check if Resend shares ANY matching letters with target text
                 target_chars_all = set("".join(target_words).lower())
                 resend_chars_all = set("".join(cleaned_opt).lower())
@@ -2044,15 +2082,14 @@ def evaluate_audio():
                 ) or has_any_common_char
 
                 # Only use Wav2Vec if Resend is completely unmatched (no matching letters at all / 99%+ different)
-                if not resend_has_matched_letters:
+                if not resend_has_matched_letters and safe_level == 'expert':
                     print(f"[EXPERT] Resend has no matching letters on target text (complete mismatch). Using Wav2Vec to display gibberish!")
                     active_raw = w2v_expert_raw
                     spoken_words = clean_text(active_raw)
                     cleaned_opt = spoken_words
                     spoken_to_target, target_to_spoken = get_alignment_mapping(target_words, cleaned_opt)
                 else:
-                    # Resend has matching letters: keep Resend!
-                    # 1) Transfer acoustic vowel shifts letter-by-letter from Wav2Vec
+                    # Resend has matching letters: keep Resend and transfer acoustic vowel shifts letter-by-letter from Wav2Vec
                     for idx_spoken, idx_target in spoken_to_target.items():
                         if idx_target is not None and idx_target in target_to_w2v:
                             w2v_word = target_to_w2v[idx_target]
@@ -2061,7 +2098,7 @@ def evaluate_audio():
                                 resend_word = cleaned_opt[idx_spoken]
                                 transferred = transfer_vowel_shifts_from_w2v(target_word, resend_word, w2v_word)
                                 if transferred != resend_word:
-                                    print(f"[EXPERT VOWEL SHIFT] Word '{target_word}': Resend='{resend_word}', W2V='{w2v_word}' -> Transferred='{transferred}'")
+                                    print(f"[ACOUSTIC VOWEL SHIFT] Word '{target_word}': Resend='{resend_word}', W2V='{w2v_word}' -> Transferred='{transferred}'")
                                     cleaned_opt[idx_spoken] = transferred
 
             final_opt = list(cleaned_opt)
