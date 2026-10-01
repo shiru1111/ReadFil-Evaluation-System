@@ -3,6 +3,8 @@ export const en = {
     criteria: "Criteria",
     algorithm: "Algorithm",
     simulation: "Simulation",
+    classroom: "Classroom Mode",
+    teacher: "Teacher Portal",
     about_us: "About Us",
     return_home: "Return Home"
   },
@@ -13,6 +15,9 @@ export const en = {
   },
   levels: {
     title: "Select Your Level",
+    classroom: "Classroom Mode",
+    classroom_desc: "Take an assigned reading quiz created by your teacher with a live countdown timer.",
+    start_classroom: "Enter Classroom",
     beginner: "Beginner",
     beginner_desc: "Start your reading journey here with short sentences and simple everyday words.",
     start_beginner: "Start Beginner",

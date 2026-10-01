@@ -11,6 +11,8 @@ import ScrollToTop from './ScrollToTop.jsx'
 import Results from './Results.jsx'
 import Simulation from './Simulation.jsx'
 import AdminMode from './AdminMode.jsx'
+import Classroom from './Classroom.jsx'
+import TeacherPortal from './TeacherPortal.jsx'
 import ProtectedRoute from './ProtectedRoute.jsx'
 import NotFound from './NotFound.jsx'
 import './index.css'
@@ -25,6 +27,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/" element={<App />} />
         <Route path="/terms" element={<TermsAndConditions />} />
         
+        {/* Classroom Mode (Student Assessment) & Teacher Portal */}
+        <Route path="/classroom" element={<Classroom />} />
+        <Route path="/teacher" element={<TeacherPortal />} />
+
         {/* Protected User Routes */}
         <Route path="/beginner" element={<ProtectedRoute><Beginner /></ProtectedRoute>} />
         <Route path="/moderate" element={<ProtectedRoute><Moderate /></ProtectedRoute>} />

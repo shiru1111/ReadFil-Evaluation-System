@@ -3,6 +3,8 @@ export const tl = {
     criteria: "Pamantayan",
     algorithm: "Algoritmo",
     simulation: "Simulasyon",
+    classroom: "Modo ng Klase",
+    teacher: "Portal ng Guro",
     about_us: "Tungkol sa Amin",
     return_home: "Bumalik sa Simula"
   },
@@ -13,6 +15,9 @@ export const tl = {
   },
   levels: {
     title: "Piliin ang Iyong Antas",
+    classroom: "Modo ng Klase",
+    classroom_desc: "Kumuha ng pagsusulit sa pagbasa na itinalaga ng iyong guro na may takdang oras.",
+    start_classroom: "Pumasok sa Klase",
     beginner: "Baguhan",
     beginner_desc: "Simulan ang iyong paglalakbay sa pagbabasa dito gamit ang maiikling pangungusap at simpleng pangaraw-araw na salita.",
     start_beginner: "Simulan ang Baguhan",

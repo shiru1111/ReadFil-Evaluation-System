@@ -9,4 +9,5 @@ dist/
 
 .env
 backend/.env
-
+*.db
+backend/*.db

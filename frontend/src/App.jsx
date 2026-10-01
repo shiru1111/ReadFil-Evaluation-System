@@ -179,6 +179,16 @@ export default function App() {
               {t('nav.simulation')}
             </Link>
           </li>
+          <li>
+            <Link to="/classroom" className="hover:text-[#0096FF] transition-colors font-bold uppercase tracking-wide text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
+              {t('nav.classroom') || 'Classroom'}
+            </Link>
+          </li>
+          <li>
+            <Link to="/teacher" className="hover:text-[#0096FF] transition-colors font-semibold uppercase tracking-wide">
+              {t('nav.teacher') || 'Teacher Portal'}
+            </Link>
+          </li>
           <li><a href="#footer" className="hover:text-[#0096FF] transition-colors">{t('nav.about_us')}</a></li>
         </ul>
 
@@ -223,6 +233,20 @@ export default function App() {
             onClick={() => setIsMobileMenuOpen(false)}
           >
             {t('nav.simulation')}
+          </Link>
+          <Link 
+            to="/classroom" 
+            className="text-left text-blue-600 font-bold hover:text-[#0096FF] transition-colors" 
+            onClick={() => setIsMobileMenuOpen(false)}
+          >
+            {t('nav.classroom') || 'Classroom Mode'}
+          </Link>
+          <Link 
+            to="/teacher" 
+            className="text-left text-gray-800 hover:text-[#0096FF] transition-colors" 
+            onClick={() => setIsMobileMenuOpen(false)}
+          >
+            {t('nav.teacher') || 'Teacher Portal'}
           </Link>
           <a 
             href="#footer" 
@@ -289,6 +313,38 @@ export default function App() {
               <button onClick={() => handleOpenModal('Expert')} className="w-full bg-[#005FA3] text-white py-3 rounded-full hover:bg-blue-600 transition-colors font-bold">
                 {t('levels.start_expert')}
               </button>
+            </div>
+          </div>
+
+          {/* CLASSROOM ASSESSMENT MODE CARD */}
+          <div className="mb-8 bg-gradient-to-r from-blue-600 via-indigo-600 to-[#0096FF] p-[2px] rounded-2xl sm:rounded-[2rem] shadow-xl hover:-translate-y-2 transition-transform">
+            <div className="bg-white p-6 sm:p-8 lg:p-10 rounded-2xl sm:rounded-[2rem] flex flex-col md:flex-row items-center justify-between text-center md:text-left h-full w-full">
+              <div className="mb-6 md:mb-0 md:mr-8">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-xs font-black uppercase tracking-wider mb-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-600 animate-ping"></span>
+                  Bago: Itinalaga ng Guro (Teacher Assignment)
+                </div>
+                <h3 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mb-2">
+                  {t('levels.classroom') || 'Classroom Mode'}
+                </h3>
+                <p className="text-gray-600 max-w-2xl text-base sm:text-lg">
+                  {t('levels.classroom_desc') || 'Kumuha ng pagsusulit sa pagbasa na itinalaga ng iyong guro na may live countdown timer at automated Phil-IRI evaluation.'}
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+                <Link
+                  to="/classroom"
+                  className="px-8 py-4 bg-gradient-to-r from-blue-600 to-[#0096FF] hover:from-blue-700 hover:to-blue-600 text-white rounded-full font-black text-lg whitespace-nowrap shadow-lg shadow-blue-500/25 transition-all text-center"
+                >
+                  {t('levels.start_classroom') || 'Pumasok sa Klase'}
+                </Link>
+                <Link
+                  to="/teacher"
+                  className="px-6 py-4 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-full font-bold text-sm whitespace-nowrap transition-colors text-center border border-gray-200"
+                >
+                  {t('nav.teacher') || 'Teacher Portal'}
+                </Link>
+              </div>
             </div>
           </div>
 

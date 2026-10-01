@@ -1,8 +1,12 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import os
 import sys
 from collections import Counter
+import database
+
+# Initialize SQLite database for Teacher Portal and Classroom Mode
+database.init_db()
 
 # Apply Linux-specific ffmpeg paths only if running on a POSIX (Linux/Mac) system
 if os.name == 'posix':
@@ -281,7 +285,7 @@ def transcribe_resend(wav_path, target_words=None):
     """
     api_key = os.getenv("Resend_api_key") or os.getenv("RESEND_API_KEY")
     if not api_key:
-        print("[RESEND] Notice: Resend_api_key not set in .env. Falling back to local Wav2Vec.")
+        print("[TOKEN AVAILABILITY] Notice: Resend_api_key not configured. Gracefully falling back to local quantized Wav2Vec 2.0.")
         return None
     try:
         from resend_stt import ResendSTTClient, CreateTranscriptionConfig
@@ -295,7 +299,7 @@ def transcribe_resend(wav_path, target_words=None):
         print(f"[RESEND] Cloud transcription OK: '{text}'")
         return text
     except Exception as e:
-        print(f"[RESEND] Error during cloud transcription: {e}. Falling back to local Wav2Vec.")
+        print(f"[TOKEN AVAILABILITY] Cloud STT token warning or API unreachable: {e}. Gracefully falling back to local quantized Wav2Vec 2.0.")
         return None
 
 # =================================================================
@@ -2546,6 +2550,203 @@ def send_certificate_email():
     except Exception as e:
         print(f"[ERROR] Failed to send email: {e}")
         return jsonify({"error": str(e)}), 500
+
+# =================================================================
+# CLASSROOM MODE & TEACHER PORTAL API ENDPOINTS (SQLITE PERSISTED)
+# =================================================================
+
+# 1. Teacher Authentication & Password Recovery
+@app.route('/api/teacher/register', methods=['POST'])
+def teacher_register():
+    data = request.json or {}
+    name = data.get('name', '').strip()
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    email = data.get('email', '').strip()
+    security_question = data.get('security_question', '').strip()
+    security_answer = data.get('security_answer', '').strip()
+
+    if not all([name, username, password, email, security_question, security_answer]):
+        return jsonify({"success": False, "error": "All fields are required."}), 400
+
+    result = database.register_teacher(name, username, password, email, security_question, security_answer)
+    status_code = 200 if result.get('success') else 400
+    return jsonify(result), status_code
+
+@app.route('/api/teacher/login', methods=['POST'])
+def teacher_login():
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+
+    if not username or not password:
+        return jsonify({"success": False, "error": "Username and password are required."}), 400
+
+    result = database.authenticate_teacher(username, password)
+    status_code = 200 if result.get('success') else 401
+    return jsonify(result), status_code
+
+@app.route('/api/teacher/security-question/<username>', methods=['GET'])
+def teacher_security_question(username):
+    result = database.get_teacher_security_question(username)
+    status_code = 200 if result.get('success') else 404
+    return jsonify(result), status_code
+
+@app.route('/api/teacher/forgot-password/reset', methods=['POST'])
+def teacher_forgot_password_reset():
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    security_answer = data.get('security_answer', '').strip()
+    new_password = data.get('new_password', '').strip()
+
+    if not all([username, security_answer, new_password]):
+        return jsonify({"success": False, "error": "Username, security answer, and new password are required."}), 400
+
+    result = database.verify_and_reset_password(username, security_answer, new_password)
+    status_code = 200 if result.get('success') else 400
+    return jsonify(result), status_code
+
+# 2. Custom Passages (Teacher)
+@app.route('/api/teacher/passages', methods=['GET', 'POST'])
+def teacher_passages():
+    if request.method == 'GET':
+        teacher_id = request.args.get('teacher_id', type=int)
+        if not teacher_id:
+            return jsonify({"error": "teacher_id query parameter required"}), 400
+        passages = database.get_teacher_passages(teacher_id)
+        return jsonify({"passages": passages}), 200
+
+    elif request.method == 'POST':
+        data = request.json or {}
+        teacher_id = data.get('teacher_id')
+        title = data.get('title', '').strip()
+        content = data.get('content', '').strip()
+        grade_level = data.get('grade_level', 'General').strip()
+        timer_seconds = data.get('timer_seconds', 60)
+        is_active = bool(data.get('is_active', False))
+
+        if not teacher_id or not title or not content:
+            return jsonify({"error": "teacher_id, title, and content are required"}), 400
+
+        result = database.create_passage(teacher_id, title, content, grade_level, timer_seconds, is_active)
+        return jsonify(result), 200 if result.get('success') else 400
+
+@app.route('/api/teacher/passages/<int:passage_id>', methods=['PUT', 'DELETE'])
+def teacher_passage_detail(passage_id):
+    if request.method == 'PUT':
+        data = request.json or {}
+        teacher_id = data.get('teacher_id')
+        title = data.get('title', '').strip()
+        content = data.get('content', '').strip()
+        grade_level = data.get('grade_level', 'General').strip()
+        timer_seconds = data.get('timer_seconds', 60)
+
+        if not teacher_id or not title or not content:
+            return jsonify({"error": "teacher_id, title, and content are required"}), 400
+
+        result = database.update_passage(passage_id, teacher_id, title, content, grade_level, timer_seconds)
+        return jsonify(result), 200 if result.get('success') else 400
+
+    elif request.method == 'DELETE':
+        teacher_id = request.args.get('teacher_id', type=int)
+        if not teacher_id:
+            return jsonify({"error": "teacher_id query parameter required"}), 400
+        result = database.delete_passage(passage_id, teacher_id)
+        return jsonify(result), 200 if result.get('success') else 400
+
+@app.route('/api/teacher/passages/<int:passage_id>/activate', methods=['POST'])
+def teacher_activate_passage(passage_id):
+    data = request.json or {}
+    teacher_id = data.get('teacher_id')
+    if not teacher_id:
+        return jsonify({"error": "teacher_id required"}), 400
+    result = database.activate_passage(passage_id, teacher_id)
+    return jsonify(result), 200 if result.get('success') else 400
+
+# 3. Public Classroom Mode Endpoint (Student Reads Active Passage)
+@app.route('/api/classroom/active-passage', methods=['GET'])
+def classroom_active_passage():
+    teacher_id = request.args.get('teacher_id', type=int)
+    passage = database.get_active_passage(teacher_id)
+    if not passage:
+        return jsonify({"error": "No active passage found. Please contact your teacher."}), 404
+    return jsonify(passage), 200
+
+# 4. Student Results Logging & Monitoring
+@app.route('/api/classroom/submit-result', methods=['POST'])
+def classroom_submit_result():
+    data = request.json or {}
+    teacher_id = data.get('teacher_id')
+    passage_id = data.get('passage_id')
+    student_name = data.get('student_name', 'Student').strip()
+    passage_title = data.get('passage_title', '').strip()
+    accuracy_rate = data.get('accuracy_rate', 0.0)
+    wcpm = data.get('wcpm', 0.0)
+    composite_score = data.get('composite_score', 0.0)
+    reading_level = data.get('reading_level', 'Instructional')
+    duration_seconds = data.get('duration_seconds', 0.0)
+    correct_words = data.get('correct_words', 0)
+    total_target_words = data.get('total_target_words', 0)
+    errors_detected = data.get('errors_detected', 0)
+    stutter_words = data.get('stutter_words', [])
+    trace_json = data.get('trace', [])
+
+    if not teacher_id:
+        # Fallback to active passage teacher_id if not provided
+        act = database.get_active_passage()
+        teacher_id = act['teacher_id'] if act else 1
+
+    result = database.save_student_result(
+        teacher_id=teacher_id,
+        passage_id=passage_id,
+        student_name=student_name,
+        passage_title=passage_title,
+        accuracy_rate=accuracy_rate,
+        wcpm=wcpm,
+        composite_score=composite_score,
+        reading_level=reading_level,
+        duration_seconds=duration_seconds,
+        correct_words=correct_words,
+        total_target_words=total_target_words,
+        errors_detected=errors_detected,
+        stutter_words=stutter_words,
+        trace_json=trace_json
+    )
+    return jsonify(result), 200 if result.get('success') else 400
+
+@app.route('/api/teacher/records', methods=['GET'])
+def teacher_records():
+    teacher_id = request.args.get('teacher_id', type=int)
+    search = request.args.get('search', type=str)
+    if not teacher_id:
+        return jsonify({"error": "teacher_id parameter required"}), 400
+    records = database.get_teacher_student_results(teacher_id, search)
+    return jsonify({"records": records}), 200
+
+@app.route('/api/teacher/records/export', methods=['GET'])
+def teacher_records_export():
+    teacher_id = request.args.get('teacher_id', type=int)
+    if not teacher_id:
+        return jsonify({"error": "teacher_id parameter required"}), 400
+    csv_content = database.export_teacher_results_to_csv(teacher_id)
+    return Response(
+        csv_content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=readfil_class_records_teacher_{teacher_id}.csv"}
+    )
+
+# 5. Token Availability & Health Check
+@app.route('/api/system/token-status', methods=['GET'])
+def system_token_status():
+    api_key = os.getenv("Resend_api_key") or os.getenv("RESEND_API_KEY")
+    has_key = bool(api_key and len(api_key.strip()) > 10)
+    return jsonify({
+        "cloud_stt_configured": has_key,
+        "mode": "HYBRID_CLOUD_LOCAL" if has_key else "LOCAL_WAV2VEC_ONLY",
+        "local_w2v_status": "ONLINE (Quantized 8-bit)",
+        "fallback_available": True
+    }), 200
+
 if __name__ == '__main__':
     print("Starting Flask server...")
     app.run(host='0.0.0.0', port=5000, debug=True)
