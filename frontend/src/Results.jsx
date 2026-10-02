@@ -4,7 +4,8 @@ import html2canvas from 'html2canvas';
 import { useLanguage } from './contexts/LanguageContext';
 
 export default function Results() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const isEn = language === 'en';
   const navigate = useNavigate();
   const certificateRef = useRef(null);
 
@@ -103,8 +104,13 @@ export default function Results() {
 
     const isPureVowelShift = (w1, w2) => {
       if (!w1 || !w2) return false;
-      const s1 = (w1 || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      const s2 = (w2 || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      let s1 = (w1 || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      let s2 = (w2 || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (s1 === s2) return false;
+      for (const [ny, ni] of [['nya', 'nia'], ['nyo', 'nio'], ['nye', 'nie']]) {
+        s1 = s1.replaceAll(ni, ny);
+        s2 = s2.replaceAll(ni, ny);
+      }
       if (s1 === s2 || s1.length !== s2.length) return false;
       let diff = 0;
       for (let k = 0; k < s1.length; k++) {
@@ -305,6 +311,24 @@ export default function Results() {
     }
   };
 
+  const isClassroom = (resultData.level || '').toLowerCase().includes('classroom') ||
+                      localStorage.getItem('is_classroom_session') === 'true';
+
+  const handleClassroomTestAgain = () => {
+    // Clear previous student credentials and results so the next student provides a new name
+    localStorage.removeItem('user_firstName');
+    localStorage.removeItem('user_lastName');
+    localStorage.removeItem('final_accuracy');
+    localStorage.removeItem('final_wcpm');
+    localStorage.removeItem('evaluated_level');
+    localStorage.removeItem('reading_logs');
+    localStorage.removeItem('is_classroom_session');
+
+    // Instruct Classroom to prompt for the next student's name immediately
+    sessionStorage.setItem('classroom_prompt_new_student', 'true');
+    navigate('/classroom');
+  };
+
   const handleReturnHome = () => {
     localStorage.removeItem('final_accuracy');
     localStorage.removeItem('final_wcpm');
@@ -313,6 +337,8 @@ export default function Results() {
     localStorage.removeItem('user_firstName');
     localStorage.removeItem('user_lastName');
     localStorage.removeItem('user_email');
+    localStorage.removeItem('is_classroom_session');
+    sessionStorage.removeItem('classroom_prompt_new_student');
     navigate('/');
   };
 
@@ -412,6 +438,18 @@ export default function Results() {
         </div>
 
         <div className="mt-8 flex flex-col sm:flex-row justify-end items-center gap-3 sm:gap-4">
+          {isClassroom && (
+            <button 
+              onClick={handleClassroomTestAgain}
+              className="w-full sm:w-auto px-6 py-3 bg-[#0096FF] text-white font-bold text-xs uppercase tracking-widest shadow-md hover:bg-blue-600 transition-colors text-center flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              <span>{isEn ? "Test Again (New Student)" : "Subukan Muli (Ibang Pangalan)"}</span>
+            </button>
+          )}
+
           <button 
             onClick={() => window.open('/simulation', '_blank')}
             className="w-full sm:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm hover:text-[#0096FF] transition-colors text-center"

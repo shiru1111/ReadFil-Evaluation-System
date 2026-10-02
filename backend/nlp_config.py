@@ -20,6 +20,7 @@ SYNONYM_PAIRS = [
     {'tiago', 'tiyago'},
     {'atenas', 'athinas', 'atinas', 'athenas'},
     {'albania', 'albanya'},
+    {'berbanya', 'burbanya', 'berbania', 'burbania', 'verbanya', 'verbania'},
     {'kasamahang', 'Kkasamamahang'},
     {'kasama', 'kkasamama'}
 ]
@@ -50,4 +51,12 @@ EXPERT_CORRECTIONS = {
     'mahihi ng': 'mahihinang',
     'mahihing': 'mahihinang',
     'kkasamama': 'kasama',
+    'burbanya': 'berbanya',
+    'Burbanya': 'Berbanya',
+    'burbania': 'berbanya',
+    'Burbania': 'Berbanya',
+    'verbanya': 'berbanya',
+    'Verbanya': 'Berbanya',
+    'verbania': 'berbanya',
+    'Verbania': 'Berbanya',
 }

@@ -654,6 +654,7 @@ def phonetic_normalize(word):
 
     # Normalize Tagalog dipthong vowels and phonetic variations:
     w = w.replace('y', 'i')
+    w = re.sub(r'i+', 'i', w)
     w = w.replace('w', 'o')
     w = w.replace('ch', 'ts')
     w = w.replace('j', 'dy')
@@ -664,6 +665,36 @@ def phonetic_normalize(word):
     w = w.replace('c', 'k')  # 'c' is usually 'k' in Tagalog phonetics (e.g. kochi -> kotsi)
     w = w.replace('q', 'k')
     return w
+
+def harmonize_nya_nia(target_word, spoken_word):
+    """
+    Tagalog phonetics: 'nya' and 'nia', 'nyo' and 'nio', 'nye' and 'nie' have identical pronunciation.
+    If the target passage uses 'ny' (e.g. 'Berbanya') and STT detected 'ni' (e.g. 'Birbania'),
+    harmonizes spoken_word to use the target's 'ny' convention ('Birbanya'), and vice versa.
+    """
+    if not target_word or not spoken_word:
+        return spoken_word
+    t_low = target_word.lower()
+    s_low = spoken_word.lower()
+    res = spoken_word
+    pairs = [('nya', 'nia'), ('nyo', 'nio'), ('nye', 'nie')]
+    for ny, ni in pairs:
+        if ny in t_low and ni in s_low:
+            def repl(m):
+                txt = m.group(0)
+                if txt.isupper(): return ny.upper()
+                if txt[0].isupper(): return ny.capitalize()
+                return ny
+            res = re.sub(re.escape(ni), repl, res, flags=re.IGNORECASE)
+        elif ni in t_low and ny in s_low:
+            def repl(m):
+                txt = m.group(0)
+                if txt.isupper(): return ni.upper()
+                if txt[0].isupper(): return ni.capitalize()
+                return ni
+            res = re.sub(re.escape(ny), repl, res, flags=re.IGNORECASE)
+    return res
+
 
 # =================================================================
 # CONSONANT SKELETON UTILITIES — Letter-level verification
@@ -759,6 +790,11 @@ def is_pure_vowel_shift(word1, word2):
         return False
     w1 = re.sub(r'[^a-z0-9]', '', str(word1).lower())
     w2 = re.sub(r'[^a-z0-9]', '', str(word2).lower())
+    if w1 == w2:
+        return False
+    for ny, ni in [('nya', 'nia'), ('nyo', 'nio'), ('nye', 'nie')]:
+        w1 = w1.replace(ni, ny)
+        w2 = w2.replace(ni, ny)
     if w1 == w2:
         return False
     if len(w1) != len(w2):
@@ -1471,6 +1507,11 @@ def detect_stutters(final_opt, target_words):
     spoken_to_target, _ = get_alignment_mapping(target_words, final_opt)
     
     for idx, s_word in enumerate(final_opt):
+        # Scenario 0: Immediate consecutive duplicate of the same word (e.g. 'at at', 'sandaling sandaling')
+        if idx > 0 and s_word.lower() == final_opt[idx - 1].lower():
+            stutter_words.append(s_word)
+            continue
+
         t_idx = spoken_to_target.get(idx)
         
         # Scenario 1: It aligns to a target word but is a stuttered version of it
@@ -1489,7 +1530,7 @@ def detect_stutters(final_opt, target_words):
                         t_norm = phonetic_normalize(t_word)
                         s_norm = phonetic_normalize(s_word)
                         # If the insertion is just a syllable that exists in the target word
-                        if len(s_norm) <= len(t_norm) and s_norm in t_norm:
+                        if (len(s_norm) <= len(t_norm) and s_norm in t_norm) or is_stutter(t_word, s_word):
                             stutter_words.append(s_word)
                             is_adjacent_stutter = True
                             break
@@ -1855,11 +1896,125 @@ def match_original_casing_and_punctuation(target_text, transcription):
             
     return " ".join(trans_words)
 
+def inject_wav2vec_stutters(final_opt, spoken_to_target, target_words, w2v_words, w2v_spoken_to_target):
+    """
+    Recovers genuine acoustic stutters captured by Wav2Vec 2.0 that were smoothed out
+    or omitted by Resend's cloud language model.
+    E.g.:
+    - Full-word stutters: Wav2Vec heard 'at at marinig', Resend heard 'at marinig' -> injects 'at'
+    - Partial/syllable stutters: Wav2Vec heard 'nagkas nagkasalubong', Resend heard 'nagkasalubong' -> injects 'nagkas'
+    """
+    if not w2v_words or not final_opt:
+        return final_opt, spoken_to_target
+
+    target_to_spoken_idx = {}
+    for s_idx, t_idx in spoken_to_target.items():
+        if t_idx is not None and t_idx not in target_to_spoken_idx:
+            target_to_spoken_idx[t_idx] = s_idx
+
+    stutters_to_inject = []
+
+    for k in range(len(w2v_words)):
+        curr_w2v = w2v_words[k].lower()
+        curr_t_idx = w2v_spoken_to_target.get(k)
+
+        # Check if curr_w2v is a repetition or prefix stutter of the NEXT w2v word
+        if k + 1 < len(w2v_words):
+            next_t_idx = w2v_spoken_to_target.get(k + 1)
+            next_w2v = w2v_words[k + 1].lower()
+
+            if next_t_idx is not None and next_t_idx < len(target_words):
+                t_word = target_words[next_t_idx].lower()
+                next_is_target = (
+                    phonetic_normalize(next_w2v) == phonetic_normalize(t_word) or
+                    check_is_synonym(t_word, next_w2v) or
+                    modified_levenshtein(t_word, next_w2v) <= 0.2
+                )
+                
+                # Check if curr and next together form the target word (split compound token, not a stutter)
+                joined_pair = (curr_w2v + next_w2v).replace('-', '')
+                t_clean = t_word.replace('-', '')
+                is_split_token = (joined_pair == t_clean or modified_levenshtein(t_clean, joined_pair) <= 0.15)
+                
+                if not is_split_token and next_is_target:
+                    # Condition A: Full word repetition in W2V (e.g. 'at' 'at', 'sandaling' 'sandaling')
+                    is_full_repeat = (curr_w2v == next_w2v or phonetic_normalize(curr_w2v) == phonetic_normalize(next_w2v))
+                    
+                    # Condition B: Prefix / syllable stutter in W2V (e.g. 'nagkas' 'nagkasalubong', 'lum' 'lumapit')
+                    is_prefix_stutter = (
+                        curr_t_idx is None and
+                        len(curr_w2v) >= 2 and
+                        len(curr_w2v) < len(t_word) and
+                        (t_word.startswith(curr_w2v) or phonetic_normalize(t_word).startswith(phonetic_normalize(curr_w2v)) or is_stutter(t_word, curr_w2v))
+                    )
+
+                    if is_full_repeat or is_prefix_stutter:
+                        # Safety check 1: Target sequence check.
+                        # If target_words[next_t_idx + 1] starts with curr_w2v or next_w2v (e.g. 'ang' followed by 'angking'),
+                        # the multiple occurrences in audio represent target words, NOT an acoustic stutter.
+                        is_target_sequence = False
+                        if next_t_idx + 1 < len(target_words):
+                            follower_t = target_words[next_t_idx + 1].lower()
+                            if follower_t.startswith(curr_w2v) or phonetic_normalize(follower_t).startswith(phonetic_normalize(curr_w2v)):
+                                if (next_t_idx + 1) in target_to_spoken_idx:
+                                    is_target_sequence = True
+
+                        if next_t_idx > 0:
+                            prev_t = target_words[next_t_idx - 1].lower()
+                            if (prev_t == curr_w2v or phonetic_normalize(prev_t) == phonetic_normalize(curr_w2v)) and t_word.startswith(curr_w2v):
+                                if (next_t_idx - 1) in target_to_spoken_idx:
+                                    is_target_sequence = True
+
+                        if k + 2 < len(w2v_words) and next_t_idx + 1 < len(target_words):
+                            w2v_third = w2v_words[k + 2].lower()
+                            follower_t_clean = target_words[next_t_idx + 1].lower().replace('-', '')
+                            combined_subsequent = (next_w2v + w2v_third).replace('-', '')
+                            if combined_subsequent.startswith(follower_t_clean) or follower_t_clean.startswith(next_w2v):
+                                if (next_t_idx + 1) in target_to_spoken_idx:
+                                    is_target_sequence = True
+
+                        if is_target_sequence:
+                            continue
+
+                        # Check if Resend (final_opt) already has this stutter before next_t_idx
+                        resend_s_idx = target_to_spoken_idx.get(next_t_idx)
+                        if resend_s_idx is not None:
+                            has_stutter_already = False
+                            if resend_s_idx > 0:
+                                prev_resend_w = final_opt[resend_s_idx - 1].lower()
+                                if prev_resend_w == curr_w2v or (is_full_repeat and prev_resend_w == t_word):
+                                    has_stutter_already = True
+
+                            # Safety check 2: Wav2Vec must contain MORE occurrences of this token/prefix than Resend
+                            w2v_count = sum(1 for w in w2v_words[max(0, k-1):min(len(w2v_words), k+3)] if w.lower() == curr_w2v or w.lower().startswith(curr_w2v))
+                            resend_window = final_opt[max(0, resend_s_idx-1):min(len(final_opt), resend_s_idx+3)]
+                            resend_count = sum(1 for w in resend_window if w.lower() == curr_w2v or w.lower().startswith(curr_w2v))
+                            if resend_count >= w2v_count:
+                                has_stutter_already = True
+
+                            if not has_stutter_already:
+                                stutters_to_inject.append((next_t_idx, w2v_words[k], 'before'))
+
+    # Inject stutters into final_opt from right to left so indices don't shift
+    new_opt = list(final_opt)
+    for t_idx, st_word, pos in sorted(stutters_to_inject, key=lambda x: x[0], reverse=True):
+        s_idx = target_to_spoken_idx.get(t_idx)
+        if s_idx is not None:
+            insert_pos = s_idx if pos == 'before' else s_idx + 1
+            print(f"[INJECT W2V STUTTER] Stutter '{st_word}' injected {pos} target word '{target_words[t_idx]}'")
+            new_opt.insert(insert_pos, st_word)
+
+    new_spoken_to_target, _ = get_alignment_mapping(target_words, new_opt)
+    return new_opt, new_spoken_to_target
+
+
 def dedup_expert_fragment_doublings(final_opt, fused_spoken_to_target, target_words):
     """
     Expert mode deduplication: Prevents fragmented acoustic pieces (e.g. 'na', 'walang')
     from lingering in front of or behind an aligned target compound word (e.g. 'Nawalang-saysay'),
     which causes duplicated phrases like 'na walang Nawalang-saysay'.
+    
+    CRITICAL: MUST NEVER remove genuine student stutters or repeated words (e.g. 'sandaling sandaling', 'at at', 'nagkas nagkasalubong')!
     """
     if not final_opt:
         return final_opt
@@ -1872,7 +2027,12 @@ def dedup_expert_fragment_doublings(final_opt, fused_spoken_to_target, target_wo
     for idx_spoken, idx_target in fused_spoken_to_target.items():
         if idx_target is not None and idx_target < len(t_clean_list):
             t_clean = t_clean_list[idx_target]
+            orig_target = target_words[idx_target]
             
+            # ONLY dedup fragments if target word is a hyphenated compound (e.g. Nawalang-saysay, nagpabalik-balik)
+            if '-' not in orig_target:
+                continue
+
             # Check backward unaligned insertions
             back_words = []
             back_indices = []
@@ -1885,7 +2045,8 @@ def dedup_expert_fragment_doublings(final_opt, fused_spoken_to_target, target_wo
             if back_words:
                 for start_k in range(len(back_words)):
                     sub_joined = ''.join(back_words[start_k:]).replace('c', 's').replace('-', '').replace("'", "")
-                    if t_clean.startswith(sub_joined) and len(sub_joined) >= 2:
+                    # NEVER remove identical word repetition (stutter like sandaling sandaling)
+                    if sub_joined != t_clean and t_clean.startswith(sub_joined) and len(sub_joined) >= 2:
                         for r_idx in back_indices[start_k:]:
                             to_remove_indices.add(r_idx)
                         break
@@ -1902,7 +2063,7 @@ def dedup_expert_fragment_doublings(final_opt, fused_spoken_to_target, target_wo
             if fwd_words:
                 for end_k in range(len(fwd_words), 0, -1):
                     sub_joined = ''.join(fwd_words[:end_k]).replace('c', 's').replace('-', '').replace("'", "")
-                    if t_clean.endswith(sub_joined) and len(sub_joined) >= 1:
+                    if sub_joined != t_clean and t_clean.endswith(sub_joined) and len(sub_joined) >= 1:
                         for r_idx in fwd_indices[:end_k]:
                             to_remove_indices.add(r_idx)
                         break
@@ -1914,11 +2075,54 @@ def dedup_expert_fragment_doublings(final_opt, fused_spoken_to_target, target_wo
     final_result = []
     i = 0
     while i < len(temp_opt):
+        # Check consecutive identical word doubling from syllable overlaps / ASR echoes:
+        # e.g. 'ang' followed by 'angking' 'angking', or 'ang' 'ang' followed by 'angking'
+        if i + 1 < len(temp_opt):
+            one_word = clean_words[i]
+            next_word = clean_words[i+1]
+            if one_word == next_word:
+                has_double_in_target = False
+                for t_idx in range(len(t_clean_list) - 1):
+                    if t_clean_list[t_idx] == one_word and t_clean_list[t_idx + 1] == one_word:
+                        has_double_in_target = True
+                        break
+
+                if not has_double_in_target:
+                    # Check if preceded by a particle that forms the prefix of this word in target text:
+                    # E.g. target has 'ang' then 'angking'. Spoken has 'ang' 'angking' 'angking'.
+                    is_preceding_target_particle_prefix = False
+                    if i > 0 and one_word.startswith(clean_words[i-1]) and len(clean_words[i-1]) >= 2:
+                        prev_token = clean_words[i-1]
+                        for t_idx in range(len(t_clean_list) - 1):
+                            if t_clean_list[t_idx] == prev_token and t_clean_list[t_idx + 1] == one_word:
+                                is_preceding_target_particle_prefix = True
+                                break
+
+                    # Check if followed by a compound word that starts with this word in target text:
+                    # E.g. target has 'ang' then 'angking'. Spoken has 'ang' 'ang' 'angking'.
+                    is_following_target_compound_echo = False
+                    if i + 2 < len(clean_words) and clean_words[i+2].startswith(one_word) and len(one_word) >= 2:
+                        following_token = clean_words[i+2]
+                        for t_idx in range(len(t_clean_list) - 1):
+                            if t_clean_list[t_idx] == one_word and t_clean_list[t_idx + 1] == following_token:
+                                is_following_target_compound_echo = True
+                                break
+
+                    # Also check single target word surrounded by target context
+                    is_target_single = (one_word in target_clean_set and t_clean_list.count(one_word) == 1)
+                    is_in_target_context = (is_target_single and i > 0 and clean_words[i-1] in target_clean_set and i + 2 < len(clean_words) and clean_words[i+2] in target_clean_set)
+
+                    if is_preceding_target_particle_prefix or is_following_target_compound_echo or is_in_target_context:
+                        print(f"[DEDUP ASR DOUBLE] Detected acoustic duplicate '{one_word}' at index {i} -> deduplicating to single instance")
+                        final_result.append(temp_opt[i])
+                        i += 2
+                        continue
+
         # Check 2-word compound prefix doubling: e.g. ['na', 'walang', 'Nawalang-saysay']
         if i + 2 < len(temp_opt):
             two_joined = clean_words[i] + clean_words[i+1]
             next_word = clean_words[i+2]
-            if next_word in target_clean_set and next_word.startswith(two_joined) and len(two_joined) >= 3:
+            if next_word in target_clean_set and next_word != two_joined and next_word.startswith(two_joined) and len(two_joined) >= 3:
                 i += 2
                 continue
                 
@@ -1926,7 +2130,8 @@ def dedup_expert_fragment_doublings(final_opt, fused_spoken_to_target, target_wo
         if i + 1 < len(temp_opt):
             one_word = clean_words[i]
             next_word = clean_words[i+1]
-            if next_word in target_clean_set and next_word.startswith(one_word) and len(one_word) >= 4:
+            # NEVER remove identical word repetition (stutter like sandaling sandaling)
+            if one_word != next_word and next_word in target_clean_set and next_word.startswith(one_word) and len(one_word) >= 4:
                 i += 1
                 continue
                 
@@ -2018,6 +2223,10 @@ def evaluate_audio():
                 active_raw = re.sub(r'\bkkasamama\b', 'kasama', active_raw, flags=re.IGNORECASE)
                 if w2v_expert_raw:
                     w2v_expert_raw = re.sub(r'\bkkasamama\b', 'kasama', w2v_expert_raw, flags=re.IGNORECASE)
+            if 'berbanya' in target_lower_str:
+                active_raw = re.sub(r'\b(?:burbanya|burbania|berbania|verbanya|verbania)\b', 'Berbanya', active_raw, flags=re.IGNORECASE)
+                if w2v_expert_raw:
+                    w2v_expert_raw = re.sub(r'\b(?:burbanya|burbania|berbania|verbanya|verbania)\b', 'berbanya', w2v_expert_raw, flags=re.IGNORECASE)
 
             spoken_words = clean_text(active_raw)
             if safe_level in ['expert', 'classroom'] or 'classroom' in safe_level or 'grade' in safe_level:
@@ -2072,32 +2281,64 @@ def evaluate_audio():
             for idx_spoken, idx_target in spoken_to_target.items():
                 if idx_target is not None:
                     target_word = target_words[idx_target]
-                    w_spoken = cleaned_opt[idx_spoken]
+                    w_spoken = harmonize_nya_nia(target_word, cleaned_opt[idx_spoken])
+                    cleaned_opt[idx_spoken] = w_spoken
                     t_lower = target_word.lower()
                     s_lower = w_spoken.lower()
+
+                    w2v_word = target_to_w2v.get(idx_target) if target_to_w2v else None
+                    if w2v_word:
+                        w2v_word = harmonize_nya_nia(target_word, w2v_word)
+                    w2v_lower = w2v_word.lower() if w2v_word else ""
+                    w2v_exact = (phonetic_normalize(t_lower) == phonetic_normalize(w2v_lower)) if w2v_lower else False
+                    w2v_synonym = check_is_synonym(t_lower, w2v_lower) if w2v_lower else False
+                    w2v_c_s = (t_lower.replace('c', 's') == w2v_lower.replace('c', 's')) if w2v_lower else False
 
                     is_synonym = check_is_synonym(t_lower, s_lower)
                     c_s_match = (t_lower.replace('c', 's') == s_lower.replace('c', 's'))
                     is_exact = (phonetic_normalize(t_lower) == phonetic_normalize(s_lower))
-                    is_vowel = is_any_vowel_shift(t_lower, s_lower)
+                    is_v_shift = is_any_vowel_shift(t_lower, s_lower) or has_vowel_shift(t_lower, s_lower) or is_pure_vowel_shift(t_lower, s_lower)
+                    # Check for Resend LM hallucination (e.g. kasa -> kasama: nagkasalubong -> nagkasamalubong, nakasabit -> nakasamabit)
+                    resend_kasa_hallucination = False
+                    if 'kasama' in s_lower and 'kasama' not in t_lower:
+                        if s_lower.replace('kasama', 'kasa') == t_lower and 'kasama' not in w2v_lower:
+                            resend_kasa_hallucination = True
 
-                    # 1. NLP configuration (SYNONYM_PAIRS), c/s equivalence, or exact match have highest priority
-                    if is_synonym or c_s_match or is_exact:
+                    # 1. Exact match, synonym, c/s match, or LM hallucination rescue in EITHER Resend OR Wav2Vec confirms the target word!
+                    # E.g. If Resend hallucinated 'nagkasamalubong' or 'nakasamabit' but Wav2Vec heard 'nagkasalubong' or 'naasabi' (no 'kasama'),
+                    # then Wav2Vec / acoustic evidence confirms the student actually read the target word correctly!
+                    if is_synonym or c_s_match or is_exact or w2v_exact or w2v_synonym or w2v_c_s or resend_kasa_hallucination:
+                        if (w2v_exact or w2v_synonym or w2v_c_s or resend_kasa_hallucination) and not (is_synonym or c_s_match or is_exact):
+                            reason = "Resend LM kasama hallucination" if resend_kasa_hallucination else "Wav2Vec exact acoustic"
+                            print(f"[DUAL-MODEL CONFIRMED MATCH] Target='{target_word}': Resend='{w_spoken}', W2V='{w2v_word}' ({reason}) -> Using Target Word '{target_word}'")
                         final_opt[idx_spoken] = target_word
                     # 2. Do NOT auto-correct vowel shifts! Keep the spoken form (e.g. 'benatang', 'seno', 'deto', 'ne', 'seya')
                     # so vowel shiftings are accurately detected and flagged!
-                    elif is_vowel:
+                    elif is_v_shift:
                         final_opt[idx_spoken] = w_spoken
                     else:
-                        # 3. If Resend lacks a letter for the target text, but Wav2Vec has it, USE Wav2Vec!
+                        # 3. If Wav2Vec is acoustically closer to the target word than Resend (e.g. Resend hallucinated syllables),
+                        # use Wav2Vec!
+                        dist_spoken = modified_levenshtein(target_word, w_spoken)
+                        dist_w2v = modified_levenshtein(target_word, w2v_word) if w2v_word else 1.0
+
+                        if w2v_word and dist_w2v < dist_spoken:
+                            if is_any_vowel_shift(t_lower, w2v_lower):
+                                final_opt[idx_spoken] = w2v_word
+                            elif dist_w2v <= 0.15:
+                                final_opt[idx_spoken] = target_word
+                            else:
+                                final_opt[idx_spoken] = w2v_word
+                            print(f"[WAV2VEC CLOSER MATCH] Target='{target_word}': Resend='{w_spoken}' (dist={dist_spoken:.2f}), W2V='{w2v_word}' (dist={dist_w2v:.2f}) -> Using '{final_opt[idx_spoken]}'")
+                        # 4. If Resend lacks a letter for the target text, but Wav2Vec has it, USE Wav2Vec!
                         # E.g., target="pitong", Resend="pito", Wav2Vec="pitong" -> Use "pitong" (especially trailing 'ng')
-                        w2v_word = target_to_w2v.get(idx_target) if target_to_w2v else None
-                        if w2v_word and resend_lacks_letter_and_w2v_has_it(target_word, w_spoken, w2v_word):
+                        elif w2v_word and resend_lacks_letter_and_w2v_has_it(target_word, w_spoken, w2v_word):
                             recovered_word = target_word if phonetic_normalize(w2v_word.lower()) == phonetic_normalize(t_lower) else w2v_word
+                            recovered_word = harmonize_nya_nia(target_word, recovered_word)
                             print(f"[RECOVER LACKING LETTER] Target='{target_word}': Resend='{w_spoken}', W2V='{w2v_word}' -> Using '{recovered_word}'")
                             final_opt[idx_spoken] = recovered_word
                         else:
-                            # 4. If the spoken word shares ANY letters with the target word (e.g., 'delemonyo' vs 'demonyo',
+                            # 5. If the spoken word shares ANY letters with the target word (e.g., 'delemonyo' vs 'demonyo',
                             # or 'ipinagpapatuloy' vs 'ipinagpatuloy'), still use Resend!
                             # Only fall back to Wav2Vec if every letter of the word on Resend
                             # does not match the target word at all (complete mismatch / gibberish).
@@ -2110,15 +2351,16 @@ def evaluate_audio():
                                 else:
                                     final_opt[idx_spoken] = w_spoken
 
-                    # 5. If Wav2Vec acoustically captured a trailing 's' at the end of the word, append it!
+                    # 6. If Wav2Vec acoustically captured a trailing 's' at the end of the word, append it!
                     # E.g. target="nanginginig", Resend="nanginginig", Wav2Vec="nanhghjinigs" -> Used="nanginginigs"
-                    w2v_word = target_to_w2v.get(idx_target) if target_to_w2v else None
                     if w2v_word and should_append_trailing_s_from_w2v(target_word, final_opt[idx_spoken], w2v_word):
                         s_char = 'S' if final_opt[idx_spoken].isupper() else 's'
                         print(f"[ACOUSTIC TRAILING S] Target='{target_word}': Resend/Base='{final_opt[idx_spoken]}', W2V='{w2v_word}' -> Appended '{s_char}' => '{final_opt[idx_spoken] + s_char}'")
                         final_opt[idx_spoken] = final_opt[idx_spoken] + s_char
 
             if safe_level in ['expert', 'classroom'] or 'classroom' in safe_level or 'grade' in safe_level:
+                if w2v_words and w2v_spoken_to_target:
+                    final_opt, spoken_to_target = inject_wav2vec_stutters(final_opt, spoken_to_target, target_words, w2v_words, w2v_spoken_to_target)
                 final_opt = dedup_expert_fragment_doublings(final_opt, spoken_to_target, target_words)
 
             fused_transcription = " ".join(final_opt)
@@ -2182,7 +2424,7 @@ def evaluate_audio():
             for idx_spoken, idx_target in fused_spoken_to_target_1.items():
                 if idx_target is not None:
                     target_word = target_words[idx_target]
-                    w1 = cleaned_opt[idx_spoken]
+                    w1 = harmonize_nya_nia(target_word, cleaned_opt[idx_spoken])
                     t_lower = target_word.lower()
                     w1_lower = w1.lower()
                     # Check phonetic equivalence, Tagalog synonym dictionary, or 'c' vs 's'
@@ -2195,6 +2437,8 @@ def evaluate_audio():
                         final_opt[idx_spoken] = target_word
                     else:
                         final_opt[idx_spoken] = w1
+
+            final_opt = dedup_expert_fragment_doublings(final_opt, fused_spoken_to_target_1, target_words)
 
             # Step 9: Reconstruct full sentence string and match original target casing & punctuation
             fused_transcription = " ".join(final_opt)
@@ -2386,17 +2630,20 @@ def get_simulation_trace(target_words, spoken_words):
         elif pointers[i][j] == 'L':
             # Left step: Spoken word was an extra word inserted by student (insertion)
             s_word = spoken_words[j - 1]
-            # Check if this insertion is an adjacent stutter of neighboring target words
+            # Check if this insertion is an adjacent stutter of neighboring target words or consecutive repetition
             is_adj_stutter = False
-            adj_targets = []
-            if i > 0: adj_targets.append(target_words[i - 1])
-            if i < m: adj_targets.append(target_words[i])
-            for at in adj_targets:
-                at_norm = phonetic_normalize(at)
-                sn_norm = phonetic_normalize(s_word)
-                if (len(sn_norm) <= len(at_norm) and sn_norm in at_norm) or is_stutter(at, s_word):
-                    is_adj_stutter = True
-                    break
+            if (j > 1 and s_word.lower() == spoken_words[j - 2].lower()) or (j < n and s_word.lower() == spoken_words[j].lower()):
+                is_adj_stutter = True
+            else:
+                adj_targets = []
+                if i > 0: adj_targets.append(target_words[i - 1])
+                if i < m: adj_targets.append(target_words[i])
+                for at in adj_targets:
+                    at_norm = phonetic_normalize(at)
+                    sn_norm = phonetic_normalize(s_word)
+                    if (len(sn_norm) <= len(at_norm) and sn_norm in at_norm) or is_stutter(at, s_word):
+                        is_adj_stutter = True
+                        break
 
             trace.append({
                 "type": "insertion",

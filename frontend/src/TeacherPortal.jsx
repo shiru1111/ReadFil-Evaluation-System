@@ -733,6 +733,25 @@ export default function TeacherPortal() {
   const instructionalCount = records.filter(r => r.reading_level === 'Instructional').length;
   const frustrationCount = records.filter(r => r.reading_level === 'Frustration').length;
 
+  const formatDateTime = (ts) => {
+    if (!ts) return "—";
+    try {
+      const dateStr = ts.includes('T') ? ts : ts.replace(' ', 'T');
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return ts;
+      return d.toLocaleDateString(isEn ? 'en-PH' : 'fil-PH', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch {
+      return ts;
+    }
+  };
+
   // -------------------------------------------------------------
   // RENDER: NOT LOGGED IN (AUTH FORMS)
   // -------------------------------------------------------------
@@ -1081,12 +1100,6 @@ export default function TeacherPortal() {
           <span className="text-xs uppercase font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
             {isEn ? "Teacher Portal" : "Portal ng Guro"}
           </span>
-          {tokenStatus && (
-            <span className="hidden lg:inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              {tokenStatus.cloud_stt_configured ? (isEn ? "Cloud STT Online (Token Active)" : "Cloud STT Online (Token Aktibo)") : (isEn ? "Local Wav2Vec Mode" : "Local Wav2Vec Mode")}
-            </span>
-          )}
         </div>
 
         <div className="flex items-center space-x-3">
@@ -1168,7 +1181,7 @@ export default function TeacherPortal() {
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
                   </svg>
-                  {isEn ? "Choose from Passage Bank" : "Pumili sa Bangko ng Talata"}
+                  {isEn ? "Choose from Passages" : "Pumili sa mga Talata"}
                 </button>
 
                 <button
@@ -1183,124 +1196,117 @@ export default function TeacherPortal() {
               </div>
             </div>
 
-            {/* Classroom PIN & Live Access Card */}
-            <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 mb-8 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="flex items-center gap-3.5">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 text-[#0096FF] flex items-center justify-center flex-shrink-0 border border-blue-100">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                  </svg>
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 border border-gray-200">
-                      {isEn ? "Classroom PIN" : "PIN ng Silid-Aralan"}
-                    </span>
-                    <span className="flex h-2 w-2 relative">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                    </span>
+            {/* Classroom PIN & Session Settings */}
+            <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 mb-8 shadow-sm">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-blue-50 text-[#0096FF] flex items-center justify-center flex-shrink-0 border border-blue-100">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                    </svg>
                   </div>
-                  <h3 className="text-base font-bold text-gray-900 mt-0.5">
-                    {isEn ? "Classroom PIN" : "Classroom PIN"}
-                  </h3>
-                  <p className="text-xs text-gray-500 max-w-xl">
-                    {isEn
-                      ? "Students enter this 6-digit PIN on the Classroom page to enter your reading session."
-                      : "Ilalagay ng mga mag-aaral ang 6-digit PIN na ito sa pahina ng Classroom upang makapasok."}
-                  </p>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 border border-gray-200">
+                        {isEn ? "Classroom PIN" : "PIN ng Silid-Aralan"}
+                      </span>
+                      <span className="flex h-2 w-2 relative">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 max-w-xl mt-1">
+                      {isEn
+                        ? "Students enter this 6-digit PIN on the Classroom page to enter your reading session."
+                        : "Ilalagay ng mga mag-aaral ang 6-digit PIN na ito sa pahina ng Classroom upang makapasok."}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full md:w-auto">
+                  <div className="flex items-center justify-center bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 font-mono font-bold text-xl text-gray-800 tracking-widest select-all">
+                    {classroomPin || "------"}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCopyPin}
+                      title="Copy PIN"
+                      className="flex-1 sm:flex-none px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors border border-gray-200 shadow-sm"
+                    >
+                      <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                      </svg>
+                      {isEn ? "Copy PIN" : "Kopyahin"}
+                    </button>
+
+                    <button
+                      onClick={handleRegeneratePin}
+                      disabled={isRegeneratingPin}
+                      title="Generate New PIN"
+                      className="flex-1 sm:flex-none px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors border border-gray-200 shadow-sm whitespace-nowrap disabled:opacity-50"
+                    >
+                      <svg className={`w-3.5 h-3.5 text-gray-500 ${isRegeneratingPin ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      {isRegeneratingPin ? (isEn ? "Generating..." : "Bumubuo...") : (isEn ? "Generate New PIN" : "Bagong PIN")}
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full md:w-auto">
-                <div className="flex items-center justify-center bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 font-mono font-bold text-xl text-gray-800 tracking-widest select-all">
-                  {classroomPin || "------"}
+              {pinFeedback && (
+                <div className="mt-3 px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  {pinFeedback}
                 </div>
+              )}
 
+              {/* Row 2: Aligned Simple Assessment Timer Duration */}
+              <div className="pt-3.5 mt-3.5 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleCopyPin}
-                    title="Copy PIN"
-                    className="flex-1 sm:flex-none px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors border border-gray-200 shadow-sm"
-                  >
-                    <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                    </svg>
-                    {isEn ? "Copy PIN" : "Kopyahin"}
-                  </button>
-
-                  <button
-                    onClick={handleRegeneratePin}
-                    disabled={isRegeneratingPin}
-                    title="Generate New PIN"
-                    className="flex-1 sm:flex-none px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors border border-gray-200 shadow-sm whitespace-nowrap disabled:opacity-50"
-                  >
-                    <svg className={`w-3.5 h-3.5 text-gray-500 ${isRegeneratingPin ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    {isRegeneratingPin ? (isEn ? "Generating..." : "Bumubuo...") : (isEn ? "Generate New PIN" : "Bagong PIN")}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {pinFeedback && (
-              <div className="mb-6 -mt-4 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-center gap-2 shadow-sm">
-                <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-                {pinFeedback}
-              </div>
-            )}
-
-            {/* Custom Duration & Universal Timer Control Banner */}
-            <div className="bg-white border border-gray-200 rounded-3xl p-5 sm:p-6 mb-8 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="flex items-center gap-3.5">
-                <div className="w-11 h-11 rounded-2xl bg-blue-50 text-[#0096FF] flex items-center justify-center flex-shrink-0 border border-blue-100">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 text-[#0096FF] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                </div>
-                <div>
-                  <div className="text-base font-bold text-slate-900">
-                    {isEn ? "Class Assessment Timer Duration" : "Oras ng Pagsusulit para sa Klase"}
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {isEn
-                      ? "Set a custom duration (e.g. 10s) and apply it to every passage in your class set."
-                      : "Magtakda ng pasadyang tagal (hal. 10s) at ilapat sa bawat talata sa iyong klase."}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 w-full md:w-auto">
-                <div className="flex items-center bg-gray-50 border border-gray-300 rounded-xl px-3 py-2 focus-within:border-[#0096FF] focus-within:bg-white shadow-inner">
-                  <input
-                    type="number"
-                    min="5"
-                    max="600"
-                    value={globalTimerDuration}
-                    onChange={(e) => setGlobalTimerDuration(e.target.value)}
-                    className="w-16 text-center font-black text-slate-900 bg-transparent focus:outline-none text-base"
-                  />
-                  <span className="text-xs font-bold text-gray-500 ml-1">sec</span>
-                </div>
-
-                <button
-                  onClick={handleApplyGlobalTimer}
-                  disabled={globalTimerSaving}
-                  className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-[#0096FF] hover:from-blue-700 hover:to-blue-600 text-white font-bold rounded-xl text-xs transition-all shadow-md shadow-blue-500/20 whitespace-nowrap disabled:opacity-50"
-                >
-                  {globalTimerSaving
-                    ? (isEn ? "Applying..." : "Inilalapat...")
-                    : (isEn ? "Apply to All Passages" : "Ilapat sa Lahat ng Talata")}
-                </button>
-
-                {globalTimerFeedback && (
-                  <span className="text-xs font-bold text-emerald-600 whitespace-nowrap animate-pulse">
-                    {globalTimerFeedback}
+                  <span className="text-xs font-bold text-gray-800">
+                    {isEn ? "Assessment Timer Duration:" : "Oras ng Pagsusulit:"}
                   </span>
-                )}
+                  <span className="text-[11px] text-gray-500 hidden md:inline">
+                    {isEn ? "(applied to all classroom passages)" : "(ilalapat sa lahat ng talata)"}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <div className="flex items-center bg-gray-50 border border-gray-300 rounded-xl px-2.5 py-1.5 focus-within:border-[#0096FF] focus-within:bg-white">
+                    <input
+                      type="number"
+                      min="5"
+                      max="600"
+                      value={globalTimerDuration}
+                      onChange={(e) => setGlobalTimerDuration(e.target.value)}
+                      className="w-14 text-center font-bold text-slate-900 bg-transparent focus:outline-none text-xs"
+                    />
+                    <span className="text-[11px] font-bold text-gray-500 ml-1">sec</span>
+                  </div>
+
+                  <button
+                    onClick={handleApplyGlobalTimer}
+                    disabled={globalTimerSaving}
+                    className="px-3.5 py-1.5 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl text-xs transition-colors shadow-sm whitespace-nowrap disabled:opacity-50"
+                  >
+                    {globalTimerSaving
+                      ? (isEn ? "Applying..." : "Inilalapat...")
+                      : (isEn ? "Apply to All Passages" : "Ilapat sa Lahat ng Talata")}
+                  </button>
+
+                  {globalTimerFeedback && (
+                    <span className="text-xs font-bold text-emerald-600 whitespace-nowrap animate-pulse">
+                      {globalTimerFeedback}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1366,7 +1372,7 @@ export default function TeacherPortal() {
                     onClick={() => setIsPassageBankModalOpen(true)}
                     className="px-6 py-2.5 bg-white border border-[#0096FF] text-[#0096FF] font-bold rounded-xl text-sm shadow-sm"
                   >
-                    {isEn ? "Choose from Passage Bank" : "Pumili sa Bangko ng Talata"}
+                    {isEn ? "Choose from Passages" : "Pumili sa mga Talata"}
                   </button>
                   <button
                     onClick={openCreateModal}
@@ -1612,8 +1618,8 @@ export default function TeacherPortal() {
                                 {r.reading_level}
                               </span>
                             </td>
-                            <td className="py-4 px-6 text-xs text-gray-500">
-                              {new Date(r.timestamp).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            <td className="py-4 px-6 text-xs text-gray-500 font-medium whitespace-nowrap">
+                              {formatDateTime(r.timestamp)}
                             </td>
                             <td className="py-4 px-6 text-center">
                               <div className="flex items-center justify-center gap-2">
@@ -1656,7 +1662,7 @@ export default function TeacherPortal() {
             <div className="flex justify-between items-start mb-4 pb-4 border-b border-gray-100">
               <div>
                 <h3 className="text-2xl font-black text-slate-900">
-                  {isEn ? "Phil-IRI Reading Passage Bank" : "Bangko ng mga Talata sa Pagbasa"}
+                  {isEn ? "Phil-IRI Reading Passages" : "Mga Talata sa Pagbasa ng Phil-IRI"}
                 </h3>
                 <p className="text-gray-500 text-sm mt-0.5">
                   {isEn
@@ -2126,6 +2132,7 @@ export default function TeacherPortal() {
                 </span>
                 <h3 className="text-2xl font-black text-slate-900">{selectedRecord.student_name}</h3>
                 <p className="text-sm text-[#0096FF] font-medium">{selectedRecord.passage_title}</p>
+                <p className="text-xs text-gray-400 mt-1">{formatDateTime(selectedRecord.timestamp)}</p>
               </div>
               <button
                 onClick={() => setSelectedRecord(null)}

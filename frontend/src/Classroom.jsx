@@ -438,6 +438,17 @@ export default function Classroom() {
 
   // 1a. Initial load on mount if gate is already unlocked
   useEffect(() => {
+    // If arriving from Results with "Test Again (New Student)", force a fresh student name prompt
+    if (sessionStorage.getItem('classroom_prompt_new_student') === 'true') {
+      sessionStorage.removeItem('classroom_prompt_new_student');
+      setStudentName('');
+      setGateStudentName('');
+      setTempName('');
+      localStorage.removeItem('user_firstName');
+      localStorage.removeItem('user_lastName');
+      setIsNameModalOpen(true);
+    }
+
     if (!isGateUnlocked) {
       setIsLoadingPassages(false);
       return;
@@ -1142,6 +1153,7 @@ export default function Classroom() {
           : `Classroom - ${activePassage.title}`
         );
         localStorage.setItem('reading_logs', JSON.stringify(logsForResults));
+        localStorage.setItem('is_classroom_session', 'true');
 
         // Redirect to Results Page
         navigate('/results');
@@ -1186,8 +1198,10 @@ export default function Classroom() {
   const handleSaveStudentName = (e) => {
     e.preventDefault();
     if (!tempName.trim()) return;
-    setStudentName(tempName.trim());
-    localStorage.setItem('user_firstName', tempName.trim());
+    const clean = tempName.trim();
+    setStudentName(clean);
+    setGateStudentName(clean);
+    localStorage.setItem('user_firstName', clean);
     setIsNameModalOpen(false);
   };
 

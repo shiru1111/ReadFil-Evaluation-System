@@ -10,6 +10,7 @@ import io
 import csv
 import random
 from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'readfil.db')
 
@@ -334,10 +335,11 @@ def create_passage(teacher_id, title, content, grade_level="General", timer_seco
             # Only one passage active per teacher
             cursor.execute("UPDATE custom_passages SET is_active = 0 WHERE teacher_id = ?", (teacher_id,))
 
+        local_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute("""
-            INSERT INTO custom_passages (teacher_id, title, content, grade_level, timer_seconds, is_active)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (teacher_id, title.strip(), content.strip(), grade_level.strip(), int(timer_seconds), 1 if is_active else 0))
+            INSERT INTO custom_passages (teacher_id, title, content, grade_level, timer_seconds, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (teacher_id, title.strip(), content.strip(), grade_level.strip(), int(timer_seconds), 1 if is_active else 0, local_now))
         conn.commit()
         return {"success": True, "passage_id": cursor.lastrowid}
     except Exception as e:
@@ -511,18 +513,19 @@ def save_student_result(teacher_id, passage_id, student_name, passage_title,
         stutters_str = json.dumps(stutter_words or [])
         trace_str = json.dumps(trace_json or [])
 
+        local_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cursor.execute("""
             INSERT INTO student_results (
                 teacher_id, passage_id, student_name, passage_title,
                 accuracy_rate, wcpm, composite_score, reading_level,
                 duration_seconds, correct_words, total_target_words,
-                errors_detected, stutter_words, trace_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                errors_detected, stutter_words, trace_json, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             teacher_id, passage_id, student_name.strip(), passage_title.strip(),
             round(float(accuracy_rate), 2), round(float(wcpm), 2), round(float(composite_score), 2),
             reading_level.strip(), round(float(duration_seconds), 2), int(correct_words),
-            int(total_target_words), int(errors_detected), stutters_str, trace_str
+            int(total_target_words), int(errors_detected), stutters_str, trace_str, local_now
         ))
         conn.commit()
         return {"success": True, "result_id": cursor.lastrowid}
