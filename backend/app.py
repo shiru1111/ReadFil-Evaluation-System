@@ -2000,7 +2000,7 @@ def evaluate_audio():
                 except Exception as e:
                     print(f"[WAV2VEC] Acoustic transcription error: {e}")
 
-            if safe_level == 'expert':
+            if safe_level in ['expert', 'classroom'] or 'classroom' in safe_level or 'grade' in safe_level:
                 for wrong, right in EXPERT_CORRECTIONS.items():
                     active_raw = active_raw.replace(wrong, right)
 
@@ -2048,8 +2048,8 @@ def evaluate_audio():
                 ) or has_any_common_char
 
                 # Only use Wav2Vec if Resend is completely unmatched (no matching letters at all / 99%+ different)
-                if not resend_has_matched_letters and safe_level == 'expert':
-                    print(f"[EXPERT] Resend has no matching letters on target text (complete mismatch). Using Wav2Vec to display gibberish!")
+                if not resend_has_matched_letters and (safe_level in ['expert', 'classroom'] or 'classroom' in safe_level or 'grade' in safe_level):
+                    print(f"[{level.upper()}] Resend has no matching letters on target text (complete mismatch). Using Wav2Vec to display gibberish!")
                     active_raw = w2v_expert_raw
                     spoken_words = clean_text(active_raw)
                     cleaned_opt = spoken_words
@@ -2118,7 +2118,7 @@ def evaluate_audio():
                         print(f"[ACOUSTIC TRAILING S] Target='{target_word}': Resend/Base='{final_opt[idx_spoken]}', W2V='{w2v_word}' -> Appended '{s_char}' => '{final_opt[idx_spoken] + s_char}'")
                         final_opt[idx_spoken] = final_opt[idx_spoken] + s_char
 
-            if safe_level == 'expert':
+            if safe_level in ['expert', 'classroom'] or 'classroom' in safe_level or 'grade' in safe_level:
                 final_opt = dedup_expert_fragment_doublings(final_opt, spoken_to_target, target_words)
 
             fused_transcription = " ".join(final_opt)
@@ -2146,7 +2146,7 @@ def evaluate_audio():
                 print(f" RESEND (raw)   : {active_raw}")
             else:
                 print(f" WAV2VEC (raw)  : {active_raw} (fallback)")
-            if safe_level in ['moderate', 'expert'] and w2v_expert_raw and w2v_expert_raw.strip():
+            if w2v_expert_raw and w2v_expert_raw.strip():
                 print(f" WAV2VEC (raw)  : {w2v_expert_raw}")
             print(f" USED           : {fused_transcription}")
             print(f" SCORE          : Accuracy: {round(accuracy_rate,2)}% | WCPM: {round(wcpm,2)}")
@@ -2246,7 +2246,7 @@ def evaluate_audio():
             "total_target_words": total_target_words,
             "total_spoken_words": total_spoken_tokens,
             "duration_seconds":   round(duration_seconds, 3),
-            "model_used":         "RESEND" if locals().get('resend_used', False) else "WAV2VEC",
+            "model_used":         "RESEND + WAV2VEC" if (locals().get('resend_used', False) and w2v_expert_raw) else ("RESEND" if locals().get('resend_used', False) else "WAV2VEC"),
             "stutter_words":      detected_stutters,
             "trace":              trace_data,
             "status":             "success"
