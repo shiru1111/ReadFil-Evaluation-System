@@ -34,7 +34,13 @@ export default function Results() {
     const storedLastName = localStorage.getItem('user_lastName') || "";
     const storedAccuracy = Math.round(parseFloat(localStorage.getItem('final_accuracy')) || 0);
     const storedWcpm = Math.round(parseFloat(localStorage.getItem('final_wcpm')) || 0);
-    const storedLevel = localStorage.getItem('evaluated_level') || "Overall";
+    const rawLevel = localStorage.getItem('evaluated_level') || "Overall";
+    const isClassroomSession = localStorage.getItem('is_classroom_session') === 'true' || 
+                               rawLevel.toLowerCase().includes('classroom');
+    const storedLevel = isClassroomSession ? "Classroom" : rawLevel;
+    if (isClassroomSession && rawLevel !== "Classroom") {
+      localStorage.setItem('evaluated_level', 'Classroom');
+    }
     const storedLogs = JSON.parse(localStorage.getItem('reading_logs')) || [];
     
     setReadingLogs(storedLogs);
@@ -371,7 +377,7 @@ export default function Results() {
               {resultData.firstName} {resultData.lastName}
             </h2>
             <p className="text-base sm:text-lg text-gray-700 leading-relaxed max-w-2xl mx-auto">
-              {t("results.finished")} <span className="font-bold text-gray-900 border-b-2 border-[#0096FF] pb-1">{resultData.level} {t("results.level")}</span>.
+              {t("results.finished")} <span className="font-bold text-gray-900 border-b-2 border-[#0096FF] pb-1">{isClassroom ? 'Classroom' : `${resultData.level} ${t("results.level")}`}</span>.
             </p>
             <p className="text-xs text-gray-400 mt-6 font-medium uppercase tracking-widest">{t("results.date")}: {resultData.date}</p>
           </div>

@@ -17,7 +17,7 @@ export const en = {
     title: "Select Your Level",
     classroom: "Classroom Mode",
     classroom_badge: "NEW: TEACHER ASSIGNMENT",
-    classroom_desc: "Take an assigned reading quiz created by your teacher with a live countdown timer.",
+    classroom_desc: "Take an assigned reading passage created by your teacher with a countdown timer.",
     start_classroom: "Enter Classroom",
     beginner: "Beginner",
     beginner_desc: "Start your reading journey here with short sentences and simple everyday words.",

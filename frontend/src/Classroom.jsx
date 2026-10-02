@@ -1148,10 +1148,7 @@ export default function Classroom() {
         localStorage.setItem('user_firstName', studentName);
         localStorage.setItem('final_accuracy', avgAccuracy.toString());
         localStorage.setItem('final_wcpm', avgWcpm.toString());
-        localStorage.setItem('evaluated_level', totalPassages > 1
-          ? `Classroom Assessment (${totalPassages} Passages)`
-          : `Classroom - ${activePassage.title}`
-        );
+        localStorage.setItem('evaluated_level', 'Classroom');
         localStorage.setItem('reading_logs', JSON.stringify(logsForResults));
         localStorage.setItem('is_classroom_session', 'true');
 
