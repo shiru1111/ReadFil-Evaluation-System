@@ -51,7 +51,10 @@ export const tl = {
     details: "Mga Detalye ng Proyekto",
     details_desc: "Ang READFIL ay binuo bilang isang solusyon para sa modernong pagsusuri sa karunungang bumasa't sumulat. Nagsisilbi itong teknikal na solusyon upang isulong, panatilihin at pagandahin ang literasiyang Tagalog para sa modernong mag-aaral.",
     developed_by: "Binuo nina:",
-    rights: "Automated Oral Reading System. All rights reserved."
+    rights: "Automated Oral Reading System. All rights reserved.",
+    terms: "Mga Tuntunin at Kundisyon",
+    teacher_portal: "Portal ng Guro",
+    admin_console: "Console ng Admin"
   },
   modals: {
     criteria_title: "Pamantayan sa Pagsusuri",

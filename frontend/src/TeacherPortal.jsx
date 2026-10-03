@@ -104,7 +104,7 @@ export default function TeacherPortal() {
   const [passageContent, setPassageContent] = useState('');
   const [passageGrade, setPassageGrade] = useState('Grade 4');
   const [passageTimer, setPassageTimer] = useState(() => {
-    return parseInt(localStorage.getItem('readfil_teacher_default_timer'), 10) || 10;
+    return parseInt(localStorage.getItem('readfil_teacher_default_timer'), 10) || 60;
   });
   const [passageSaving, setPassageSaving] = useState(false);
 
@@ -517,11 +517,20 @@ export default function TeacherPortal() {
     e.preventDefault();
     if (!passageTitle.trim() || !passageContent.trim()) return;
 
-    const timerVal = Math.max(5, parseInt(passageTimer, 10) || 10);
+    const timerVal = Math.max(5, parseInt(passageTimer, 10) || 60);
 
     setPassageSaving(true);
     try {
       if (editingPassage) {
+        // Optimistically update passage in state
+        setPassages(prev => prev.map(p => p.id === editingPassage.id ? {
+          ...p,
+          title: passageTitle,
+          content: passageContent,
+          grade_level: passageGrade,
+          timer_seconds: timerVal
+        } : p));
+
         const res = await fetch(`${API_BASE}/api/teacher/passages/${editingPassage.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -534,6 +543,7 @@ export default function TeacherPortal() {
           })
         });
         if (!res.ok) throw new Error(isEn ? "Failed to update passage." : "Hindi ma-update ang talata.");
+        showToast(isEn ? `Passage timer updated to ${timerVal}s!` : `Na-update ang oras sa ${timerVal}s!`, 'success');
       } else {
         const res = await fetch(`${API_BASE}/api/teacher/passages`, {
           method: 'POST',
@@ -548,6 +558,7 @@ export default function TeacherPortal() {
           })
         });
         if (!res.ok) throw new Error(isEn ? "Failed to save new passage." : "Hindi ma-save ang bagong talata.");
+        showToast(isEn ? `New passage created with ${timerVal}s timer!` : `Bagong talata na may ${timerVal}s oras!`, 'success');
       }
 
       setIsPassageModalOpen(false);
@@ -559,6 +570,38 @@ export default function TeacherPortal() {
       alert(err.message);
     } finally {
       setPassageSaving(false);
+    }
+  };
+
+  // Quick Inline Timer Update directly from the card
+  const handleQuickUpdatePassageTimer = async (passageId, newTimer) => {
+    if (!teacher) return;
+    const timerVal = Math.max(5, parseInt(newTimer, 10) || 60);
+    const target = passages.find(p => p.id === passageId);
+    if (!target) return;
+
+    // Optimistically update passage in state
+    setPassages(prev => prev.map(p => p.id === passageId ? { ...p, timer_seconds: timerVal } : p));
+
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/passages/${passageId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          teacher_id: teacher.id,
+          title: target.title,
+          content: target.content,
+          grade_level: target.grade_level,
+          timer_seconds: timerVal
+        })
+      });
+      if (res.ok) {
+        showToast(isEn ? `Timer updated to ${timerVal}s!` : `Naitakda ang oras sa ${timerVal}s!`, 'success');
+      }
+      fetchPassages();
+    } catch (err) {
+      console.error("Error updating timer:", err);
+      fetchPassages();
     }
   };
 
@@ -664,7 +707,8 @@ export default function TeacherPortal() {
     if (!teacher) return;
     setBankImportingId(item.id);
     try {
-      const timerVal = Math.max(5, parseInt(globalTimerDuration, 10) || 10);
+      const wordCount = (item.content || '').trim().split(/\s+/).length;
+      const timerVal = parseInt(globalTimerDuration, 10) || Math.max(15, Math.ceil(wordCount * 2.5));
       const res = await fetch(`${API_BASE}/api/teacher/passages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -693,10 +737,11 @@ export default function TeacherPortal() {
     if (!teacher || bankSelectedIds.length === 0) return;
     setBankBatchImporting(true);
     try {
-      const timerVal = Math.max(5, parseInt(globalTimerDuration, 10) || 10);
       for (const id of bankSelectedIds) {
         const item = systemPassageCatalog.find(p => p.id === id);
         if (item) {
+          const wordCount = (item.content || '').trim().split(/\s+/).length;
+          const timerVal = parseInt(globalTimerDuration, 10) || Math.max(15, Math.ceil(wordCount * 2.5));
           await fetch(`${API_BASE}/api/teacher/passages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -765,7 +810,7 @@ export default function TeacherPortal() {
     setPassageTitle(p.title);
     setPassageContent(p.content);
     setPassageGrade(p.grade_level || 'Grade 4');
-    setPassageTimer(p.timer_seconds || parseInt(globalTimerDuration, 10) || 10);
+    setPassageTimer(p.timer_seconds || parseInt(globalTimerDuration, 10) || 60);
     setIsPassageModalOpen(true);
   };
 
@@ -775,7 +820,7 @@ export default function TeacherPortal() {
     setPassageTitle('');
     setPassageContent('');
     setPassageGrade('Grade 4');
-    setPassageTimer(parseInt(globalTimerDuration, 10) || 10);
+    setPassageTimer(parseInt(globalTimerDuration, 10) || 60);
     setIsPassageModalOpen(true);
   };
 
@@ -1473,14 +1518,24 @@ export default function TeacherPortal() {
                           {p.content}
                         </p>
 
-                        <div className="flex items-center gap-4 text-xs text-gray-500 mb-6 pb-4 border-b border-gray-100">
-                          <span className="flex items-center gap-1.5">
-                            <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <div className="flex items-center justify-between text-xs text-gray-500 mb-6 pb-4 border-b border-gray-100">
+                          <div className="flex items-center gap-1.5 bg-blue-50/70 border border-blue-200/80 px-2.5 py-1 rounded-xl">
+                            <svg className="w-3.5 h-3.5 text-[#0096FF]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            <strong>{p.timer_seconds || 60}s</strong> {isEn ? "timer" : "oras"}
-                          </span>
-                          <span className="flex items-center gap-1.5">
+                            <label className="text-[11px] font-bold text-slate-700">{isEn ? "Timer:" : "Oras:"}</label>
+                            <select
+                              value={p.timer_seconds || 60}
+                              onChange={(e) => handleQuickUpdatePassageTimer(p.id, e.target.value)}
+                              className="bg-transparent font-black text-[#0096FF] text-xs focus:outline-none cursor-pointer hover:underline"
+                              title={isEn ? "Click to quickly change reading timer for this passage" : "I-click upang mabilisang palitan ang oras"}
+                            >
+                              {[5, 10, 15, 20, 25, 30, 45, 60, 90, 100, 120, 180, 240].map(s => (
+                                <option key={s} value={s}>{s}s</option>
+                              ))}
+                            </select>
+                          </div>
+                          <span className="flex items-center gap-1.5 font-medium text-slate-600">
                             <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
@@ -2439,6 +2494,8 @@ export default function TeacherPortal() {
                       setPassageTitle(selected.title);
                       setPassageContent(selected.content);
                       setPassageGrade(selected.grade);
+                      const wCount = selected.content.trim().split(/\s+/).length;
+                      setPassageTimer(parseInt(globalTimerDuration, 10) || Math.max(15, Math.ceil(wCount * 2.5)));
                     }
                   }}
                   className="w-full px-3 py-2 bg-white border border-blue-200 rounded-xl text-slate-800 text-xs focus:outline-none focus:border-[#0096FF]"
@@ -2516,7 +2573,7 @@ export default function TeacherPortal() {
                   </div>
                   {/* Quick Preset Buttons */}
                   <div className="flex flex-wrap gap-1 mt-2">
-                    {[10, 15, 20, 30, 45, 60, 90].map((preset) => (
+                    {[10, 15, 20, 30, 45, 60, 90, 100, 120].map((preset) => (
                       <button
                         key={preset}
                         type="button"

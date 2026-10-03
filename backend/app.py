@@ -1,7 +1,12 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_file
 from flask_cors import CORS
 import os
 import sys
+import io
+import csv
+import functools
+import datetime
+from datetime import datetime
 from collections import Counter
 import database
 
@@ -166,11 +171,12 @@ def preprocess_audio(input_wav_path, output_wav_path):
     
     # Trim dead air to measure actual reading duration for WCPM calculation
     try:
-        # Use safe 40 dB threshold to avoid clipping soft speech or whispers
-        trimmed, _ = librosa.effects.trim(reduced_noise_speech, top_db=40, frame_length=512, hop_length=128)
-        if len(trimmed) < int(sr * 0.3):
-            trimmed = reduced_noise_speech
-        duration = librosa.get_duration(y=trimmed, sr=sr)
+        # Use an adaptive 26 dB threshold to cut classroom dead air and background noise
+        # while adding +0.45s safety padding so soft speech, trailing vowels, and final consonants are NEVER cut
+        trimmed, _ = librosa.effects.trim(reduced_noise_speech, top_db=26, frame_length=1024, hop_length=256)
+        raw_dur = librosa.get_duration(y=reduced_noise_speech, sr=sr)
+        trim_dur = librosa.get_duration(y=trimmed, sr=sr) + 0.45
+        duration = min(raw_dur, max(0.5, trim_dur))
     except Exception as e:
         print(f"[TRIM WARNING] Could not trim dead air: {e}")
         duration = librosa.get_duration(y=reduced_noise_speech, sr=sr)
@@ -183,7 +189,7 @@ def preprocess_audio(input_wav_path, output_wav_path):
 # =================================================================
 # 2. ACOUSTIC TRANSCRIPTION ENGINE (WAV2VEC 2.0 CTC DECODING)
 # =================================================================
-def transcribe_wav2vec(wav_path):
+def transcribe_wav2vec(wav_path, return_duration=False):
     # Step 1: Load 16kHz audio waveform as a 1D float array using Librosa
     speech_array, _ = librosa.load(wav_path, sr=16000)
     # Step 2: Convert audio waveform into PyTorch tensor with padding for transformer input
@@ -193,8 +199,27 @@ def transcribe_wav2vec(wav_path):
         logits = w2v_model(inputs.input_values).logits
     # Step 4: Extract highest probability token ID per frame via argmax (CTC greedy decode)
     predicted_ids = torch.argmax(logits, dim=-1)
+
+    # Calculate acoustic phoneme active duration (where actual characters are spoken)
+    # Pad token is 28, space/delimiter is 0, characters are 1-27
+    acoustic_duration = None
+    if return_duration:
+        try:
+            letter_indices = torch.where((predicted_ids[0] != 28) & (predicted_ids[0] != 0))[0]
+            if len(letter_indices) > 0:
+                first_frame = letter_indices[0].item()
+                last_frame = letter_indices[-1].item()
+                # Each CTC frame is 20ms at 16kHz (320 samples)
+                # Add +0.55s safety buffer so the final phoneme/consonant is 100% enclosed and never cut
+                acoustic_duration = max(0.6, ((last_frame - first_frame + 1) * 0.02) + 0.55)
+        except Exception as e:
+            print(f"[WAV2VEC] Error computing acoustic duration: {e}")
+
     # Step 5: Decode predicted token IDs into recognized Tagalog text string
-    return w2v_processor.batch_decode(predicted_ids)[0]
+    decoded_text = w2v_processor.batch_decode(predicted_ids)[0]
+    if return_duration:
+        return decoded_text, acoustic_duration
+    return decoded_text
 
 TAGALOG_BASIC_NUMBERS = {
     0: 'sero', 1: 'isa', 2: 'dalawa', 3: 'tatlo', 4: 'apat', 5: 'lima',
@@ -286,12 +311,44 @@ def normalize_tagalog_numbers(text, target_words=None):
     text = re.sub(r'\b(\d+)\b', repl_digit, text)
     return text
 
+def apply_dynamic_nlp_corrections(text):
+    """
+    Applies real-time phonetic and word correction rules configured by the Admin
+    directly from the database without requiring any source code modifications.
+    """
+    if not text:
+        return text
+    try:
+        active_rules = database.get_active_nlp_corrections()
+        for rule in active_rules:
+            spoken = rule['spoken_phrase'].strip()
+            replacement = rule['replacement_phrase'].strip()
+            rtype = rule.get('rule_type', 'exact')
+            if not spoken or not replacement:
+                continue
+            if rtype == 'regex':
+                try:
+                    text = re.sub(spoken, replacement, text, flags=re.IGNORECASE)
+                except Exception:
+                    pass
+            else:
+                pattern = r'\b' + re.escape(spoken) + r'\b'
+                text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    except Exception as e:
+        print(f"[DYNAMIC NLP WARNING] Error applying rules: {e}")
+    return text
+
 def transcribe_resend(wav_path, target_words=None):
     """
     Transcribes audio using Resend Cloud Speech-to-Text API.
     Used exclusively for Moderate and Expert reading levels.
     """
-    api_key = os.getenv("Resend_api_key") or os.getenv("RESEND_API_KEY")
+    db_settings = database.get_system_settings()
+    if db_settings.get("stt_mode") == "LOCAL_WAV2VEC_ONLY":
+        print("[STT ENGINE] Local Wav2Vec only mode forced by Administrator settings.")
+        return None
+
+    api_key = db_settings.get("resend_api_key") or os.getenv("Resend_api_key") or os.getenv("RESEND_API_KEY")
     if not api_key:
         print("[TOKEN AVAILABILITY] Notice: Resend_api_key not configured. Gracefully falling back to local quantized Wav2Vec 2.0.")
         return None
@@ -2179,10 +2236,12 @@ def evaluate_audio():
             print(f"[EVALUATION] {level.upper()} mode active: using Resend Cloud STT...")
             resend_raw = transcribe_resend(wav_clean_path, target_words)
             
+            w2v_expert_raw = ""
+            w2v_active_dur = None
             # Fallback only if Resend fails or returns empty
             if not resend_raw or not resend_raw.strip():
                 print(f"[EVALUATION] Resend unavailable or empty, falling back to local Wav2Vec...")
-                active_raw = transcribe_wav2vec(wav_clean_path)
+                active_raw, w2v_active_dur = transcribe_wav2vec(wav_clean_path, return_duration=True)
                 active_raw = normalize_tagalog_numbers(active_raw, target_words)
                 resend_used = False
             else:
@@ -2197,17 +2256,21 @@ def evaluate_audio():
 
             active_raw = normalize_tagalog_numbers(active_raw, target_words)
 
-            w2v_expert_raw = ""
             if safe_level in ['moderate', 'expert', 'classroom'] or 'classroom' in safe_level or 'grade' in safe_level:
                 try:
-                    w2v_expert_raw = transcribe_wav2vec(wav_clean_path)
-                    print(f"[WAV2VEC] Acoustic check OK: '{w2v_expert_raw}'")
+                    w2v_expert_raw, w2v_active_dur = transcribe_wav2vec(wav_clean_path, return_duration=True)
+                    print(f"[WAV2VEC] Acoustic check OK: '{w2v_expert_raw}' | Phoneme Duration: {w2v_active_dur}s")
                 except Exception as e:
                     print(f"[WAV2VEC] Acoustic transcription error: {e}")
 
             if safe_level in ['expert', 'classroom'] or 'classroom' in safe_level or 'grade' in safe_level:
                 for wrong, right in EXPERT_CORRECTIONS.items():
                     active_raw = active_raw.replace(wrong, right)
+
+            # Apply real-time dynamic NLP & phonetic correction rules configured by Administrator
+            active_raw = apply_dynamic_nlp_corrections(active_raw)
+            if w2v_expert_raw:
+                w2v_expert_raw = apply_dynamic_nlp_corrections(w2v_expert_raw)
 
             # Auto-convert only if on the reference target text:
             target_lower_str = " ".join(target_words).lower()
@@ -2378,6 +2441,25 @@ def evaluate_audio():
             # Accuracy Rate (%) = ((Total Target Words - Errors) / Total Target Words) * 100
             accuracy_rate = (final_correct_count / total_target_words * 100.0) if total_target_words > 0 else 0.0
 
+            # Reconcile true speaking duration to discard trailing noisy dead air
+            client_time_taken = None
+            try:
+                if 'time_taken' in request.form:
+                    client_time_taken = float(request.form['time_taken'])
+            except Exception:
+                pass
+
+            if w2v_active_dur and w2v_active_dur > 0.5:
+                # If audio file duration is noticeably longer than when phonemes actually finished (dead air/noise)
+                if duration_seconds > w2v_active_dur + 0.9:
+                    print(f"[DURATION RECONCILE] Trailing dead air detected: audio was {round(duration_seconds, 2)}s, "
+                          f"but acoustic speech phonemes ended at {round(w2v_active_dur, 2)}s. Using acoustic speech duration.")
+                    duration_seconds = round(w2v_active_dur, 2)
+
+            if client_time_taken and client_time_taken > 0.5:
+                if duration_seconds > client_time_taken + 1.8:
+                    duration_seconds = min(duration_seconds, round(client_time_taken + 0.35, 2))
+
             # WCPM = (Total Correct Words / Duration in Seconds) * 60
             duration_minutes = duration_seconds / 60.0
             wcpm = (final_correct_count / duration_minutes) if duration_minutes > 0 else 0.0
@@ -2401,13 +2483,16 @@ def evaluate_audio():
         # =============================================================
         else:
             # Step 1: Run local acoustic transcription through quantized Wav2Vec 2.0
-            wav2vec_raw = transcribe_wav2vec(wav_clean_path)
+            wav2vec_raw, w2v_active_dur = transcribe_wav2vec(wav_clean_path, return_duration=True)
             # Step 2: Validate that speech was captured; return 400 if silent/empty
             if not wav2vec_raw.strip():
                 return jsonify({
                     "error": "No speech detected. Please speak clearly into the microphone.",
                     "status": "empty"
                 }), 400
+
+            # Apply real-time dynamic NLP & phonetic correction rules configured by Administrator
+            wav2vec_raw = apply_dynamic_nlp_corrections(wav2vec_raw)
 
             # Step 3: Candidate raw string initialization
             iq_wav2vec_raw = wav2vec_raw
@@ -2459,6 +2544,24 @@ def evaluate_audio():
             final_correct_count = max(0, total_target_words - best_errors)
             # Accuracy Rate (%) = ((Total Target Words - Errors) / Total Target Words) * 100
             accuracy_rate = (final_correct_count / total_target_words * 100.0) if total_target_words > 0 else 0.0
+
+            # Reconcile true speaking duration to discard trailing noisy dead air
+            client_time_taken = None
+            try:
+                if 'time_taken' in request.form:
+                    client_time_taken = float(request.form['time_taken'])
+            except Exception:
+                pass
+
+            if w2v_active_dur and w2v_active_dur > 0.5:
+                if duration_seconds > w2v_active_dur + 0.9:
+                    print(f"[DURATION RECONCILE] Trailing dead air detected: audio was {round(duration_seconds, 2)}s, "
+                          f"but acoustic speech phonemes ended at {round(w2v_active_dur, 2)}s. Using acoustic speech duration.")
+                    duration_seconds = round(w2v_active_dur, 2)
+
+            if client_time_taken and client_time_taken > 0.5:
+                if duration_seconds > client_time_taken + 1.8:
+                    duration_seconds = min(duration_seconds, round(client_time_taken + 0.35, 2))
 
             # WCPM = (Total Correct Words / Duration in Seconds) * 60
             duration_minutes = duration_seconds / 60.0
@@ -3058,7 +3161,8 @@ def classroom_verify_session():
         }), 403
 
     settings = database.get_teacher_settings(teacher_id)
-    return jsonify({"valid": True, "settings": settings}), 200
+    passages = database.get_active_passages(teacher_id)
+    return jsonify({"valid": True, "settings": settings, "passages": passages}), 200
 
 @app.route('/api/teacher/<int:teacher_id>/settings', methods=['GET', 'POST'])
 def teacher_settings_endpoint(teacher_id):
@@ -3186,14 +3290,565 @@ def teacher_clear_records():
 # 5. Token Availability & Health Check
 @app.route('/api/system/token-status', methods=['GET'])
 def system_token_status():
-    api_key = os.getenv("Resend_api_key") or os.getenv("RESEND_API_KEY")
+    db_settings = database.get_system_settings()
+    configured_mode = db_settings.get("stt_mode", "HYBRID_CLOUD_LOCAL")
+    api_key = db_settings.get("resend_api_key") or os.getenv("Resend_api_key") or os.getenv("RESEND_API_KEY")
     has_key = bool(api_key and len(api_key.strip()) > 10)
     return jsonify({
         "cloud_stt_configured": has_key,
-        "mode": "HYBRID_CLOUD_LOCAL" if has_key else "LOCAL_WAV2VEC_ONLY",
+        "mode": configured_mode if has_key else "LOCAL_WAV2VEC_ONLY",
         "local_w2v_status": "ONLINE (Quantized 8-bit)",
         "fallback_available": True
     }), 200
+
+# =================================================================
+# 6. SUPER-ADMINISTRATOR API ENDPOINTS & ZERO-CODE GOVERNANCE
+# =================================================================
+
+def send_admin_otp_email(recipient_email, otp_code):
+    """Sends a branded 6-digit verification code to the admin's email via Gmail SMTP."""
+    sender_email = os.getenv("EMAIL_SENDER")
+    sender_password = os.getenv("EMAIL_APP_PASSWORD")
+
+    if not sender_email or not sender_password:
+        return False, "Server email credentials not configured in .env"
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = f"ReadFil Security <{sender_email}>"
+        msg['To'] = recipient_email
+        msg['Subject'] = f"ReadFil Administrator Verification Code: {otp_code}"
+
+        html_body = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif; background-color: #f8fafc; padding: 24px; color: #1e293b;">
+                <div style="max-width: 500px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h1 style="color: #0096FF; margin: 0; font-size: 26px; font-weight: 800;">ReadFil</h1>
+                        <p style="color: #64748b; font-size: 13px; margin-top: 4px; font-weight: 600;">School Master Administrator Verification</p>
+                    </div>
+                    
+                    <p style="font-size: 15px; line-height: 1.6; margin-bottom: 20px;">
+                        A sign-in attempt was initiated for the <strong>ReadFil Master Administrator Account</strong>. Enter the 6-digit verification code below to authorize your session:
+                    </p>
+                    
+                    <div style="text-align: center; margin: 28px 0;">
+                        <span style="display: inline-block; font-size: 36px; font-weight: 900; letter-spacing: 8px; color: #0096FF; background: #f0f7ff; padding: 14px 28px; border-radius: 12px; border: 2px dashed #93c5fd;">
+                            {otp_code}
+                        </span>
+                    </div>
+
+                    <p style="font-size: 13px; color: #64748b; line-height: 1.5; margin-bottom: 24px;">
+                        This passcode expires in <strong>10 minutes</strong>. If you did not initiate this request, someone may be attempting to access your server management portal.
+                    </p>
+                    
+                    <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
+                    <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">
+                        ReadFil Tagalog Reading Evaluation System &bull; High-Security Super-Admin Module
+                    </p>
+                </div>
+            </body>
+        </html>
+        """
+        msg.attach(MIMEText(html_body, 'html'))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+
+        return True, None
+    except Exception as e:
+        print(f"[EMAIL SEND ERROR] Could not dispatch OTP: {e}")
+        return False, str(e)
+
+def admin_required(f):
+    """Decorator ensuring that only authenticated administrators with active sessions can access the route."""
+    @functools.wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = None
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            token = auth_header.split(' ', 1)[1].strip()
+        elif 'X-Admin-Token' in request.headers:
+            token = request.headers.get('X-Admin-Token', '').strip()
+        elif 'token' in request.args:
+            token = request.args.get('token', '').strip()
+
+        if not token or not database.validate_admin_session(token):
+            return jsonify({
+                "success": False,
+                "error": "Unauthorized: Super-Administrator session is invalid, expired, or missing."
+            }), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+# --- Admin Authentication & Multi-Factor Setup ---
+
+@app.route('/api/admin/status', methods=['GET'])
+def admin_status_endpoint():
+    status = database.get_admin_status()
+    return jsonify(status), 200
+
+@app.route('/api/admin/setup', methods=['POST'])
+def admin_setup_endpoint():
+    data = request.get_json(force=True, silent=True) or {}
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+    pin = data.get('pin')
+
+    result = database.setup_initial_admin(username, email, password, pin)
+    return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/admin/login', methods=['POST'])
+def admin_login_step1():
+    data = request.get_json(force=True, silent=True) or {}
+    username_or_email = data.get('username') or data.get('email')
+    password = data.get('password')
+
+    result = database.verify_admin_password(username_or_email, password)
+    return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/admin/verify-pin', methods=['POST'])
+def admin_verify_pin_step2():
+    data = request.get_json(force=True, silent=True) or {}
+    pin = data.get('pin')
+
+    pin_res = database.verify_admin_pin(pin)
+    if not pin_res.get('success'):
+        return jsonify(pin_res), 400
+
+    admin_email = pin_res['email']
+    otp_res = database.create_admin_otp(admin_email)
+    if not otp_res.get('success'):
+        return jsonify(otp_res), 500
+
+    # Dispatch email
+    sent, email_err = send_admin_otp_email(admin_email, otp_res['otp_code'])
+    if not sent:
+        print(f"[OTP SEND NOTICE] Email dispatch failed: {email_err}. OTP code in server console for local testing: {otp_res['otp_code']}")
+        return jsonify({
+            "success": True,
+            "step": "otp_required",
+            "email": admin_email,
+            "email_dispatched": False,
+            "warning": "Email dispatch failed. Please check your internet connection or use emergency recovery key."
+        }), 200
+
+    return jsonify({
+        "success": True,
+        "step": "otp_required",
+        "email": admin_email,
+        "email_dispatched": True
+    }), 200
+
+@app.route('/api/admin/resend-otp', methods=['POST'])
+def admin_resend_otp():
+    status = database.get_admin_status()
+    if not status.get('is_setup'):
+        return jsonify({"success": False, "error": "Admin account not setup"}), 400
+
+    conn = database.get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT email FROM admin_account WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({"success": False, "error": "Admin not found"}), 400
+
+    admin_email = row['email']
+    otp_res = database.create_admin_otp(admin_email)
+    if not otp_res.get('success'):
+        return jsonify(otp_res), 500
+
+    sent, email_err = send_admin_otp_email(admin_email, otp_res['otp_code'])
+    return jsonify({
+        "success": True,
+        "email_dispatched": sent,
+        "warning": email_err if not sent else None
+    }), 200
+
+@app.route('/api/admin/verify-otp', methods=['POST'])
+def admin_verify_otp_step3():
+    data = request.get_json(force=True, silent=True) or {}
+    code = data.get('code') or data.get('otp')
+    
+    conn = database.get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username, email FROM admin_account WHERE id = 1")
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({"success": False, "error": "Admin account not found"}), 400
+
+    result = database.verify_admin_otp(row['email'], code)
+    if result.get('success'):
+        result['session_token'] = result.get('token')
+        result['admin'] = {
+            "username": row['username'],
+            "email": row['email'],
+            "full_name": row['username'].title()
+        }
+    return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/admin/verify-recovery', methods=['POST'])
+def admin_verify_recovery():
+    data = request.get_json(force=True, silent=True) or {}
+    key = data.get('recovery_key') or data.get('recovery_code') or data.get('code')
+    result = database.verify_admin_recovery_code(key)
+    if result.get('success'):
+        result['session_token'] = result.get('token')
+        conn = database.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT username, email FROM admin_account WHERE id = 1")
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            result['admin'] = {
+                "username": row['username'],
+                "email": row['email'],
+                "full_name": row['username'].title()
+            }
+    return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/admin/verify-session', methods=['GET', 'POST'])
+def admin_verify_session_endpoint():
+    auth_header = request.headers.get('Authorization', '')
+    token = None
+    if auth_header.startswith('Bearer '):
+        token = auth_header.split(' ', 1)[1].strip()
+    elif 'X-Admin-Token' in request.headers:
+        token = request.headers.get('X-Admin-Token', '').strip()
+    elif 'token' in request.args:
+        token = request.args.get('token', '').strip()
+
+    valid = database.validate_admin_session(token)
+    return jsonify({"valid": valid}), (200 if valid else 401)
+
+@app.route('/api/admin/logout', methods=['POST'])
+def admin_logout():
+    auth_header = request.headers.get('Authorization', '')
+    token = None
+    if auth_header.startswith('Bearer '):
+        token = auth_header.split(' ', 1)[1].strip()
+    elif 'X-Admin-Token' in request.headers:
+        token = request.headers.get('X-Admin-Token', '').strip()
+    
+    database.destroy_admin_session(token)
+    return jsonify({"success": True}), 200
+
+# --- Dynamic NLP & Phonetic Rules Endpoints ---
+
+@app.route('/api/admin/nlp/rules', methods=['GET', 'POST'])
+@admin_required
+def admin_nlp_rules():
+    if request.method == 'GET':
+        search = request.args.get('search')
+        rules = database.get_nlp_corrections(search)
+        for r in rules:
+            r['spoken_text'] = r.get('spoken_phrase')
+            r['replacement_text'] = r.get('replacement_phrase')
+            r['description'] = r.get('notes')
+            r['is_regex'] = r.get('rule_type') == 'regex'
+        return jsonify({"success": True, "rules": rules}), 200
+    elif request.method == 'POST':
+        data = request.json or {}
+        spoken = data.get('spoken_phrase') or data.get('spoken_text')
+        replacement = data.get('replacement_phrase') or data.get('replacement_text')
+        rule_type = 'regex' if data.get('is_regex') else data.get('rule_type', 'exact')
+        notes = data.get('notes') or data.get('description', '')
+
+        result = database.add_nlp_correction(spoken, replacement, rule_type, notes)
+        return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/admin/nlp/rules/<int:rule_id>', methods=['PUT', 'DELETE'])
+@admin_required
+def admin_nlp_rule_detail(rule_id):
+    if request.method == 'PUT':
+        data = request.json or {}
+        spoken = data.get('spoken_phrase') or data.get('spoken_text')
+        replacement = data.get('replacement_phrase') or data.get('replacement_text')
+        rule_type = 'regex' if data.get('is_regex') else data.get('rule_type', 'exact')
+        is_active = data.get('is_active', 1)
+        notes = data.get('notes') or data.get('description', '')
+
+        result = database.update_nlp_correction(rule_id, spoken, replacement, rule_type, is_active, notes)
+        return jsonify(result), (200 if result.get('success') else 400)
+    elif request.method == 'DELETE':
+        result = database.delete_nlp_correction(rule_id)
+        return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/admin/nlp/rules/<int:rule_id>/toggle', methods=['POST'])
+@admin_required
+def admin_nlp_rule_toggle(rule_id):
+    data = request.get_json(silent=True) or {}
+    is_active = data.get('is_active')
+    result = database.toggle_nlp_correction(rule_id, is_active)
+    return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/admin/nlp/test', methods=['POST'])
+@app.route('/api/admin/nlp/rules/test', methods=['POST'])
+@admin_required
+def admin_nlp_test():
+    """Live interactive testing playground for the administrator."""
+    data = request.json or {}
+    input_text = data.get('text') or data.get('sample_text', '')
+    active_rules = database.get_active_nlp_corrections()
+    transformed = apply_dynamic_nlp_corrections(input_text)
+    
+    rules_applied = []
+    for r in active_rules:
+        spoken = r['spoken_phrase']
+        replacement = r['replacement_phrase']
+        if r['rule_type'] == 'regex':
+            if re.search(spoken, input_text, flags=re.IGNORECASE):
+                rules_applied.append({"spoken": spoken, "replacement": replacement})
+        else:
+            if re.search(r'\b' + re.escape(spoken) + r'\b', input_text, flags=re.IGNORECASE):
+                rules_applied.append({"spoken": spoken, "replacement": replacement})
+
+    return jsonify({
+        "success": True,
+        "original": input_text,
+        "transformed": transformed,
+        "corrected_text": transformed,
+        "rules_applied": rules_applied,
+        "modified": (input_text != transformed)
+    }), 200
+
+# --- System Configuration Endpoints ---
+
+@app.route('/api/admin/system/config', methods=['GET', 'POST'])
+@admin_required
+def admin_system_config():
+    if request.method == 'GET':
+        settings = database.get_system_settings()
+        api_key = settings.get("resend_api_key") or os.getenv("Resend_api_key") or os.getenv("RESEND_API_KEY") or ""
+        masked_key = f"{api_key[:6]}...{api_key[-4:]}" if len(api_key) > 10 else ("Configured" if api_key else "Not Set")
+        return jsonify({
+            "success": True,
+            "settings": settings,
+            "api_key_configured": bool(api_key),
+            "masked_api_key": masked_key
+        }), 200
+    elif request.method == 'POST':
+        data = request.get_json(force=True, silent=True) or {}
+        result = database.update_system_settings(data)
+        return jsonify(result), (200 if result.get('success') else 400)
+
+# --- Teacher & User Governance Endpoints ---
+
+@app.route('/api/admin/teachers', methods=['GET', 'POST'])
+@admin_required
+def admin_teachers_endpoint():
+    if request.method == 'GET':
+        search = request.args.get('search')
+        teachers = database.get_all_teachers_admin(search)
+        return jsonify({"success": True, "teachers": teachers}), 200
+    elif request.method == 'POST':
+        data = request.get_json(force=True, silent=True) or {}
+        result = database.admin_create_teacher(data)
+        return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/admin/teachers/<int:teacher_id>/reset-password', methods=['POST', 'PUT'])
+@admin_required
+def admin_teacher_reset_pwd(teacher_id):
+    data = request.get_json(force=True, silent=True) or {}
+    new_pwd = data.get('new_password')
+    result = database.admin_reset_teacher_password(teacher_id, new_pwd)
+    return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/admin/teachers/<int:teacher_id>', methods=['DELETE'])
+@admin_required
+def admin_teacher_delete(teacher_id):
+    result = database.admin_delete_teacher(teacher_id)
+    return jsonify(result), (200 if result.get('success') else 400)
+
+# --- School-Wide Student Results Endpoints ---
+
+@app.route('/api/admin/records', methods=['GET'])
+@admin_required
+def admin_records_endpoint():
+    search = request.args.get('search')
+    teacher_id = request.args.get('teacher_id', type=int)
+    limit = request.args.get('limit', default=500, type=int)
+    records = database.get_all_student_records_admin(search=search, teacher_id=teacher_id, limit=limit)
+    return jsonify({"success": True, "records": records}), 200
+
+@app.route('/api/admin/records/batch', methods=['POST', 'DELETE'])
+@admin_required
+def admin_records_delete_batch():
+    data = request.get_json(force=True, silent=True) or {}
+    ids = data.get('record_ids', [])
+    result = database.admin_delete_student_results_batch(ids)
+    return jsonify(result), (200 if result.get('success') else 400)
+
+@app.route('/api/admin/records/export', methods=['GET'])
+@admin_required
+def admin_records_export():
+    records = database.get_all_student_records_admin(limit=5000)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "ID", "Teacher", "Student Name", "Passage Title", "Accuracy (%)",
+        "WCPM", "Composite Score", "Reading Level", "Duration (s)",
+        "Correct Words", "Total Words", "Errors Detected", "Timestamp"
+    ])
+    for r in records:
+        writer.writerow([
+            r['id'], r.get('teacher_name', ''), r['student_name'], r['passage_title'],
+            r['accuracy_rate'], r['wcpm'], r['composite_score'], r['reading_level'],
+            r['duration_seconds'], r['correct_words'], r['total_target_words'],
+            r['errors_detected'], r['timestamp']
+        ])
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=readfil_all_school_records.csv"}
+    )
+
+# --- Database Backup, Restore, and Maintenance ---
+
+@app.route('/api/admin/db/download', methods=['GET'])
+@admin_required
+def admin_db_download():
+    """Downloads the active SQLite readfil.db file directly as a backup."""
+    if not os.path.exists(database.DB_PATH):
+        return jsonify({"success": False, "error": "Database file not found"}), 404
+    
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    database.log_admin_audit("DATABASE_BACKUP_DOWNLOAD", f"Admin downloaded database snapshot ({timestamp})")
+    return send_file(
+        database.DB_PATH,
+        as_attachment=True,
+        download_name=f"readfil_backup_{timestamp}.db",
+        mimetype="application/x-sqlite3"
+    )
+
+@app.route('/api/admin/db/restore', methods=['POST'])
+@admin_required
+def admin_db_restore():
+    """Uploads and restores a valid SQLite database backup file."""
+    # Check password confirmation if provided
+    admin_pwd = request.form.get('admin_password') or request.form.get('password')
+    if admin_pwd:
+        conn = database.get_db_connection()
+        try:
+            admin = conn.execute("SELECT * FROM admin_account WHERE id = 1").fetchone()
+            if admin and not database.check_password_hash(admin['password_hash'], admin_pwd):
+                return jsonify({"success": False, "error": "Incorrect administrator password."}), 403
+        finally:
+            conn.close()
+
+    file = request.files.get('database') or request.files.get('db_file') or request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({"success": False, "error": "No database file uploaded."}), 400
+
+    content = file.read()
+    if len(content) < 100 or not content.startswith(b"SQLite format 3"):
+        return jsonify({"success": False, "error": "Invalid SQLite database file. Header check failed."}), 400
+
+    # Preserve current admin session token so user is not logged out upon restore
+    auth_header = request.headers.get('Authorization', '')
+    active_token = auth_header.split(' ', 1)[1].strip() if auth_header.startswith('Bearer ') else None
+
+    # Create safety backup of current database
+    if os.path.exists(database.DB_PATH):
+        backup_path = database.DB_PATH + ".safety_backup"
+        try:
+            with open(backup_path, "wb") as bf:
+                with open(database.DB_PATH, "rb") as cur:
+                    bf.write(cur.read())
+        except Exception as be:
+            print(f"[BACKUP WARNING] Could not create safety backup: {be}")
+
+    # Write new database safely
+    try:
+        temp_restore_path = database.DB_PATH + ".restoring"
+        with open(temp_restore_path, "wb") as f:
+            f.write(content)
+
+        # Remove auxiliary SQLite files if present
+        for ext in ['-wal', '-shm']:
+            aux = database.DB_PATH + ext
+            if os.path.exists(aux):
+                try:
+                    os.remove(aux)
+                except Exception:
+                    pass
+
+        # Atomic replacement
+        if os.path.exists(database.DB_PATH):
+            try:
+                os.remove(database.DB_PATH)
+            except Exception:
+                pass
+        os.replace(temp_restore_path, database.DB_PATH)
+
+        database.init_db()
+
+        # Re-attach active admin session token
+        if active_token:
+            try:
+                s_conn = database.get_db_connection()
+                s_conn.execute(
+                    "INSERT OR REPLACE INTO admin_sessions (token, expires_at) VALUES (?, datetime('now', '+24 hours'))",
+                    (active_token,)
+                )
+                s_conn.commit()
+                s_conn.close()
+            except Exception as se:
+                print(f"[RESTORE SESSION NOTICE] {se}")
+
+        database.log_admin_audit("DATABASE_RESTORED", f"Admin restored database from file: {file.filename}")
+        return jsonify({"success": True, "message": "Database restored successfully!"}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Failed to restore database: {e}"}), 500
+
+@app.route('/api/admin/db/cleanup-audio', methods=['POST'])
+@admin_required
+def admin_db_cleanup_audio():
+    """Prunes temporary audio files from temp_audio/."""
+    deleted_count = 0
+    freed_bytes = 0
+    now = time.time()
+    try:
+        if os.path.exists(UPLOAD_FOLDER):
+            for filename in os.listdir(UPLOAD_FOLDER):
+                file_path = os.path.join(UPLOAD_FOLDER, filename)
+                if os.path.isfile(file_path):
+                    # Delete files older than 5 minutes or any debug files
+                    if (now - os.path.getmtime(file_path)) > 300 or filename.endswith('.log'):
+                        try:
+                            freed_bytes += os.path.getsize(file_path)
+                            os.remove(file_path)
+                            deleted_count += 1
+                        except Exception:
+                            pass
+        database.log_admin_audit("STORAGE_CLEANUP", f"Pruned {deleted_count} files ({round(freed_bytes / (1024*1024), 2)} MB freed)")
+        return jsonify({
+            "success": True,
+            "deleted_count": deleted_count,
+            "freed_mb": round(freed_bytes / (1024 * 1024), 2)
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/admin/stats', methods=['GET'])
+@admin_required
+def admin_stats_endpoint():
+    stats = database.get_database_stats()
+    return jsonify({"success": True, "stats": stats}), 200
+
+@app.route('/api/admin/audit-logs', methods=['GET'])
+@admin_required
+def admin_audit_logs_endpoint():
+    limit = request.args.get('limit', default=100, type=int)
+    logs = database.get_admin_audit_logs(limit)
+    return jsonify({"success": True, "logs": logs}), 200
 
 if __name__ == '__main__':
     print("Starting Flask server...")

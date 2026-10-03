@@ -10,7 +10,7 @@ import TermsAndConditions from './TermsAndConditions.jsx';
 import ScrollToTop from './ScrollToTop.jsx'
 import Results from './Results.jsx'
 import Simulation from './Simulation.jsx'
-import AdminMode from './AdminMode.jsx'
+import AdminPortal from './AdminPortal.jsx'
 import Classroom from './Classroom.jsx'
 import TeacherPortal from './TeacherPortal.jsx'
 import ProtectedRoute from './ProtectedRoute.jsx'
@@ -39,8 +39,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/results" element={<ProtectedRoute><Results /></ProtectedRoute>} />
         <Route path="/simulation" element={<Simulation />} />
 
-        {/* Protected Admin Route */}
-        <Route path="/admin" element={<ProtectedRoute adminOnly={true}><AdminMode /></ProtectedRoute>} />
+        {/* Administrator Portal */}
+        <Route path="/admin" element={<AdminPortal />} />
 
         {/* 404 Catch-All Route */}
         <Route path="*" element={<NotFound />} />

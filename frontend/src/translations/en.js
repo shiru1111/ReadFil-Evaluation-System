@@ -51,7 +51,10 @@ export const en = {
     details: "Project Details",
     details_desc: "READFIL is developed as a solution for modern literacy assessment. It serves as a technical solution to promote, preserve and enhance Tagalog literacy for the modern learner.",
     developed_by: "Developed by:",
-    rights: "Automated Oral Reading System. All rights reserved."
+    rights: "Automated Oral Reading System. All rights reserved.",
+    terms: "Terms and Conditions",
+    teacher_portal: "Teacher Portal",
+    admin_console: "Admin Console"
   },
   modals: {
     criteria_title: "Evaluation Criteria",

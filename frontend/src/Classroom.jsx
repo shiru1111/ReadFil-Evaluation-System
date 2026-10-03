@@ -191,15 +191,14 @@ const needlemanWunschAlign = (targetWords, spokenWords) => {
 
   const alignRatio = alignedMatches / m;
 
-  // The passage reading is completed if:
+  // The passage reading is completed strictly if:
   // 1. The last target word is matched on the NWA alignment path or uttered at the end
-  // 2. The student has read a substantial portion of the passage:
-  //    - for short passages (<= 3 words): at least 2 words or all words matched
-  //    - for standard passages: at least 50% of the words matched
+  // 2. The student has read through virtually the entire passage (>= 75% for short <=10 words, >= 80% for long)
   const isSatisfied = lastWordMatched && (
     m <= 2 ? (alignedMatches >= Math.max(1, m)) :
-      m <= 4 ? (alignedMatches >= 2) :
-        (alignRatio >= 0.50 || alignedMatches >= Math.ceil(m * 0.55))
+      m <= 5 ? (alignedMatches >= Math.max(3, m - 1)) :
+        m <= 10 ? (alignRatio >= 0.75) :
+          (alignRatio >= 0.80 && alignedMatches >= Math.ceil(m * 0.80))
   );
 
   return {
@@ -294,10 +293,18 @@ const checkWordsSatisfied = (targetText, spokenText) => {
   const seqRatio = matchCount / targetWords.length;
   const bagRatio = bagMatchCount / targetWords.length;
   const bestRatio = Math.max(seqRatio, bagRatio);
-  const reachedNearEnd = targetIdx >= Math.max(1, targetWords.length - 2);
+  const isShort = targetWords.length <= 10;
+  // Must reach the actual end of the text
+  const reachedEnd = isShort
+    ? targetIdx >= targetWords.length
+    : targetIdx >= Math.max(1, targetWords.length - 2);
 
-  // Satisfied if reached near end and matched at least 58%, or overall matched >= 75%
-  const satisfied = (reachedNearEnd && bestRatio >= 0.58) || bestRatio >= 0.75;
+  // Satisfied strictly when reaching the end of the passage:
+  // Short passage (<= 10 words): must reach end AND bestRatio >= 0.75
+  // Long passage (> 10 words): must reach near end AND bestRatio >= 0.80
+  const satisfied = isShort
+    ? (reachedEnd && bestRatio >= 0.75)
+    : (reachedEnd && bestRatio >= 0.80);
 
   return {
     satisfied,
@@ -305,6 +312,18 @@ const checkWordsSatisfied = (targetText, spokenText) => {
     totalTarget: targetWords.length,
     matchRatio: bestRatio
   };
+};
+
+// Gets passage duration: strictly respects teacher's configured timer from database
+const getSafePassageDuration = (passage) => {
+  if (!passage) return 60;
+  const savedTimer = parseInt(passage.timer_seconds, 10);
+  if (savedTimer && savedTimer > 0) {
+    return savedTimer;
+  }
+  const content = passage.content || passage.text || '';
+  const wordCount = tokenizeWords(content).length;
+  return Math.max(20, Math.ceil(wordCount * 2.5));
 };
 
 export default function Classroom() {
@@ -381,6 +400,9 @@ export default function Classroom() {
   const autoStopTimeoutRef = useRef(null);
   const autoAdvanceTimerRef = useRef(null);
   const lastSoundTimeRef = useRef(Date.now());
+  const lastWordSpokenTimeRef = useRef(null);
+  const highestMatchRatioRef = useRef(0);
+  const recognizedWordsCountRef = useRef(0);
   const soundDetectedRef = useRef(false);
   const speechDurationMsRef = useRef(0);
   const hasTriggeredAutoStopRef = useRef(false);
@@ -390,6 +412,16 @@ export default function Classroom() {
   const endTimeRef = useRef(null);
   const noiseFloorRef = useRef(0.02);
   const hasSpokenRef = useRef(false);
+
+  // Multi-Passage Execution Refs to eliminate stale closures in intervals & async transitions
+  const currentIndexRef = useRef(0);
+  const activePassageRef = useRef(null);
+  const passagesListRef = useRef([]);
+  const evalResultsRef = useRef([]);
+  const isBetweenPassagesRef = useRef(false);
+  const isCountingDownRef = useRef(false);
+  const isProcessingRef = useRef(false);
+  const totalTimerDurationRef = useRef(60);
 
   // Media Refs
   const mediaRecorderRef = useRef(null);
@@ -404,12 +436,18 @@ export default function Classroom() {
 
   // Strictly terminate and kick out device if teacher regenerated/reset the PIN
   const handleStrictLogoutPinReset = (msg) => {
-    if (isRecordingRef.current) {
-      isRecordingRef.current = false;
-      setIsRecording(false);
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop(); } catch (e) { }
-      }
+    isRecordingRef.current = false;
+    isCountingDownRef.current = false;
+    isBetweenPassagesRef.current = false;
+    isProcessingRef.current = false;
+    currentIndexRef.current = 0;
+    activePassageRef.current = null;
+    passagesListRef.current = [];
+    evalResultsRef.current = [];
+
+    setIsRecording(false);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch (e) { }
     }
     if (countdownTimerRef.current) clearTimeout(countdownTimerRef.current);
     if (autoStopTimeoutRef.current) clearTimeout(autoStopTimeoutRef.current);
@@ -445,6 +483,12 @@ export default function Classroom() {
 
   // 1. Fetch Active Passages from Teacher
   const loadPassages = async (manual = false) => {
+    // If student is currently reading or assessment has progressed, abort reload so we never clobber an active assessment!
+    if (currentIndexRef.current > 0 || evalResultsRef.current.length > 0 || isRecordingRef.current) {
+      if (manual) setIsRefreshing(false);
+      return;
+    }
+
     const teacherId = gateTeacher?.id || sessionStorage.getItem('readfil_classroom_teacher_id');
     const storedPin = sessionStorage.getItem('readfil_classroom_pin');
     if (!teacherId) return;
@@ -474,22 +518,27 @@ export default function Classroom() {
       if (data.settings) {
         sessionStorage.setItem('readfil_classroom_settings', JSON.stringify(data.settings));
         setClassroomSettings(data.settings);
-        if (data.settings.shuffle_passages && list.length > 1 && evalResults.length === 0 && !isRecording) {
+        if (data.settings.shuffle_passages && list.length > 1 && evalResultsRef.current.length === 0 && !isRecordingRef.current) {
           list = [...list].sort(() => Math.random() - 0.5);
         }
       }
 
       setPassagesList(list);
+      passagesListRef.current = list;
       setLastSyncTime(new Date());
 
       if (list.length > 0) {
+        currentIndexRef.current = 0;
         setCurrentIndex(0);
+        activePassageRef.current = list[0];
         setActivePassage(list[0]);
-        const duration = parseInt(list[0].timer_seconds, 10) || 60;
+        const duration = getSafePassageDuration(list[0]);
+        totalTimerDurationRef.current = duration;
         setTotalTimerDuration(duration);
         setTimeLeft(duration);
         setPassageError(null);
       } else {
+        activePassageRef.current = null;
         setActivePassage(null);
         setPassageError(null);
       }
@@ -517,13 +566,32 @@ export default function Classroom() {
       localStorage.removeItem('user_firstName');
       localStorage.removeItem('user_lastName');
       setIsNameModalOpen(true);
+      currentIndexRef.current = 0;
+      setCurrentIndex(0);
+      evalResultsRef.current = [];
+      setEvalResults([]);
+      isBetweenPassagesRef.current = false;
+      setIsBetweenPassages(false);
+      setLastPassageSummary(null);
+      if (passagesListRef.current.length > 0) {
+        const first = passagesListRef.current[0];
+        activePassageRef.current = first;
+        setActivePassage(first);
+        const duration = getSafePassageDuration(first);
+        totalTimerDurationRef.current = duration;
+        setTotalTimerDuration(duration);
+        setTimeLeft(duration);
+      }
     }
 
     if (!isGateUnlocked) {
       setIsLoadingPassages(false);
       return;
     }
-    loadPassages(false);
+    // Only load if passagesList is not yet populated
+    if (passagesListRef.current.length === 0) {
+      loadPassages(false);
+    }
   }, [isGateUnlocked]);
 
   // 1b. Real-time background sync & strict PIN invalidation heartbeat
@@ -556,8 +624,37 @@ export default function Classroom() {
             sessionStorage.setItem('readfil_classroom_settings', JSON.stringify(data.settings));
             setClassroomSettings(data.settings);
           }
-          if (passagesList.length === 0 && !isRecording) {
-            loadPassages(false);
+
+          // CRITICAL FIX: NEVER overwrite activePassage or passagesList during test execution!
+          // Heartbeat verifies PIN validity. It must NEVER reset or revert passages once an assessment
+          // has started, countdown is active, review is showing, or student has advanced to Passage 2+!
+          const isAssessmentActiveOrAdvanced =
+            isRecordingRef.current ||
+            isCountingDownRef.current ||
+            isBetweenPassagesRef.current ||
+            isProcessingRef.current ||
+            evalResultsRef.current.length > 0 ||
+            currentIndexRef.current > 0;
+
+          // Only sync initial passages if the student currently has ZERO passages loaded (waiting room)
+          if (passagesListRef.current.length === 0 && !isAssessmentActiveOrAdvanced) {
+            if (Array.isArray(data.passages) && data.passages.length > 0) {
+              let list = data.passages;
+              if (data.settings?.shuffle_passages && list.length > 1) {
+                list = [...list].sort(() => Math.random() - 0.5);
+              }
+              passagesListRef.current = list;
+              setPassagesList(list);
+              currentIndexRef.current = 0;
+              setCurrentIndex(0);
+              activePassageRef.current = list[0];
+              setActivePassage(list[0]);
+              const duration = getSafePassageDuration(list[0]);
+              totalTimerDurationRef.current = duration;
+              setTotalTimerDuration(duration);
+              setTimeLeft(duration);
+              setPassageError(null);
+            }
           }
         }
       } catch (err) {
@@ -566,7 +663,7 @@ export default function Classroom() {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [isGateUnlocked, gateTeacher, passagesList.length, isRecording]);
+  }, [isGateUnlocked, gateTeacher]);
 
   // Handle PIN verification at the Classroom Gate door
   const handleVerifyAndEnter = async (e) => {
@@ -615,19 +712,24 @@ export default function Classroom() {
 
       setStudentName(cleanName);
       setGateTeacher(data.teacher);
+      passagesListRef.current = list;
       setPassagesList(list);
       setIsGateUnlocked(true);
       setLastSyncTime(new Date());
       setGateError('');
 
       if (list.length > 0) {
+        currentIndexRef.current = 0;
         setCurrentIndex(0);
+        activePassageRef.current = list[0];
         setActivePassage(list[0]);
-        const duration = parseInt(list[0].timer_seconds, 10) || 60;
+        const duration = getSafePassageDuration(list[0]);
+        totalTimerDurationRef.current = duration;
         setTotalTimerDuration(duration);
         setTimeLeft(duration);
         setPassageError(null);
       } else {
+        activePassageRef.current = null;
         setActivePassage(null);
         setPassageError(null);
       }
@@ -651,6 +753,15 @@ export default function Classroom() {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
     }
+    isRecordingRef.current = false;
+    isCountingDownRef.current = false;
+    isBetweenPassagesRef.current = false;
+    isProcessingRef.current = false;
+    currentIndexRef.current = 0;
+    activePassageRef.current = null;
+    passagesListRef.current = [];
+    evalResultsRef.current = [];
+
     setIsRecording(false);
     sessionStorage.removeItem('readfil_classroom_unlocked');
     sessionStorage.removeItem('readfil_classroom_pin');
@@ -670,6 +781,9 @@ export default function Classroom() {
   useEffect(() => {
     return () => {
       isRecordingRef.current = false;
+      isCountingDownRef.current = false;
+      isBetweenPassagesRef.current = false;
+      isProcessingRef.current = false;
       if (countdownTimerRef.current) clearTimeout(countdownTimerRef.current);
       if (autoStopTimeoutRef.current) clearTimeout(autoStopTimeoutRef.current);
       if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
@@ -743,14 +857,16 @@ export default function Classroom() {
     renderFrame();
   };
 
-  // Smart Hands-Free Auto-Stop Trigger (Immediate on NWA last word alignment or silence)
-  const triggerAutoStop = (reason = "completed", delayMs = 0) => {
+  // Smart Hands-Free Auto-Stop Trigger (with acoustic capture margin so final letter is never cut)
+  const triggerAutoStop = (reason = "completed", delayMs = 450) => {
     if (hasTriggeredAutoStopRef.current || !isRecordingRef.current) return;
     hasTriggeredAutoStopRef.current = true;
     isSatisfiedRef.current = true;
     setIsSatisfiedCompleted(true);
-    endTimeRef.current = Date.now();
-    console.log(`[AUTO-STOP TRIGGERED] Reason: ${reason}. Finalizing audio immediately (delay: ${delayMs}ms)...`);
+    if (!endTimeRef.current) {
+      endTimeRef.current = Date.now();
+    }
+    console.log(`[AUTO-STOP TRIGGERED] Reason: ${reason}. Finalizing audio with safe acoustic margin (${delayMs}ms)...`);
 
     // Play completion chime so student has instant audible notification that they are done
     playCompletionChime();
@@ -782,11 +898,17 @@ export default function Classroom() {
       return;
     }
 
+    const currentPassage = activePassageRef.current || activePassage;
+    if (!currentPassage) return;
+
     try {
       setIsSilenceError(false);
       setIsSatisfiedCompleted(false);
       audioChunksRef.current = [];
       lastSoundTimeRef.current = Date.now();
+      lastWordSpokenTimeRef.current = null;
+      highestMatchRatioRef.current = 0;
+      recognizedWordsCountRef.current = 0;
       soundDetectedRef.current = false;
       hasSpokenRef.current = false;
       speechDurationMsRef.current = 0;
@@ -796,6 +918,7 @@ export default function Classroom() {
       noiseFloorRef.current = 0.02;
       endTimeRef.current = null;
       isRecordingRef.current = true;
+      isCountingDownRef.current = false;
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -873,24 +996,37 @@ export default function Classroom() {
             }
 
             const totalSpoken = (finalTranscript + ' ' + interimTranscript).trim();
-            const targetWords = tokenizeWords(activePassage?.content);
+            const passageNow = activePassageRef.current || activePassage;
+            const targetWords = tokenizeWords(passageNow?.content);
             const spokenWords = tokenizeWords(totalSpoken);
+
+            if (spokenWords.length > 0) {
+              const now = Date.now();
+              lastWordSpokenTimeRef.current = now;
+              lastSoundTimeRef.current = now;
+              hasSpokenRef.current = true;
+              recognizedWordsCountRef.current = spokenWords.length;
+            }
 
             // Execute Needleman-Wunsch Alignment (NWA)
             const nwa = needlemanWunschAlign(targetWords, spokenWords);
             lastSpeechMatchRatioRef.current = nwa.alignRatio;
+            if (nwa.alignRatio > highestMatchRatioRef.current) {
+              highestMatchRatioRef.current = nwa.alignRatio;
+            }
 
-            // When the last word is aligned on NWA, stop immediately!
-            if (nwa.lastWordAligned && !hasTriggeredAutoStopRef.current) {
-              console.log("[NWA AUTO-STOP] Last word aligned on NWA! Stopping immediately without delay.");
-              triggerAutoStop("last_word_aligned_nwa", 0);
-              return;
+            // When the last word is aligned on NWA, mark satisfied (silence loop will stop cleanly after pause)
+            if (nwa.lastWordAligned) {
+              isSatisfiedRef.current = true;
             }
 
             // Secondary live satisfaction fallback matching Easy / Beginner UI
-            const check = checkWordsSatisfied(activePassage?.content, totalSpoken);
-            if (check.satisfied && !hasTriggeredAutoStopRef.current) {
-              triggerAutoStop("words_satisfied", 150);
+            const check = checkWordsSatisfied(passageNow?.content, totalSpoken);
+            if (check.matchRatio > highestMatchRatioRef.current) {
+              highestMatchRatioRef.current = check.matchRatio;
+            }
+            if (check.satisfied) {
+              isSatisfiedRef.current = true;
             }
           };
 
@@ -929,6 +1065,7 @@ export default function Classroom() {
         const recordingAgeMs = now - (startTimeRef.current || now);
 
         // Sample audio level
+        let currentRms = 0;
         if (analyserRef.current) {
           const bufferLength = analyserRef.current.frequencyBinCount;
           const dataArray = new Uint8Array(bufferLength);
@@ -939,16 +1076,22 @@ export default function Classroom() {
             const val = (dataArray[i] - 128) / 128.0;
             sum += val * val;
           }
-          const rms = Math.sqrt(sum / bufferLength);
+          currentRms = Math.sqrt(sum / bufferLength);
 
-          // Calibrate ambient noise floor during initial 250ms
-          if (recordingAgeMs < 250) {
-            noiseFloorRef.current = Math.max(0.015, Math.min(0.06, rms * 1.15));
+          // Calibrate ambient noise floor during initial 300ms, then use adaptive tracker
+          if (recordingAgeMs < 300) {
+            noiseFloorRef.current = Math.max(0.005, Math.min(0.035, currentRms * 1.1));
+          } else {
+            if (currentRms < noiseFloorRef.current) {
+              noiseFloorRef.current = (noiseFloorRef.current * 0.95) + (currentRms * 0.05);
+            } else {
+              noiseFloorRef.current = (noiseFloorRef.current * 0.99) + (currentRms * 0.01);
+            }
           }
 
-          // Dynamic speech activity threshold based on ambient noise
-          const speechThreshold = Math.max(0.038, noiseFloorRef.current * 1.7);
-          if (rms > speechThreshold) {
+          // Dynamic speech activity threshold: sensitive enough to capture quiet and normal readers (0.016 min)
+          const speechThreshold = Math.max(0.016, noiseFloorRef.current * 1.5);
+          if (currentRms > speechThreshold) {
             lastSoundTimeRef.current = now;
             soundDetectedRef.current = true;
             hasSpokenRef.current = true;
@@ -956,36 +1099,66 @@ export default function Classroom() {
           }
         }
 
-        // Brief buffer: 650ms grace period before evaluating silence
-        if (recordingAgeMs < 650) return;
+        const passageNow = activePassageRef.current || activePassage;
+        const targetWords = tokenizeWords(passageNow?.content);
+        const targetCount = targetWords.length;
+        const isShortPassage = targetCount <= 10;
+
+        // Buffer: 1200ms grace period for short passages (3-10 words), 2200ms for longer passages
+        const gracePeriod = isShortPassage ? 1200 : 2200;
+        if (recordingAgeMs < gracePeriod) return;
 
         const silenceElapsedMs = now - lastSoundTimeRef.current;
         const totalVoiceMs = speechDurationMsRef.current;
-        const matchRatio = lastSpeechMatchRatioRef.current;
+        const matchRatio = Math.max(lastSpeechMatchRatioRef.current, highestMatchRatioRef.current);
+        const studentHasSpoken = hasSpokenRef.current || totalVoiceMs >= 100 || recognizedWordsCountRef.current > 0;
 
-        // Auto-stop 1: Words are satisfied by NWA or recognizer (last word reached!)
-        if (isSatisfiedRef.current) {
-          triggerAutoStop("words_satisfied", 0);
+        // Case 1: True Completed Reading (Satisfied reader reached the end of the passage)
+        // Natural comfortable pause after uttering the final words:
+        // For short passages (3-10 words): 1200ms silence after last word
+        // For longer passages: 1500ms silence after last word
+        const finishSilence = isShortPassage ? 1200 : 1500;
+        if (isSatisfiedRef.current && silenceElapsedMs >= finishSilence) {
+          triggerAutoStop("words_satisfied", 300);
           return;
         }
 
-        // Auto-stop 2: If almost the whole passage has been recognized (>= 85%) and there is a pause (>= 750ms)
-        if (matchRatio >= 0.85 && silenceElapsedMs >= 750) {
-          triggerAutoStop("high_match_completed", 0);
+        // Case 2: High word match (completed reading >= 85% of passage) followed by post-reading silence
+        // Short (<=10 words): >= 85% match + 2000ms silence
+        // Longer (>10 words): >= 85% match + 2500ms silence
+        const highMatchThreshold = 0.85;
+        const highMatchSilence = isShortPassage ? 2000 : 2500;
+        if (matchRatio >= highMatchThreshold && silenceElapsedMs >= highMatchSilence) {
+          triggerAutoStop("high_match_completed", 300);
           return;
         }
 
-        // Auto-stop 3: Student has completely stopped speaking / gave up
-        // Give 2.5 seconds of silence so students who hesitate or pause to sound out words
-        // are NEVER cut off mid-sentence!
-        if (hasSpokenRef.current && totalVoiceMs >= 250 && silenceElapsedMs >= 2500) {
-          triggerAutoStop("prolonged_silence_finish", 0);
+        // Case 3: Dead air ahead of time on an UNFINISHED passage (Student stopped reading / abandoned)
+        // CRITICAL: NEVER cut off a student while they are actively reading or pausing to breathe!
+        // For short passages (3-10 words): require 5.0 seconds of complete acoustic silence.
+        // For longer passages (50-100+ words): require 7.0 seconds of complete acoustic silence!
+        const deadAirThreshold = isShortPassage ? 5000 : 7000;
+        if (studentHasSpoken && silenceElapsedMs >= deadAirThreshold) {
+          triggerAutoStop("dead_air_silence_ahead", 300);
+          return;
+        }
+
+        // Case 4: Initial Dead Air (Student hasn't spoken anything at all from the start)
+        // If a student started the test and says nothing at all:
+        // Short passage: 6.0s of pure silence -> stop
+        // Long passage: 8.5s of pure silence -> stop
+        const initialDeadAirThreshold = isShortPassage ? 6000 : 8500;
+        if (!studentHasSpoken && recordingAgeMs >= initialDeadAirThreshold && silenceElapsedMs >= initialDeadAirThreshold) {
+          triggerAutoStop("initial_dead_air_silence", 300);
           return;
         }
       }, 60);
 
       // Start Countdown Timer: Fallback limit if speech doesn't stop or is ongoing
-      setTimeLeft(totalTimerDuration);
+      const passageDuration = getSafePassageDuration(currentPassage);
+      totalTimerDurationRef.current = passageDuration;
+      setTotalTimerDuration(passageDuration);
+      setTimeLeft(passageDuration);
       timerIntervalRef.current = setInterval(() => {
         setTimeLeft((prev) => {
           if (prev <= 1) {
@@ -1015,6 +1188,7 @@ export default function Classroom() {
       return () => clearTimeout(countdownTimerRef.current);
     } else if (isCountingDown && countdownValue === 0) {
       countdownTimerRef.current = setTimeout(() => {
+        isCountingDownRef.current = false;
         setIsCountingDown(false);
         startRecording();
       }, 500);
@@ -1034,6 +1208,7 @@ export default function Classroom() {
       }
       setIsSilenceError(false);
       audioChunksRef.current = [];
+      isCountingDownRef.current = true;
       setIsCountingDown(true);
       setCountdownValue(3);
     }
@@ -1041,7 +1216,7 @@ export default function Classroom() {
 
   // 3. Stop Recording
   const stopRecording = () => {
-    if (isProcessing) return;
+    if (isProcessingRef.current) return;
     isRecordingRef.current = false;
 
     if (!endTimeRef.current) {
@@ -1071,6 +1246,7 @@ export default function Classroom() {
       animationRef.current = null;
     }
     setIsRecording(false);
+    isProcessingRef.current = true;
     setIsProcessing(true);
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -1085,8 +1261,13 @@ export default function Classroom() {
       streamRef.current.getTracks().forEach(track => track.stop());
     }
 
-    if (audioChunksRef.current.length === 0) {
+    const currentPassage = activePassageRef.current || activePassage;
+    const currentIdx = currentIndexRef.current;
+    const list = passagesListRef.current.length > 0 ? passagesListRef.current : passagesList;
+
+    if (!currentPassage || audioChunksRef.current.length === 0) {
       setIsSilenceError(true);
+      isProcessingRef.current = false;
       setIsProcessing(false);
       return;
     }
@@ -1095,15 +1276,23 @@ export default function Classroom() {
     const endT = endTimeRef.current || Date.now();
     const startT = startTimeRef.current || endT;
     const rawElapsed = (endT - startT) / 1000;
-    // If stopped via prolonged silence (student stopped talking 2.5s ago), deduct the 2.2s silence wait
-    // so their WCPM is calculated strictly on their actual speaking time!
-    const silenceDeduction = (!isSatisfiedRef.current && rawElapsed > 2.8) ? 2.2 : (rawElapsed > 1.2 ? 0.35 : 0);
-    const elapsedSeconds = Math.max(0.5, parseFloat((rawElapsed - silenceDeduction).toFixed(2)));
+    // Calculate actual elapsed reading duration:
+    // If student stopped reading and was caught by inactivity/silence (2.0s - 2.5s wait),
+    // deduct the waiting window so their WCPM is calculated strictly on their actual speaking time!
+    let elapsedSeconds;
+    if (lastWordSpokenTimeRef.current && lastWordSpokenTimeRef.current > startT) {
+      // True reading time from start to when last word was spoken, plus 0.45s acoustic padding for final phoneme
+      const activeSpeakingTime = ((lastWordSpokenTimeRef.current - startT) / 1000) + 0.45;
+      elapsedSeconds = Math.max(0.5, parseFloat(Math.min(rawElapsed, activeSpeakingTime).toFixed(2)));
+    } else {
+      const silenceDeduction = (!isSatisfiedRef.current && rawElapsed > 2.8) ? 2.0 : (rawElapsed > 1.2 ? 0.35 : 0);
+      elapsedSeconds = Math.max(0.5, parseFloat((rawElapsed - silenceDeduction).toFixed(2)));
+    }
 
     try {
       const formData = new FormData();
       formData.append('audio', audioBlob, 'classroom_assessment.webm');
-      formData.append('target_text', activePassage.content);
+      formData.append('target_text', currentPassage.content);
       formData.append('time_taken', elapsedSeconds.toString());
       formData.append('level', 'Classroom');
 
@@ -1117,6 +1306,7 @@ export default function Classroom() {
       if (!response.ok) {
         if (result.status === 'empty') {
           setIsSilenceError(true);
+          isProcessingRef.current = false;
           setIsProcessing(false);
           audioChunksRef.current = [];
           return;
@@ -1128,6 +1318,7 @@ export default function Classroom() {
       const spokenTranscript = (result.transcription || result.spoken_text || '').trim();
       if (!spokenTranscript && result.accuracy_rate === 0) {
         setIsSilenceError(true);
+        isProcessingRef.current = false;
         setIsProcessing(false);
         audioChunksRef.current = [];
         return;
@@ -1149,9 +1340,9 @@ export default function Classroom() {
         : parseFloat(elapsedSeconds);
 
       const passageEvalData = {
-        passage_id: activePassage.id,
-        passage_title: activePassage.title,
-        content: activePassage.content,
+        passage_id: currentPassage.id,
+        passage_title: currentPassage.title,
+        content: currentPassage.content,
         elapsedSeconds: actualDuration,
         duration_seconds: actualDuration,
         accuracy_rate: accRate,
@@ -1159,34 +1350,36 @@ export default function Classroom() {
         composite_score: composite,
         reading_level: philIriLevel,
         correct_words: result.correct_words || 0,
-        total_target_words: result.total_target_words || activePassage.content.trim().split(/\s+/).length,
+        total_target_words: result.total_target_words || currentPassage.content.trim().split(/\s+/).length,
         errors_detected: result.errors_detected || 0,
         stutter_words: result.stutter_words || [],
         spoken_text: spokenTranscript,
         transcription: spokenTranscript,
-        target_text: activePassage.content,
+        target_text: currentPassage.content,
         trace: result.trace || [],
         raw_result: result
       };
 
-      const updatedResults = [...evalResults, passageEvalData];
+      const updatedResults = [...evalResultsRef.current, passageEvalData];
+      evalResultsRef.current = updatedResults;
       setEvalResults(updatedResults);
 
-      const hasNextPassage = currentIndex < passagesList.length - 1;
+      const hasNextPassage = currentIdx < list.length - 1;
 
       if (hasNextPassage) {
         // Show Interstitial Transition to next passage in set
-        const nextPassage = passagesList[currentIndex + 1];
+        const nextPassage = list[currentIdx + 1];
         setLastPassageSummary({
-          index: currentIndex,
-          title: activePassage.title,
+          index: currentIdx,
+          title: currentPassage.title,
           accuracy: accRate,
           wcpm: readWcpm,
           correct: passageEvalData.correct_words,
           total: passageEvalData.total_target_words,
           nextTitle: nextPassage.title,
-          nextTimer: nextPassage.timer_seconds || 10
+          nextTimer: getSafePassageDuration(nextPassage)
         });
+        isBetweenPassagesRef.current = true;
         setIsBetweenPassages(true);
         let currentSettings = classroomSettings;
         try {
@@ -1234,9 +1427,9 @@ export default function Classroom() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              teacher_id: gateTeacher?.id || Number(sessionStorage.getItem('readfil_classroom_teacher_id')) || activePassage?.teacher_id,
+              teacher_id: gateTeacher?.id || Number(sessionStorage.getItem('readfil_classroom_teacher_id')) || currentPassage?.teacher_id,
               pin: sessionStorage.getItem('readfil_classroom_pin') || '',
-              passage_id: activePassage?.id,
+              passage_id: currentPassage?.id,
               student_name: studentName,
               passage_title: setPassageTitle,
               duration_seconds: totalElapsed,
@@ -1296,6 +1489,7 @@ export default function Classroom() {
         : "May naganap na error habang sinusuri ang iyong pagbasa. Subukan muli."
       );
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
       audioChunksRef.current = [];
     }
@@ -1305,21 +1499,29 @@ export default function Classroom() {
   const handleProceedToNextPassage = () => {
     if (autoAdvanceTimerRef.current) {
       clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
     }
-    const nextIdx = currentIndex + 1;
-    if (nextIdx < passagesList.length) {
-      const nextPassage = passagesList[nextIdx];
+    setAutoAdvanceCountdown(0);
+    const list = passagesListRef.current.length > 0 ? passagesListRef.current : passagesList;
+    const nextIdx = currentIndexRef.current + 1;
+    if (nextIdx < list.length) {
+      const nextPassage = list[nextIdx];
+      currentIndexRef.current = nextIdx;
       setCurrentIndex(nextIdx);
+      activePassageRef.current = nextPassage;
       setActivePassage(nextPassage);
-      const duration = parseInt(nextPassage.timer_seconds, 10) || 60;
+      const duration = getSafePassageDuration(nextPassage);
+      totalTimerDurationRef.current = duration;
       setTotalTimerDuration(duration);
       setTimeLeft(duration);
+      isBetweenPassagesRef.current = false;
       setIsBetweenPassages(false);
       setLastPassageSummary(null);
       setIsSilenceError(false);
       setIsSatisfiedCompleted(false);
 
       // Hands-free continuous start: automatically starts 3-2-1 countdown for next passage!
+      isCountingDownRef.current = true;
       setIsCountingDown(true);
       setCountdownValue(3);
     }
@@ -1763,10 +1965,10 @@ export default function Classroom() {
         {/* Assignment Badges */}
         <div className="flex flex-wrap items-center justify-center gap-2 mb-6">
           <span className="text-xs font-bold text-[#0096FF] uppercase bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
-            {activePassage.grade_level || "Classroom"}
+            {activePassage?.grade_level || "Classroom"}
           </span>
           <span className="text-xs text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200 shadow-sm">
-            {isEn ? "Assigned by:" : "Itinalaga ni:"} <strong className="text-slate-700">{activePassage.teacher_name || (isEn ? "Teacher" : "Guro")}</strong>
+            {isEn ? "Assigned by:" : "Itinalaga ni:"} <strong className="text-slate-700">{activePassage?.teacher_name || (isEn ? "Teacher" : "Guro")}</strong>
           </span>
         </div>
 
@@ -1791,10 +1993,10 @@ export default function Classroom() {
             )}
 
             <p className={`text-xl sm:text-2xl leading-relaxed text-center font-medium text-black transition-all duration-300 ${!isRecording && !isProcessing ? 'blur-sm select-none' : ''}`}>
-              "{activePassage.content}"
+              "{activePassage?.content || ''}"
             </p>
 
-            {activePassage.source && (
+            {activePassage?.source && (
               <span className={`mt-6 text-sm text-gray-400 italic transition-all duration-300 ${!isRecording && !isProcessing ? 'blur-sm select-none' : ''}`}>
                 {isEn ? "Source: " : "Pinagmulan: "} {activePassage.source}
               </span>

@@ -9,8 +9,11 @@ import json
 import io
 import csv
 import random
+import secrets
+import hashlib
+import time
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'readfil.db')
 
@@ -103,7 +106,105 @@ def init_db():
     )
     """)
 
+    # 4. Super Admin Solo Account Table (id=1 Singleton Constraint)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS admin_account (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        username TEXT UNIQUE NOT NULL,
+        email TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        pin_hash TEXT NOT NULL,
+        recovery_code_hash TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # 5. Admin Sessions Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+        token TEXT PRIMARY KEY,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME NOT NULL
+    )
+    """)
+
+    # 6. Admin OTP Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS admin_otp (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        code_hash TEXT NOT NULL,
+        attempts INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME NOT NULL
+    )
+    """)
+
+    # 7. Dynamic NLP & Phonetic Correction Rules Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS nlp_corrections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        spoken_phrase TEXT NOT NULL,
+        replacement_phrase TEXT NOT NULL,
+        rule_type TEXT DEFAULT 'exact',
+        is_active INTEGER DEFAULT 1,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # 8. System Settings Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS system_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )
+    """)
+
+    # 9. Admin Audit Logs Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS admin_audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action TEXT NOT NULL,
+        details TEXT,
+        ip_address TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     conn.commit()
+
+    # Seed default NLP correction rules if table is empty
+    cursor.execute("SELECT COUNT(*) AS count FROM nlp_corrections")
+    if cursor.fetchone()['count'] == 0:
+        default_rules = [
+            ("tiago", "Tiyago", "exact", "Common phonetic variation of proper name Tiyago"),
+            ("athinas", "Atenas", "exact", "Acoustic variant of historical location Atenas"),
+            ("atinas", "Atenas", "exact", "Acoustic variant of historical location Atenas"),
+            ("sinta", "sintas", "exact", "Acoustic correction for shoelace context"),
+            ("manga", "mga", "exact", "Standard Tagalog grammatical pluralizer normalization"),
+        ]
+        cursor.executemany("""
+            INSERT INTO nlp_corrections (spoken_phrase, replacement_phrase, rule_type, notes)
+            VALUES (?, ?, ?, ?)
+        """, default_rules)
+        conn.commit()
+
+    # Seed default system settings if table is empty
+    cursor.execute("SELECT COUNT(*) AS count FROM system_settings")
+    if cursor.fetchone()['count'] == 0:
+        default_settings = [
+            ("stt_mode", "HYBRID_CLOUD_LOCAL"),
+            ("wcpm_target", "150"),
+            ("trim_top_db", "26"),
+            ("silence_inactivity_ms", "2300"),
+            ("allow_teacher_registration", "true")
+        ]
+        cursor.executemany("""
+            INSERT INTO system_settings (key, value) VALUES (?, ?)
+        """, default_settings)
+        conn.commit()
 
     # Seed initial default teacher and active passage if database is fresh
     cursor.execute("SELECT COUNT(*) AS count FROM teachers")
@@ -273,7 +374,7 @@ def get_teacher_settings(teacher_id):
         conn.close()
 
 def update_teacher_settings(teacher_id, new_settings):
-    """Updates settings_json for the specified teacher."""
+    """Updates settings_json for the specified teacher and syncs timer to custom passages."""
     if not teacher_id:
         return {"success": False, "error": "teacher_id required"}
     current = get_teacher_settings(teacher_id)
@@ -284,6 +385,12 @@ def update_teacher_settings(teacher_id, new_settings):
     cursor = conn.cursor()
     try:
         cursor.execute("UPDATE teachers SET settings_json = ? WHERE id = ?", (json.dumps(current), teacher_id))
+        if isinstance(new_settings, dict) and 'timer_duration' in new_settings:
+            try:
+                t_sec = max(5, int(new_settings['timer_duration']))
+                cursor.execute("UPDATE custom_passages SET timer_seconds = ? WHERE teacher_id = ?", (t_sec, int(teacher_id)))
+            except Exception:
+                pass
         conn.commit()
         return {"success": True, "settings": current}
     except Exception as e:
@@ -408,12 +515,26 @@ def update_passage(passage_id, teacher_id, title, content, grade_level, timer_se
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("""
-            UPDATE custom_passages
-            SET title = ?, content = ?, grade_level = ?, timer_seconds = ?
-            WHERE id = ? AND teacher_id = ?
-        """, (title.strip(), content.strip(), grade_level.strip(), int(timer_seconds), passage_id, teacher_id))
-        conn.commit()
+        p_id = int(passage_id)
+        t_sec = max(5, int(timer_seconds))
+        t_id = int(teacher_id) if teacher_id else None
+
+        if t_id is not None:
+            cursor.execute("""
+                UPDATE custom_passages
+                SET title = ?, content = ?, grade_level = ?, timer_seconds = ?
+                WHERE id = ? AND teacher_id = ?
+            """, (title.strip(), content.strip(), grade_level.strip(), t_sec, p_id, t_id))
+            conn.commit()
+
+        if t_id is None or cursor.rowcount == 0:
+            cursor.execute("""
+                UPDATE custom_passages
+                SET title = ?, content = ?, grade_level = ?, timer_seconds = ?
+                WHERE id = ?
+            """, (title.strip(), content.strip(), grade_level.strip(), t_sec, p_id))
+            conn.commit()
+
         return {"success": True}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -694,3 +815,641 @@ def clear_teacher_student_results(teacher_id):
         return {"success": False, "error": str(e)}
     finally:
         conn.close()
+
+# =================================================================
+# 10. SCHOOL SUPER-ADMINISTRATOR AUTHENTICATION & MULTI-FACTOR ENGINE
+# =================================================================
+
+def get_admin_status():
+    """Checks whether the solo master administrator account is initialized."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, username, email, created_at FROM admin_account WHERE id = 1")
+        row = cursor.fetchone()
+        if not row:
+            return {"is_setup": False}
+        email = row['email']
+        parts = email.split('@')
+        masked = f"{parts[0][:2]}***@{parts[1]}" if len(parts) == 2 and len(parts[0]) > 2 else email
+        return {
+            "is_setup": True,
+            "username": row['username'],
+            "masked_email": masked,
+            "created_at": row['created_at']
+        }
+    finally:
+        conn.close()
+
+def setup_initial_admin(username, email, password, pin):
+    """
+    Sets up the singleton Master Administrator account.
+    Generates a secure emergency 16-character recovery key and stores hashed credentials.
+    """
+    if not username or not email or not password or not pin:
+        return {"success": False, "error": "Username, email, password, and 6-digit PIN are required."}
+    
+    clean_username = username.strip()
+    clean_email = email.strip().lower()
+    clean_pin = str(pin).strip()
+
+    if len(clean_pin) != 6 or not clean_pin.isdigit():
+        return {"success": False, "error": "Admin master PIN must be exactly 6 digits."}
+
+    # Generate offline emergency recovery key (e.g. RF-A9B2-7C4E-8D1F)
+    raw_recovery_key = f"RF-{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}-{secrets.token_hex(2).upper()}"
+    
+    pwd_hash = generate_password_hash(password)
+    pin_hash = generate_password_hash(clean_pin)
+    recovery_hash = generate_password_hash(raw_recovery_key)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Check if already setup
+        cursor.execute("SELECT id FROM admin_account WHERE id = 1")
+        if cursor.fetchone():
+            return {"success": False, "error": "Administrator account is already initialized. Cannot run setup again."}
+
+        cursor.execute("""
+            INSERT INTO admin_account (id, username, email, password_hash, pin_hash, recovery_code_hash)
+            VALUES (1, ?, ?, ?, ?, ?)
+        """, (clean_username, clean_email, pwd_hash, pin_hash, recovery_hash))
+        conn.commit()
+
+        log_admin_audit("INITIAL_SETUP", f"Master administrator account created for {clean_username} ({clean_email})")
+
+        return {
+            "success": True,
+            "username": clean_username,
+            "email": clean_email,
+            "recovery_key": raw_recovery_key
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def verify_admin_password(username_or_email, password):
+    """Step 1: Validates administrator username/email and password."""
+    if not username_or_email or not password:
+        return {"success": False, "error": "Username and password required."}
+    
+    ident = username_or_email.strip().lower()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM admin_account WHERE id = 1")
+        admin = cursor.fetchone()
+        if not admin:
+            return {"success": False, "error": "Administrator account has not been set up yet."}
+        
+        matches_username = admin['username'].lower() == ident
+        matches_email = admin['email'].lower() == ident
+
+        if not (matches_username or matches_email):
+            return {"success": False, "error": "Invalid administrator credentials."}
+
+        if not check_password_hash(admin['password_hash'], password):
+            return {"success": False, "error": "Invalid administrator password."}
+
+        # Mask email for step 2/3
+        parts = admin['email'].split('@')
+        masked = f"{parts[0][:2]}***@{parts[1]}" if len(parts) == 2 and len(parts[0]) > 2 else admin['email']
+
+        return {
+            "success": True,
+            "step": "pin_required",
+            "username": admin['username'],
+            "masked_email": masked,
+            "email": admin['email']
+        }
+    finally:
+        conn.close()
+
+def verify_admin_pin(pin):
+    """Step 2: Validates the master 6-digit PIN."""
+    if not pin:
+        return {"success": False, "error": "6-digit Master PIN is required."}
+    
+    clean_pin = str(pin).strip()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM admin_account WHERE id = 1")
+        admin = cursor.fetchone()
+        if not admin:
+            return {"success": False, "error": "Administrator account not configured."}
+
+        if not check_password_hash(admin['pin_hash'], clean_pin):
+            return {"success": False, "error": "Invalid 6-digit Master PIN."}
+
+        return {"success": True, "email": admin['email'], "username": admin['username']}
+    finally:
+        conn.close()
+
+def verify_admin_recovery_code(code):
+    """Emergency fallback: verifies 16-character recovery key and generates a session."""
+    if not code:
+        return {"success": False, "error": "Recovery key required."}
+    
+    clean_code = code.strip().upper()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM admin_account WHERE id = 1")
+        admin = cursor.fetchone()
+        if not admin:
+            return {"success": False, "error": "Administrator account not configured."}
+
+        if not check_password_hash(admin['recovery_code_hash'], clean_code):
+            return {"success": False, "error": "Invalid emergency recovery key."}
+
+        # Issue session
+        session = create_admin_session()
+        log_admin_audit("EMERGENCY_RECOVERY_LOGIN", "Admin logged in using offline recovery key")
+        return {"success": True, "token": session['token'], "expires_at": session['expires_at']}
+    finally:
+        conn.close()
+
+def create_admin_otp(email):
+    """Generates a 6-digit OTP code, stores hash with 10-minute expiry, and returns raw code."""
+    otp_code = f"{random.randint(100000, 999999)}"
+    code_hash = generate_password_hash(otp_code)
+    expires_at = (datetime.utcnow() + timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM admin_otp WHERE email = ?", (email,))
+        cursor.execute("""
+            INSERT INTO admin_otp (email, code_hash, expires_at)
+            VALUES (?, ?, ?)
+        """, (email, code_hash, expires_at))
+        conn.commit()
+        return {"success": True, "otp_code": otp_code, "expires_at": expires_at}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def verify_admin_otp(email, user_code):
+    """Step 3: Verifies the 6-digit email OTP and issues an admin session token."""
+    if not user_code:
+        return {"success": False, "error": "Please enter the 6-digit verification code."}
+    
+    clean_code = str(user_code).strip()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT * FROM admin_otp WHERE email = ? ORDER BY id DESC LIMIT 1
+        """, (email,))
+        row = cursor.fetchone()
+        if not row:
+            return {"success": False, "error": "No verification code pending. Please request a new code."}
+
+        # Check expiration
+        now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        if row['expires_at'] < now_str:
+            return {"success": False, "error": "Verification code has expired. Please request a new code."}
+
+        if not check_password_hash(row['code_hash'], clean_code):
+            cursor.execute("UPDATE admin_otp SET attempts = attempts + 1 WHERE id = ?", (row['id'],))
+            conn.commit()
+            return {"success": False, "error": "Incorrect verification code. Please check your email."}
+
+        # Consumed
+        cursor.execute("DELETE FROM admin_otp WHERE email = ?", (email,))
+        conn.commit()
+
+        session = create_admin_session()
+        log_admin_audit("ADMIN_LOGIN_SUCCESS", f"Administrator logged in successfully via 2FA ({email})")
+
+        return {
+            "success": True,
+            "token": session['token'],
+            "expires_at": session['expires_at']
+        }
+    finally:
+        conn.close()
+
+def create_admin_session():
+    """Issues a 64-char cryptographic admin session token valid for 8 hours."""
+    token = secrets.token_hex(32)
+    expires_at = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Prune expired sessions
+        now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute("DELETE FROM admin_sessions WHERE expires_at < ?", (now_str,))
+        
+        cursor.execute("""
+            INSERT INTO admin_sessions (token, expires_at)
+            VALUES (?, ?)
+        """, (token, expires_at))
+        conn.commit()
+        return {"token": token, "expires_at": expires_at}
+    finally:
+        conn.close()
+
+def validate_admin_session(token):
+    """Validates an active admin session token."""
+    if not token:
+        return False
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute("""
+            SELECT * FROM admin_sessions WHERE token = ? AND expires_at > ?
+        """, (token.strip(), now_str))
+        return bool(cursor.fetchone())
+    finally:
+        conn.close()
+
+def destroy_admin_session(token):
+    """Revokes an admin session token (logout)."""
+    if not token:
+        return
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM admin_sessions WHERE token = ?", (token.strip(),))
+        conn.commit()
+        log_admin_audit("ADMIN_LOGOUT", "Admin logged out successfully")
+    finally:
+        conn.close()
+
+# =================================================================
+# 11. DYNAMIC NLP & PHONETIC CORRECTION RULES ENGINE (ZERO-CODE)
+# =================================================================
+
+def get_nlp_corrections(search=None):
+    """Fetches all custom NLP and phonetic substitution rules."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        if search:
+            q = f"%{search.strip().lower()}%"
+            cursor.execute("""
+                SELECT * FROM nlp_corrections
+                WHERE LOWER(spoken_phrase) LIKE ? OR LOWER(replacement_phrase) LIKE ? OR LOWER(notes) LIKE ?
+                ORDER BY id DESC
+            """, (q, q, q))
+        else:
+            cursor.execute("SELECT * FROM nlp_corrections ORDER BY id DESC")
+        
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+def get_active_nlp_corrections():
+    """Returns active (spoken_phrase, replacement_phrase, rule_type) for evaluation pipeline."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT spoken_phrase, replacement_phrase, rule_type
+            FROM nlp_corrections
+            WHERE is_active = 1
+            ORDER BY LENGTH(spoken_phrase) DESC
+        """)
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+def add_nlp_correction(spoken_phrase, replacement_phrase, rule_type='exact', notes=''):
+    """Adds a new dynamic NLP word or phonetic substitution rule."""
+    if not spoken_phrase or not replacement_phrase:
+        return {"success": False, "error": "Both spoken phrase and replacement phrase are required."}
+    
+    clean_spoken = spoken_phrase.strip().lower()
+    clean_replacement = replacement_phrase.strip()
+    clean_type = rule_type if rule_type in ['exact', 'regex', 'phonetic'] else 'exact'
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO nlp_corrections (spoken_phrase, replacement_phrase, rule_type, is_active, notes)
+            VALUES (?, ?, ?, 1, ?)
+        """, (clean_spoken, clean_replacement, clean_type, notes.strip()))
+        conn.commit()
+        rule_id = cursor.lastrowid
+        log_admin_audit("NLP_RULE_ADDED", f"Added rule: '{clean_spoken}' -> '{clean_replacement}' ({clean_type})")
+        return {"success": True, "id": rule_id}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def update_nlp_correction(rule_id, spoken_phrase, replacement_phrase, rule_type='exact', is_active=1, notes=''):
+    """Updates an existing dynamic NLP substitution rule."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE nlp_corrections
+            SET spoken_phrase = ?, replacement_phrase = ?, rule_type = ?, is_active = ?, notes = ?
+            WHERE id = ?
+        """, (spoken_phrase.strip().lower(), replacement_phrase.strip(), rule_type, int(is_active), notes.strip(), int(rule_id)))
+        conn.commit()
+        log_admin_audit("NLP_RULE_UPDATED", f"Updated rule #{rule_id}: '{spoken_phrase}' -> '{replacement_phrase}'")
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def toggle_nlp_correction(rule_id, is_active=None):
+    """Enables, disables, or inverts an NLP rule."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        if is_active is None:
+            cursor.execute("SELECT is_active FROM nlp_corrections WHERE id = ?", (int(rule_id),))
+            row = cursor.fetchone()
+            if not row:
+                return {"success": False, "error": "Rule not found"}
+            new_state = 0 if row['is_active'] else 1
+        else:
+            new_state = 1 if is_active else 0
+
+        cursor.execute("UPDATE nlp_corrections SET is_active = ? WHERE id = ?", (new_state, int(rule_id)))
+        conn.commit()
+        return {"success": True, "is_active": bool(new_state)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def delete_nlp_correction(rule_id):
+    """Deletes an NLP substitution rule."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM nlp_corrections WHERE id = ?", (int(rule_id),))
+        conn.commit()
+        log_admin_audit("NLP_RULE_DELETED", f"Deleted rule #{rule_id}")
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+# =================================================================
+# 12. SYSTEM CONFIGURATION & ENGINE SETTINGS (STORED IN SQLITE)
+# =================================================================
+
+def get_system_settings():
+    """Retrieves all global system configuration key-value pairs."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT key, value FROM system_settings")
+        settings = {row['key']: row['value'] for row in cursor.fetchall()}
+        return settings
+    finally:
+        conn.close()
+
+def update_system_settings(settings_dict):
+    """Updates global system configuration key-value pairs."""
+    if not isinstance(settings_dict, dict):
+        return {"success": False, "error": "Dictionary required"}
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        for k, v in settings_dict.items():
+            cursor.execute("""
+                INSERT INTO system_settings (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, (str(k), str(v)))
+        conn.commit()
+        log_admin_audit("SYSTEM_SETTINGS_UPDATED", f"Updated settings: {list(settings_dict.keys())}")
+        return {"success": True, "settings": get_system_settings()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+# =================================================================
+# 13. USER & TEACHER GOVERNANCE FOR ADMINISTRATORS
+# =================================================================
+
+def get_all_teachers_admin(search=None):
+    """
+    Returns full list of teachers with student evaluation counts,
+    active passages, and classroom PINs for administrative monitoring.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        query = """
+            SELECT 
+                t.id, t.name, t.name AS full_name, t.username, t.email, t.classroom_pin, t.created_at,
+                COUNT(DISTINCT p.id) AS total_passages,
+                COUNT(DISTINCT r.id) AS total_evaluations
+            FROM teachers t
+            LEFT JOIN custom_passages p ON p.teacher_id = t.id
+            LEFT JOIN student_results r ON r.teacher_id = t.id
+        """
+        params = []
+        if search:
+            q = f"%{search.strip().lower()}%"
+            query += " WHERE LOWER(t.name) LIKE ? OR LOWER(t.username) LIKE ? OR LOWER(t.email) LIKE ? OR t.classroom_pin LIKE ?"
+            params.extend([q, q, q, q])
+        
+        query += " GROUP BY t.id ORDER BY t.id DESC"
+        cursor.execute(query, params)
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+def admin_create_teacher(data):
+    """Allows administrator to create a teacher account directly."""
+    name = (data.get('name') or data.get('full_name') or '').strip()
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    email = data.get('email', '').strip().lower()
+    security_question = data.get('security_question', 'Ano ang paborito mong asignatura?').strip()
+    security_answer = data.get('security_answer', 'filipino').strip().lower()
+    provided_pin = str(data.get('classroom_pin') or data.get('pin') or '').strip()
+
+    if not name or not username or not password or not email:
+        return {"success": False, "error": "All fields (name, username, password, email) are required."}
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id FROM teachers WHERE LOWER(username) = ?", (username.lower(),))
+        if cursor.fetchone():
+            return {"success": False, "error": f"Username '{username}' is already taken."}
+
+        pin = provided_pin if len(provided_pin) == 6 and provided_pin.isdigit() else generate_unique_pin()
+        pwd_hash = generate_password_hash(password)
+        ans_hash = generate_password_hash(security_answer)
+
+        cursor.execute("""
+            INSERT INTO teachers (name, username, password_hash, email, security_question, security_answer_hash, classroom_pin)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (name, username, pwd_hash, email, security_question, ans_hash, pin))
+        conn.commit()
+        new_id = cursor.lastrowid
+        log_admin_audit("TEACHER_CREATED", f"Admin created teacher {name} (@{username}) with PIN {pin}")
+        return {"success": True, "id": new_id, "teacher_id": new_id, "pin": pin, "classroom_pin": pin}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def admin_reset_teacher_password(teacher_id, new_password):
+    """Allows administrator to reset a teacher's password without knowing their security question."""
+    if not new_password or len(new_password) < 6:
+        return {"success": False, "error": "New password must be at least 6 characters."}
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT name, username FROM teachers WHERE id = ?", (int(teacher_id),))
+        teacher = cursor.fetchone()
+        if not teacher:
+            return {"success": False, "error": "Teacher not found."}
+
+        pwd_hash = generate_password_hash(new_password)
+        cursor.execute("UPDATE teachers SET password_hash = ? WHERE id = ?", (pwd_hash, int(teacher_id)))
+        conn.commit()
+        log_admin_audit("TEACHER_PWD_RESET", f"Admin reset password for teacher {teacher['name']} (@{teacher['username']})")
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+def admin_delete_teacher(teacher_id):
+    """Allows administrator to remove a teacher and cascade delete their custom passages and results."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT name, username FROM teachers WHERE id = ?", (int(teacher_id),))
+        teacher = cursor.fetchone()
+        if not teacher:
+            return {"success": False, "error": "Teacher not found."}
+
+        cursor.execute("DELETE FROM teachers WHERE id = ?", (int(teacher_id),))
+        conn.commit()
+        log_admin_audit("TEACHER_DELETED", f"Admin deleted teacher {teacher['name']} (@{teacher['username']})")
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+# =================================================================
+# 14. SCHOOL-WIDE STUDENT RESULTS GOVERNANCE
+# =================================================================
+
+def get_all_student_records_admin(search=None, teacher_id=None, limit=500):
+    """Fetches school-wide student assessment records across all teachers."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        query = """
+            SELECT 
+                r.*, t.name AS teacher_name, t.username AS teacher_username
+            FROM student_results r
+            JOIN teachers t ON r.teacher_id = t.id
+        """
+        conditions = []
+        params = []
+
+        if teacher_id:
+            conditions.append("r.teacher_id = ?")
+            params.append(int(teacher_id))
+
+        if search:
+            q = f"%{search.strip().lower()}%"
+            conditions.append("(LOWER(r.student_name) LIKE ? OR LOWER(r.passage_title) LIKE ? OR LOWER(t.name) LIKE ?)")
+            params.extend([q, q, q])
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " ORDER BY r.timestamp DESC LIMIT ?"
+        params.append(int(limit))
+
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+def admin_delete_student_results_batch(record_ids):
+    """Deletes multiple student result records in batch."""
+    if not record_ids or not isinstance(record_ids, list):
+        return {"success": False, "error": "Record IDs list required"}
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        placeholders = ",".join(["?"] * len(record_ids))
+        cursor.execute(f"DELETE FROM student_results WHERE id IN ({placeholders})", record_ids)
+        conn.commit()
+        deleted = cursor.rowcount
+        log_admin_audit("RECORDS_DELETED_BATCH", f"Admin deleted {deleted} student evaluation records")
+        return {"success": True, "deleted_count": deleted}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+# =================================================================
+# 15. DATABASE MAINTENANCE, BACKUP, & AUDIT LOGS
+# =================================================================
+
+def get_database_stats():
+    """Gathers SQLite storage size and table statistics."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        stats = {}
+        # File size
+        if os.path.exists(DB_PATH):
+            stats['db_size_mb'] = round(os.path.getsize(DB_PATH) / (1024 * 1024), 2)
+        else:
+            stats['db_size_mb'] = 0.0
+
+        for table in ['teachers', 'custom_passages', 'student_results', 'nlp_corrections', 'admin_audit_logs']:
+            try:
+                cursor.execute(f"SELECT COUNT(*) AS c FROM {table}")
+                stats[table] = cursor.fetchone()['c']
+            except Exception:
+                stats[table] = 0
+
+        return stats
+    finally:
+        conn.close()
+
+def log_admin_audit(action, details=None, ip_address=None):
+    """Records an administrative action in the audit trail."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO admin_audit_logs (action, details, ip_address)
+            VALUES (?, ?, ?)
+        """, (str(action), str(details) if details else None, str(ip_address) if ip_address else None))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[AUDIT LOG ERROR] Could not write audit log: {e}")
+
+def get_admin_audit_logs(limit=100):
+    """Retrieves recent audit log entries."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM admin_audit_logs ORDER BY id DESC LIMIT ?", (int(limit),))
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
+

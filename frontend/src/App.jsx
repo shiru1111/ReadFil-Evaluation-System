@@ -36,9 +36,21 @@ export default function App() {
       setImageOpacity(opacity);
     };
 
+    const handleKeyDown = (e) => {
+      // Institutional Administrator shortcut: Ctrl + Alt + A
+      if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        navigate('/admin');
+      }
+    };
+
     window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [navigate]);
 
   const handleOpenModal = (level) => {
     setSelectedLevel(level);
@@ -60,14 +72,6 @@ export default function App() {
   const handleProceed = (e) => {
     e.preventDefault();
     setErrorMessage(''); // Reset any previous errors
-
-    // ADMIN MODE INTERCEPT
-    if (firstName.trim() === 'ReadFilAdmin') {
-      document.body.style.overflow = 'unset';
-      localStorage.setItem('isAdmin', 'true');
-      navigate('/admin');
-      return;
-    }
 
     // VALIDATION 1: Check if email ends with @gmail.com
     if (!email.endsWith('@gmail.com')) {
@@ -682,7 +686,7 @@ export default function App() {
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50"
                     placeholder="juan@gmail.com"
-                    required={firstName !== 'ReadFilAdmin'}
+                    required
                   />
                 </div>
                 <div>
@@ -693,7 +697,7 @@ export default function App() {
                     onChange={(e) => setConfirmEmail(e.target.value)}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#8ACEFF] focus:ring-2 focus:ring-[#8ACEFF]/20 outline-none transition-all bg-gray-50"
                     placeholder="juan@gmail.com"
-                    required={firstName !== 'ReadFilAdmin'}
+                    required
                   />
                 </div>
               </div>
@@ -702,7 +706,7 @@ export default function App() {
 
               <div className="flex items-start pt-2">
                 <div className="flex items-center h-5">
-                  <input id="terms" type="checkbox" className={`w-5 h-5 border border-gray-300 rounded focus:ring-2 focus:ring-[#8ACEFF]/20 cursor-pointer`} required={firstName !== 'ReadFilAdmin'} />
+                  <input id="terms" type="checkbox" className={`w-5 h-5 border border-gray-300 rounded focus:ring-2 focus:ring-[#8ACEFF]/20 cursor-pointer`} required />
                 </div>
                 <label htmlFor="terms" className="ml-3 text-sm text-gray-600 cursor-pointer">
                   {t('modals.agree')} <Link to="/terms" target="_blank" rel="noopener noreferrer" className={`font-bold hover:underline ${selectedLevel === 'Progressive Mode' ? 'text-[#0096FF]' : theme.color}`}>{t('modals.terms')}</Link> {t('modals.consent')}

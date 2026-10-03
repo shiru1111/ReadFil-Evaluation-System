@@ -104,10 +104,15 @@ const checkWordsSatisfied = (targetText, spokenText) => {
   const seqRatio = matchCount / targetWords.length;
   const bagRatio = bagMatchCount / targetWords.length;
   const bestRatio = Math.max(seqRatio, bagRatio);
-  const reachedNearEnd = targetIdx >= Math.max(1, targetWords.length - 2);
+  const isShort = targetWords.length <= 10;
+  const reachedNearEnd = targetIdx >= Math.max(1, targetWords.length - (isShort ? 1 : 2));
 
-  // Satisfied if reached near end and matched at least 58%, or overall matched >= 75%
-  const satisfied = (reachedNearEnd && bestRatio >= 0.58) || bestRatio >= 0.75;
+  // Satisfied when reaching near the end:
+  // Short passage (<= 10 words): >= 65% match and reached near end, or >= 75% overall
+  // Long passage (> 10 words): >= 80% match and reached near end
+  const satisfied = isShort
+    ? ((reachedNearEnd && bestRatio >= 0.65) || bestRatio >= 0.75)
+    : (reachedNearEnd && bestRatio >= 0.80);
 
   return {
     satisfied,
@@ -167,6 +172,8 @@ export default function Beginner() {
   const lastSpeechMatchRatioRef = useRef(0);
   const isSatisfiedRef = useRef(false);
   const startTimeRef = useRef(null);
+  const lastWordSpokenTimeRef = useRef(null);
+  const hasSpokenRef = useRef(false);
 
   // Refs for the MIC TEST phase
   const testRecorderRef = useRef(null);
@@ -339,43 +346,55 @@ export default function Beginner() {
             }
             const rms = Math.sqrt(sum / bufferLength);
 
-            // Threshold for human speech activity
-            if (rms > 0.032) {
+            // Threshold for human speech activity: sensitive to quiet and normal readers
+            if (rms > 0.016) {
               lastSoundTimeRef.current = now;
               soundDetectedRef.current = true;
+              hasSpokenRef.current = true;
               speechDurationMsRef.current += 100;
             }
           }
 
-          // Buffer: Give student at least 1.8 seconds after starting before evaluating silence
-          if (recordingAgeMs < 1800) return;
+          const currentWords = currentTextRef.current ? currentTextRef.current.trim().split(/\s+/).filter(Boolean) : [];
+          const isShortPassage = currentWords.length <= 10;
+
+          // Buffer: 1200ms grace period for short passages, 2200ms for longer passages
+          const gracePeriod = isShortPassage ? 1200 : 2200;
+          if (recordingAgeMs < gracePeriod) return;
 
           const silenceElapsedMs = now - lastSoundTimeRef.current;
           const totalVoiceMs = speechDurationMsRef.current;
           const matchRatio = lastSpeechMatchRatioRef.current;
+          const studentHasSpoken = hasSpokenRef.current || totalVoiceMs >= 100;
 
-          // Auto-stop 1: Words are satisfied by speech recognizer
-          if (isSatisfiedRef.current) {
-            triggerAutoStop("words_satisfied", 250);
+          // Case 1: True Completed Reading (Satisfied reader reached end of passage)
+          const finishSilence = isShortPassage ? 1200 : 1500;
+          if (isSatisfiedRef.current && silenceElapsedMs >= finishSilence) {
+            triggerAutoStop("words_satisfied", 300);
             return;
           }
 
-          // Auto-stop 2: High word match (>= 60%) + brief pause (>= 900ms)
-          if (matchRatio >= 0.60 && silenceElapsedMs >= 900) {
-            triggerAutoStop("high_match_silence", 200);
+          // Case 2: High word match (completed reading >= 85% of passage) followed by post-reading silence
+          const highMatchThreshold = 0.85;
+          const highMatchSilence = isShortPassage ? 2000 : 2500;
+          if (matchRatio >= highMatchThreshold && silenceElapsedMs >= highMatchSilence) {
+            triggerAutoStop("high_match_silence", 300);
             return;
           }
 
-          // Auto-stop 3: Partial match (>= 35%) + pause (>= 1300ms)
-          if (matchRatio >= 0.35 && silenceElapsedMs >= 1300) {
-            triggerAutoStop("partial_match_silence", 200);
+          // Case 3: Dead air ahead of time on an UNFINISHED passage (Student stopped reading / abandoned)
+          // CRITICAL: NEVER cut off a student while they are actively reading or pausing to breathe!
+          // Short: 5.0s acoustic silence. Long: 7.0s acoustic silence!
+          const deadAirThreshold = isShortPassage ? 5000 : 7000;
+          if (studentHasSpoken && silenceElapsedMs >= deadAirThreshold) {
+            triggerAutoStop("dead_air_silence_ahead", 300);
             return;
           }
 
-          // Auto-stop 4: Finished reading by voice activity!
-          // Student spoke for >= 1200ms and has now stopped talking for >= 1700ms
-          if (totalVoiceMs >= 1200 && silenceElapsedMs >= 1700) {
-            triggerAutoStop("voice_activity_completed", 200);
+          // Case 4: Initial Dead Air (no speech at all from start)
+          const initialDeadAirThreshold = isShortPassage ? 6000 : 8500;
+          if (!studentHasSpoken && recordingAgeMs >= initialDeadAirThreshold && silenceElapsedMs >= initialDeadAirThreshold) {
+            triggerAutoStop("initial_dead_air_silence", 300);
             return;
           }
         }, 100);
@@ -412,11 +431,21 @@ export default function Beginner() {
               }
 
               const totalSpoken = (accumulatedSpoken + ' ' + currentInterim).trim();
+              if (totalSpoken) {
+                const now = Date.now();
+                lastWordSpokenTimeRef.current = now;
+                lastSoundTimeRef.current = now;
+                hasSpokenRef.current = true;
+              }
+
               const check = checkWordsSatisfied(currentTextRef.current, totalSpoken);
               lastSpeechMatchRatioRef.current = check.matchRatio;
 
-              if (check.satisfied && !hasTriggeredAutoStopRef.current) {
-                triggerAutoStop("words_satisfied", 300);
+              if (check.satisfied) {
+                isSatisfiedRef.current = true;
+                if (!hasTriggeredAutoStopRef.current) {
+                  triggerAutoStop("words_satisfied", 300);
+                }
               }
             };
 
