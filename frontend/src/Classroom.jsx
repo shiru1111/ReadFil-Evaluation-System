@@ -181,12 +181,12 @@ const needlemanWunschAlign = (targetWords, spokenWords) => {
   const lastWordMatched = !!(
     (lastSpokenAligned &&
       (lastSpokenAligned === lastTargetWord ||
-       isWordMatch(lastTargetWord, lastSpokenAligned) ||
-       wordSimilarity(lastTargetWord, lastSpokenAligned) <= 0.45)) ||
+        isWordMatch(lastTargetWord, lastSpokenAligned) ||
+        wordSimilarity(lastTargetWord, lastSpokenAligned) <= 0.45)) ||
     (spokenWords.length > 0 &&
       (spokenWords[spokenWords.length - 1] === lastTargetWord ||
-       isWordMatch(lastTargetWord, spokenWords[spokenWords.length - 1]) ||
-       wordSimilarity(lastTargetWord, spokenWords[spokenWords.length - 1]) <= 0.45))
+        isWordMatch(lastTargetWord, spokenWords[spokenWords.length - 1]) ||
+        wordSimilarity(lastTargetWord, spokenWords[spokenWords.length - 1]) <= 0.45))
   );
 
   const alignRatio = alignedMatches / m;
@@ -198,8 +198,8 @@ const needlemanWunschAlign = (targetWords, spokenWords) => {
   //    - for standard passages: at least 50% of the words matched
   const isSatisfied = lastWordMatched && (
     m <= 2 ? (alignedMatches >= Math.max(1, m)) :
-    m <= 4 ? (alignedMatches >= 2) :
-    (alignRatio >= 0.50 || alignedMatches >= Math.ceil(m * 0.55))
+      m <= 4 ? (alignedMatches >= 2) :
+        (alignRatio >= 0.50 || alignedMatches >= Math.ceil(m * 0.55))
   );
 
   return {
@@ -219,7 +219,7 @@ const playCompletionChime = () => {
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
     const now = ctx.currentTime;
-    
+
     // Note 1: C5 (523.25 Hz)
     const osc1 = ctx.createOscillator();
     const gain1 = ctx.createGain();
@@ -345,12 +345,22 @@ export default function Classroom() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(null);
+  const [classroomSettings, setClassroomSettings] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('readfil_classroom_settings')) || null;
+    } catch {
+      return null;
+    }
+  });
+  const [isPinResetModalOpen, setIsPinResetModalOpen] = useState(false);
+  const [pinResetMessage, setPinResetMessage] = useState('');
 
   // Student Info State (for in-room assessment)
   const [studentName, setStudentName] = useState(() => {
     return localStorage.getItem('user_firstName') || '';
   });
   const [isNameModalOpen, setIsNameModalOpen] = useState(false);
+  const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [tempName, setTempName] = useState('');
 
   // Assessment & Recording States
@@ -392,14 +402,62 @@ export default function Classroom() {
   const timerIntervalRef = useRef(null);
   const startTimeRef = useRef(null);
 
+  // Strictly terminate and kick out device if teacher regenerated/reset the PIN
+  const handleStrictLogoutPinReset = (msg) => {
+    if (isRecordingRef.current) {
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try { mediaRecorderRef.current.stop(); } catch (e) { }
+      }
+    }
+    if (countdownTimerRef.current) clearTimeout(countdownTimerRef.current);
+    if (autoStopTimeoutRef.current) clearTimeout(autoStopTimeoutRef.current);
+    if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
+    if (silenceCheckIntervalRef.current) clearInterval(silenceCheckIntervalRef.current);
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+    }
+
+    sessionStorage.removeItem('readfil_classroom_unlocked');
+    sessionStorage.removeItem('readfil_classroom_pin');
+    sessionStorage.removeItem('readfil_classroom_teacher');
+    sessionStorage.removeItem('readfil_classroom_teacher_id');
+    sessionStorage.removeItem('readfil_classroom_settings');
+
+    setIsGateUnlocked(false);
+    setGateTeacher(null);
+    setClassroomSettings(null);
+    setPassagesList([]);
+    setActivePassage(null);
+    setPinInput('');
+    setIsBetweenPassages(false);
+    setIsProcessing(false);
+    setIsCountingDown(false);
+
+    setPinResetMessage(msg || (isEn
+      ? "The teacher has generated a new Classroom PIN. All devices connected to the previous PIN have been strictly logged out. Please request the new PIN from your teacher."
+      : "Bumuo ang guro ng bagong Classroom PIN. Lahat ng kagamitang nakakonekta sa lumang PIN ay sapilitang inilabas. Hingin sa iyong guro ang bagong PIN."));
+    setIsPinResetModalOpen(true);
+  };
+
   // 1. Fetch Active Passages from Teacher
   const loadPassages = async (manual = false) => {
     const teacherId = gateTeacher?.id || sessionStorage.getItem('readfil_classroom_teacher_id');
+    const storedPin = sessionStorage.getItem('readfil_classroom_pin');
     if (!teacherId) return;
 
     if (manual) setIsRefreshing(true);
     try {
-      const res = await fetch(`${API_BASE}/api/classroom/active-passages?teacher_id=${teacherId}`);
+      const pinParam = storedPin ? `&pin=${encodeURIComponent(storedPin)}` : '';
+      const res = await fetch(`${API_BASE}/api/classroom/active-passages?teacher_id=${teacherId}${pinParam}`);
+      if (res.status === 403) {
+        const errData = await res.json();
+        handleStrictLogoutPinReset(errData.error);
+        return;
+      }
       if (!res.ok) {
         throw new Error(isEn
           ? "Could not reach classroom assessment service."
@@ -407,7 +465,19 @@ export default function Classroom() {
         );
       }
       const data = await res.json();
-      const list = (data.passages && data.passages.length > 0) ? data.passages : [];
+      if (data.pin_invalidated) {
+        handleStrictLogoutPinReset(data.error);
+        return;
+      }
+      let list = (data.passages && data.passages.length > 0) ? data.passages : [];
+
+      if (data.settings) {
+        sessionStorage.setItem('readfil_classroom_settings', JSON.stringify(data.settings));
+        setClassroomSettings(data.settings);
+        if (data.settings.shuffle_passages && list.length > 1 && evalResults.length === 0 && !isRecording) {
+          list = [...list].sort(() => Math.random() - 0.5);
+        }
+      }
 
       setPassagesList(list);
       setLastSyncTime(new Date());
@@ -456,16 +526,47 @@ export default function Classroom() {
     loadPassages(false);
   }, [isGateUnlocked]);
 
-  // 1b. Auto-sync polling every 5s while waiting for teacher to activate a passage
+  // 1b. Real-time background sync & strict PIN invalidation heartbeat
   useEffect(() => {
-    if (!isGateUnlocked || passagesList.length > 0 || isRecording) return;
+    if (!isGateUnlocked) return;
 
-    const interval = setInterval(() => {
-      loadPassages(false);
-    }, 5000);
+    const interval = setInterval(async () => {
+      const teacherId = gateTeacher?.id || sessionStorage.getItem('readfil_classroom_teacher_id');
+      const storedPin = sessionStorage.getItem('readfil_classroom_pin');
+
+      if (!teacherId || !storedPin) {
+        handleStrictLogoutPinReset();
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/api/classroom/verify-session?teacher_id=${teacherId}&pin=${encodeURIComponent(storedPin)}`);
+        if (res.status === 403) {
+          const data = await res.json();
+          handleStrictLogoutPinReset(data.error);
+          return;
+        }
+        if (res.ok) {
+          const data = await res.json();
+          if (data.pin_invalidated || !data.valid) {
+            handleStrictLogoutPinReset(data.error);
+            return;
+          }
+          if (data.settings) {
+            sessionStorage.setItem('readfil_classroom_settings', JSON.stringify(data.settings));
+            setClassroomSettings(data.settings);
+          }
+          if (passagesList.length === 0 && !isRecording) {
+            loadPassages(false);
+          }
+        }
+      } catch (err) {
+        // tolerate momentary network disconnect
+      }
+    }, 2000);
 
     return () => clearInterval(interval);
-  }, [isGateUnlocked, passagesList.length, isRecording]);
+  }, [isGateUnlocked, gateTeacher, passagesList.length, isRecording]);
 
   // Handle PIN verification at the Classroom Gate door
   const handleVerifyAndEnter = async (e) => {
@@ -495,7 +596,15 @@ export default function Classroom() {
         throw new Error(data.error || (isEn ? "Invalid Classroom PIN. Please ask your teacher." : "Maling Classroom PIN. Hingin sa iyong guro ang tamang code."));
       }
 
-      const list = (data.passages && data.passages.length > 0) ? data.passages : [];
+      let list = (data.passages && data.passages.length > 0) ? data.passages : [];
+
+      if (data.settings) {
+        sessionStorage.setItem('readfil_classroom_settings', JSON.stringify(data.settings));
+        setClassroomSettings(data.settings);
+        if (data.settings.shuffle_passages && list.length > 1) {
+          list = [...list].sort(() => Math.random() - 0.5);
+        }
+      }
 
       // Save verified session for this teacher exclusively
       sessionStorage.setItem('readfil_classroom_unlocked', 'true');
@@ -532,27 +641,29 @@ export default function Classroom() {
 
   // Exit/Leave room handler
   const handleLeaveRoom = () => {
-    const confirmLeave = isEn
-      ? "Are you sure you want to leave this classroom session?"
-      : "Sigurado ka bang nais mong lumabas sa sesyon ng klase?";
-    if (window.confirm(confirmLeave)) {
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-      setIsRecording(false);
-      sessionStorage.removeItem('readfil_classroom_unlocked');
-      sessionStorage.removeItem('readfil_classroom_pin');
-      sessionStorage.removeItem('readfil_classroom_teacher');
-      sessionStorage.removeItem('readfil_classroom_teacher_id');
-      setIsGateUnlocked(false);
-      setGateTeacher(null);
-      setPassagesList([]);
-      setActivePassage(null);
-      setGateError('');
-      setPassageError(null);
+    setIsLeaveModalOpen(true);
+  };
+
+  const confirmLeaveRoom = () => {
+    setIsLeaveModalOpen(false);
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    if (animationRef.current) cancelAnimationFrame(animationRef.current);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
     }
+    setIsRecording(false);
+    sessionStorage.removeItem('readfil_classroom_unlocked');
+    sessionStorage.removeItem('readfil_classroom_pin');
+    sessionStorage.removeItem('readfil_classroom_teacher');
+    sessionStorage.removeItem('readfil_classroom_teacher_id');
+    sessionStorage.removeItem('readfil_classroom_settings');
+    setIsGateUnlocked(false);
+    setGateTeacher(null);
+    setClassroomSettings(null);
+    setPassagesList([]);
+    setActivePassage(null);
+    setGateError('');
+    setPassageError(null);
   };
 
   // Cleanup on unmount
@@ -566,7 +677,7 @@ export default function Classroom() {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
       if (recognitionRef.current) {
-        try { recognitionRef.current.abort(); } catch (e) {}
+        try { recognitionRef.current.abort(); } catch (e) { }
       }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
@@ -577,8 +688,15 @@ export default function Classroom() {
     };
   }, []);
 
-  // Hands-free auto-advance countdown between assessment passages
+  // Hands-free auto-advance countdown between assessment passages (respects teacher settings)
   useEffect(() => {
+    const isAuto = classroomSettings ? classroomSettings.auto_continue === true : false;
+    if (!isAuto) {
+      if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
+      setAutoAdvanceCountdown(0);
+      return;
+    }
+
     if (isBetweenPassages && autoAdvanceCountdown > 0) {
       autoAdvanceTimerRef.current = setTimeout(() => {
         setAutoAdvanceCountdown((prev) => prev - 1);
@@ -587,7 +705,7 @@ export default function Classroom() {
     } else if (isBetweenPassages && autoAdvanceCountdown === 0 && lastPassageSummary) {
       handleProceedToNextPassage();
     }
-  }, [isBetweenPassages, autoAdvanceCountdown, lastPassageSummary]);
+  }, [isBetweenPassages, autoAdvanceCountdown, lastPassageSummary, classroomSettings]);
 
   // Waveform visualization
   const drawWaveform = () => {
@@ -732,7 +850,7 @@ export default function Classroom() {
       if (SpeechRecognition) {
         try {
           if (recognitionRef.current) {
-            try { recognitionRef.current.abort(); } catch (e) {}
+            try { recognitionRef.current.abort(); } catch (e) { }
           }
           const recognition = new SpeechRecognition();
           recognition.continuous = true;
@@ -783,7 +901,7 @@ export default function Classroom() {
               try {
                 recognition.lang = 'tl-PH';
                 recognition.start();
-              } catch (err) {}
+              } catch (err) { }
             }
           };
 
@@ -791,7 +909,7 @@ export default function Classroom() {
             if (isRecordingRef.current && !hasTriggeredAutoStopRef.current) {
               try {
                 recognition.start();
-              } catch (err) {}
+              } catch (err) { }
             }
           };
 
@@ -941,7 +1059,7 @@ export default function Classroom() {
     if (recognitionRef.current) {
       try {
         recognitionRef.current.abort();
-      } catch (e) {}
+      } catch (e) { }
       recognitionRef.current = null;
     }
     if (timerIntervalRef.current) {
@@ -1070,7 +1188,15 @@ export default function Classroom() {
           nextTimer: nextPassage.timer_seconds || 10
         });
         setIsBetweenPassages(true);
-        setAutoAdvanceCountdown(4); // Hands-free: auto-advances to next passage in 4s!
+        let currentSettings = classroomSettings;
+        try {
+          const stored = JSON.parse(sessionStorage.getItem('readfil_classroom_settings'));
+          if (stored) currentSettings = stored;
+        } catch (e) {}
+
+        const autoContinueEnabled = currentSettings ? currentSettings.auto_continue === true : false;
+        const countdownSec = Number(currentSettings?.auto_continue_countdown) || 4;
+        setAutoAdvanceCountdown(autoContinueEnabled ? countdownSec : 0);
       } else {
         // All Passages in the set are complete!
         // Calculate consolidated aggregate scores across the entire assessment set:
@@ -1104,11 +1230,12 @@ export default function Classroom() {
 
         // Save Consolidated Student Result to SQLite Database for the Teacher
         try {
-          await fetch(`${API_BASE}/api/classroom/submit-result`, {
+          const submitRes = await fetch(`${API_BASE}/api/classroom/submit-result`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               teacher_id: gateTeacher?.id || Number(sessionStorage.getItem('readfil_classroom_teacher_id')) || activePassage?.teacher_id,
+              pin: sessionStorage.getItem('readfil_classroom_pin') || '',
               passage_id: activePassage?.id,
               student_name: studentName,
               passage_title: setPassageTitle,
@@ -1124,6 +1251,12 @@ export default function Classroom() {
               trace: allTraces
             })
           });
+
+          if (submitRes.status === 403) {
+            const submitData = await submitRes.json();
+            handleStrictLogoutPinReset(submitData.error);
+            return;
+          }
         } catch (logErr) {
           console.warn("Could not save to teacher classroom database:", logErr);
         }
@@ -1235,7 +1368,7 @@ export default function Classroom() {
         {/* Center Gate Card */}
         <main className="relative z-20 max-w-lg mx-auto w-full px-4 py-10 flex-1 flex items-center justify-center">
           <div className="w-full bg-white border border-gray-200/90 rounded-3xl p-8 sm:p-10 shadow-2xl shadow-blue-500/10 text-center">
-            
+
             {/* Animated Icon Badge */}
             <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-[#0096FF] to-blue-600 flex items-center justify-center mx-auto mb-6 shadow-xl shadow-blue-500/25 text-white">
               <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1390,7 +1523,7 @@ export default function Classroom() {
         {/* Center Card */}
         <main className="relative z-20 max-w-xl mx-auto w-full px-4 py-8 flex-1 flex items-center justify-center">
           <div className="w-full bg-white border border-gray-200/90 rounded-3xl p-8 sm:p-10 shadow-2xl shadow-blue-500/10 text-center">
-            
+
             {/* Teacher & Room Pill */}
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-50 border border-blue-200/80 text-xs font-bold text-blue-900 mb-6 shadow-sm">
               <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping"></span>
@@ -1507,7 +1640,7 @@ export default function Classroom() {
         <div className="bg-white border border-red-200 p-8 rounded-3xl max-w-lg shadow-xl shadow-red-50/50">
           <div className="w-16 h-16 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-sm">
             <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
           <h2 className="text-2xl font-black text-slate-900 mb-3">
@@ -1586,7 +1719,7 @@ export default function Classroom() {
 
       {/* Main Reading Container */}
       <main className="relative z-20 max-w-4xl mx-auto px-4 sm:px-6 pt-6 pb-28 sm:pb-36">
-        
+
         {/* Multi-Passage Sequence Progress Bar */}
         {passagesList.length > 1 && (
           <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -1606,19 +1739,18 @@ export default function Classroom() {
                 return (
                   <div
                     key={p.id || idx}
-                    className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all ${
-                      isDone
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all ${isDone
                         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                         : isCurrent
-                        ? 'bg-blue-50 text-[#0096FF] border border-blue-200 ring-2 ring-blue-500/20'
-                        : 'bg-gray-50 text-gray-400 border border-gray-200'
-                    }`}
+                          ? 'bg-blue-50 text-[#0096FF] border border-blue-200 ring-2 ring-blue-500/20'
+                          : 'bg-gray-50 text-gray-400 border border-gray-200'
+                      }`}
                   >
                     <span>#{idx + 1}</span>
                     <span className="truncate max-w-[90px]">{p.title}</span>
                     {isDone && (
                       <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7"/>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
                       </svg>
                     )}
                   </div>
@@ -1669,11 +1801,10 @@ export default function Classroom() {
             )}
 
             {/* Timer pill in bottom-right matching Easy / Beginner UI */}
-            <div className={`absolute bottom-4 right-6 flex items-center gap-2 font-mono font-bold bg-white px-3.5 py-1.5 rounded-full border shadow-sm text-sm transition-all ${
-              isTimeCritical && isRecording
+            <div className={`absolute bottom-4 right-6 flex items-center gap-2 font-mono font-bold bg-white px-3.5 py-1.5 rounded-full border shadow-sm text-sm transition-all ${isTimeCritical && isRecording
                 ? 'border-red-300 text-red-600 animate-pulse'
                 : 'border-gray-200 text-gray-600'
-            }`}>
+              }`}>
               <svg className={`w-4 h-4 ${isTimeCritical && isRecording ? 'text-red-500' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
@@ -1722,13 +1853,12 @@ export default function Classroom() {
             <button
               onClick={toggleRecording}
               disabled={isProcessing || isCountingDown}
-              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 relative z-10 ${
-                isSatisfiedCompleted
+              className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 relative z-10 ${isSatisfiedCompleted
                   ? 'bg-emerald-500 scale-105 shadow-emerald-500/40'
                   : isRecording
-                  ? 'bg-red-500 hover:bg-red-600 animate-pulse'
-                  : 'bg-black hover:bg-gray-800'
-              } ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
+                    ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                    : 'bg-black hover:bg-gray-800'
+                } ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
             >
               <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 {isSatisfiedCompleted ? (
@@ -1742,36 +1872,35 @@ export default function Classroom() {
             </button>
           </div>
 
-          <p className={`mt-4 font-bold text-lg text-center min-h-[1.75rem] transition-colors ${
-            isSatisfiedCompleted
+          <p className={`mt-4 font-bold text-lg text-center min-h-[1.75rem] transition-colors ${isSatisfiedCompleted
               ? 'text-emerald-600 font-extrabold animate-pulse'
-              : isRecording 
-              ? 'text-red-500' 
-              : isProcessing 
-              ? 'text-[#0096FF] animate-pulse' 
-              : isCountingDown
-              ? 'text-[#0096FF]'
-              : isSilenceError 
-              ? 'text-red-600' 
-              : 'text-gray-500'
-          }`}>
+              : isRecording
+                ? 'text-red-500'
+                : isProcessing
+                  ? 'text-[#0096FF] animate-pulse'
+                  : isCountingDown
+                    ? 'text-[#0096FF]'
+                    : isSilenceError
+                      ? 'text-red-600'
+                      : 'text-gray-500'
+            }`}>
             {isSatisfiedCompleted
               ? (isEn ? "All words completed! Finalizing evaluation..." : "Kusang natapos ang pagbasa! Isinusumite...")
-              : isRecording 
-              ? (isEn ? "Reading in progress... (Auto-stops when finished)" : "Kasalukuyang nagbabasa... (Kusang hihinto pagkatapos)")
-              : isProcessing 
-              ? (isEn ? "Evaluating reading via ASR engine..." : "Sinusuri ng ASR engine ang iyong pagbasa...")
-              : isCountingDown
-              ? (isEn ? "Get ready..." : "Humanda...")
-              : isSilenceError 
-              ? (isEn ? "No speech detected. Click mic to try again." : "Walang boses na narinig. Pindutin muli ang mic.")
-              : (isEn ? "Click the microphone to begin reading" : "Pindutin ang mikropono upang simulan ang pagbasa")}
+              : isRecording
+                ? (isEn ? "Reading in progress... (Auto-stops when finished)" : "Kasalukuyang nagbabasa... (Kusang hihinto pagkatapos)")
+                : isProcessing
+                  ? (isEn ? "Evaluating reading via ASR engine..." : "Sinusuri ng ASR engine ang iyong pagbasa...")
+                  : isCountingDown
+                    ? (isEn ? "Get ready..." : "Humanda...")
+                    : isSilenceError
+                      ? (isEn ? "No speech detected. Click mic to try again." : "Walang boses na narinig. Pindutin muli ang mic.")
+                      : (isEn ? "Click the microphone to begin reading" : "Pindutin ang mikropono upang simulan ang pagbasa")}
           </p>
 
           {isSilenceError && (
             <div className="mt-3 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2 shadow-sm max-w-md">
               <svg className="w-4 h-4 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
               <span>{isEn ? "Please speak clearly into your microphone." : "Pakisuyong magsalita nang malinaw sa mikropono."}</span>
             </div>
@@ -1828,17 +1957,27 @@ export default function Classroom() {
               </div>
             </div>
 
-            {/* Hands-Free Auto-Advance Countdown Notice */}
-            <div className="flex items-center justify-center gap-2 mb-5 text-sm font-bold text-[#0096FF] bg-blue-50 px-4 py-2.5 rounded-2xl border border-blue-200 shadow-sm animate-pulse">
-              <svg className="w-4 h-4 animate-spin text-[#0096FF]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <span>
-                {isEn
-                  ? `Auto-advancing to next passage in ${autoAdvanceCountdown}s...`
-                  : `Kusang lilipat sa susunod na talata sa loob ng ${autoAdvanceCountdown}s...`}
-              </span>
-            </div>
+            {/* Auto-Advance Notice or Manual Continue Button */}
+            {classroomSettings?.auto_continue === true && autoAdvanceCountdown > 0 ? (
+              <div className="flex items-center justify-center gap-2 mb-5 text-sm font-bold text-[#0096FF] bg-blue-50 px-4 py-2.5 rounded-2xl border border-blue-200 shadow-sm animate-pulse">
+                <svg className="w-4 h-4 animate-spin text-[#0096FF]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>
+                  {isEn
+                    ? `Auto-advancing to next passage in ${autoAdvanceCountdown}s...`
+                    : `Kusang lilipat sa susunod na talata sa loob ng ${autoAdvanceCountdown}s...`}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-2 mb-5 text-sm font-semibold text-slate-600 bg-gray-50 px-4 py-2.5 rounded-2xl border border-gray-200 shadow-sm">
+                <span>
+                  {isEn
+                    ? "Review your reading score above, then click Proceed to continue."
+                    : "Suriin ang iyong marka sa itaas, pagkatapos ay pindutin ang Magpatuloy."}
+                </span>
+              </div>
+            )}
 
             <button
               onClick={handleProceedToNextPassage}
@@ -1904,6 +2043,82 @@ export default function Classroom() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Leave Classroom Confirmation Modal */}
+      {isLeaveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white border border-gray-100 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl shadow-slate-900/25 animate-in zoom-in-95 duration-200 text-center relative overflow-hidden">
+            <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-sm bg-rose-50 border border-rose-100 text-rose-600">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </div>
+
+            <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight mb-2">
+              {isEn ? "Leave Classroom?" : "Lumabas sa Silid-Aralan?"}
+            </h3>
+
+            <p className="text-gray-600 text-sm leading-relaxed mb-6 max-w-sm mx-auto">
+              {isEn
+                ? "Are you sure you want to leave this classroom session? Any unsubmitted reading will be stopped."
+                : "Sigurado ka bang nais mong lumabas sa sesyon ng klase? Mahihinto ang anumang hindi pa naipasang pagbasa."}
+            </p>
+
+            <div className="flex gap-3 justify-center">
+              <button
+                type="button"
+                onClick={() => setIsLeaveModalOpen(false)}
+                className="flex-1 py-3 px-5 rounded-2xl bg-gray-100 hover:bg-gray-200 text-slate-700 font-bold text-sm transition-all active:scale-[0.98]"
+              >
+                {isEn ? "Cancel" : "Kanselahin"}
+              </button>
+
+              <button
+                type="button"
+                onClick={confirmLeaveRoom}
+                className="flex-1 py-3 px-5 rounded-2xl text-white font-extrabold text-sm shadow-lg shadow-rose-500/25 bg-rose-600 hover:bg-rose-700 transition-all hover:scale-[1.01] active:scale-[0.98]"
+              >
+                {isEn ? "Leave Room" : "Lumabas"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Strict PIN Reset / Invalidation Modal */}
+      {isPinResetModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white border border-rose-200 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl shadow-rose-900/20 animate-in zoom-in-95 duration-200 text-center relative overflow-hidden">
+            <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-sm bg-rose-50 border border-rose-200 text-rose-600">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m0 0v2m0-2h2m-2 0H10m7-7a5 5 0 10-10 0v2h10V8z" />
+              </svg>
+            </div>
+
+            <div className="text-xs uppercase font-extrabold tracking-wider text-rose-600 mb-1">
+              {isEn ? "Session Terminated" : "Pinasarang Sesyon"}
+            </div>
+
+            <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight mb-2">
+              {isEn ? "Classroom PIN Reset" : "Na-reset ang Classroom PIN"}
+            </h3>
+
+            <p className="text-gray-600 text-sm leading-relaxed mb-6 max-w-sm mx-auto">
+              {pinResetMessage}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsPinResetModalOpen(false);
+                setPinResetMessage('');
+              }}
+              className="w-full py-3.5 px-6 rounded-2xl text-white font-extrabold text-sm shadow-lg shadow-blue-500/25 bg-[#0096FF] hover:bg-blue-600 transition-all hover:scale-[1.01] active:scale-[0.98]"
+            >
+              {isEn ? "Enter New Classroom PIN" : "Maglagay ng Bagong PIN"}
+            </button>
           </div>
         </div>
       )}

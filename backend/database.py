@@ -55,11 +55,14 @@ def init_db():
     )
     """)
 
-    # Schema migration: Ensure classroom_pin column exists in existing databases
+    # Schema migration: Ensure classroom_pin and settings_json columns exist in existing databases
     cursor.execute("PRAGMA table_info(teachers)")
     columns = [col['name'] for col in cursor.fetchall()]
     if 'classroom_pin' not in columns:
         cursor.execute("ALTER TABLE teachers ADD COLUMN classroom_pin TEXT")
+        conn.commit()
+    if 'settings_json' not in columns:
+        cursor.execute("ALTER TABLE teachers ADD COLUMN settings_json TEXT DEFAULT '{}'")
         conn.commit()
 
     # 2. Custom Passages Table
@@ -237,10 +240,61 @@ def regenerate_teacher_pin(teacher_id):
     finally:
         conn.close()
 
+DEFAULT_TEACHER_SETTINGS = {
+    "timer_duration": 60,
+    "auto_continue": True,
+    "auto_continue_countdown": 4,
+    "shuffle_passages": False,
+    "show_waveform": True,
+    "play_chime": True,
+    "immediate_stutter_alerts": True,
+    "allow_retake_current": False
+}
+
+def get_teacher_settings(teacher_id):
+    """Fetches teacher classroom settings dictionary with default fallbacks."""
+    if not teacher_id:
+        return dict(DEFAULT_TEACHER_SETTINGS)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT settings_json FROM teachers WHERE id = ?", (teacher_id,))
+        row = cursor.fetchone()
+        if not row or not row['settings_json']:
+            return dict(DEFAULT_TEACHER_SETTINGS)
+        try:
+            stored = json.loads(row['settings_json'])
+            merged = dict(DEFAULT_TEACHER_SETTINGS)
+            merged.update(stored)
+            return merged
+        except Exception:
+            return dict(DEFAULT_TEACHER_SETTINGS)
+    finally:
+        conn.close()
+
+def update_teacher_settings(teacher_id, new_settings):
+    """Updates settings_json for the specified teacher."""
+    if not teacher_id:
+        return {"success": False, "error": "teacher_id required"}
+    current = get_teacher_settings(teacher_id)
+    if isinstance(new_settings, dict):
+        current.update(new_settings)
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE teachers SET settings_json = ? WHERE id = ?", (json.dumps(current), teacher_id))
+        conn.commit()
+        return {"success": True, "settings": current}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
 def verify_classroom_pin(pin):
     """
     Validates a student-entered PIN against active teachers.
-    Returns teacher information and their currently active assessment passages.
+    Returns teacher information, active assessment passages, and classroom settings.
     """
     if not pin:
         return {"success": False, "error": "Please enter a 6-digit Classroom PIN."}
@@ -260,6 +314,7 @@ def verify_classroom_pin(pin):
         teacher_id = teacher['id']
         teacher_name = teacher['name']
         passages = get_active_passages(teacher_id)
+        settings = get_teacher_settings(teacher_id)
         
         return {
             "success": True,
@@ -268,7 +323,8 @@ def verify_classroom_pin(pin):
                 "name": teacher_name,
                 "username": teacher['username']
             },
-            "passages": passages
+            "passages": passages,
+            "settings": settings
         }
     finally:
         conn.close()

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useLanguage } from './contexts/LanguageContext';
 import SoundWaveBackground from './components/SoundWaveBackground';
@@ -78,10 +78,23 @@ export default function TeacherPortal() {
 
   // Global / Default Timer Duration for Teacher
   const [globalTimerDuration, setGlobalTimerDuration] = useState(() => {
-    return parseInt(localStorage.getItem('readfil_teacher_default_timer'), 10) || 10;
+    return parseInt(localStorage.getItem('readfil_teacher_default_timer'), 10) || 60;
   });
   const [globalTimerSaving, setGlobalTimerSaving] = useState(false);
   const [globalTimerFeedback, setGlobalTimerFeedback] = useState('');
+
+  // Classroom Settings State
+  const [classroomSettings, setClassroomSettings] = useState({
+    timer_duration: 60,
+    auto_continue: true,
+    auto_continue_countdown: 4,
+    shuffle_passages: false,
+    show_waveform: true,
+    play_chime: true,
+    immediate_stutter_alerts: true,
+    allow_retake_current: false
+  });
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
 
   // Passages State
   const [passages, setPassages] = useState([]);
@@ -122,6 +135,45 @@ export default function TeacherPortal() {
   const [isRegeneratingPin, setIsRegeneratingPin] = useState(false);
   const [pinFeedback, setPinFeedback] = useState('');
 
+  // Centered Confirmation / Action Modal State (replaces browser confirm)
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmText: '',
+    cancelText: '',
+    type: 'danger', // 'danger' | 'warning'
+    onConfirm: null
+  });
+
+  // Floating Toast / Feedback Notifications (replaces browser alert)
+  const [portalToast, setPortalToast] = useState(null);
+  const toastTimeoutRef = useRef(null);
+
+  const showToast = (message, type = 'success') => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setPortalToast({ message, type });
+    toastTimeoutRef.current = setTimeout(() => {
+      setPortalToast(null);
+    }, 4500);
+  };
+
+  const openConfirm = ({ title, message, confirmText, cancelText, type = 'danger', onConfirm }) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: title || (isEn ? "Confirm Action" : "Kumpirmahin ang Aksyon"),
+      message: message || "",
+      confirmText: confirmText || (type === 'danger' ? (isEn ? "Delete" : "Burahin") : (isEn ? "Confirm" : "Kumpirmahin")),
+      cancelText: cancelText || (isEn ? "Cancel" : "Kanselahin"),
+      type,
+      onConfirm
+    });
+  };
+
+  const closeConfirm = () => {
+    setConfirmDialog(prev => ({ ...prev, isOpen: false, onConfirm: null }));
+  };
+
   // Load Passages and Records on Login
   useEffect(() => {
     if (teacher?.id) {
@@ -129,8 +181,58 @@ export default function TeacherPortal() {
       fetchRecords();
       fetchTokenStatus();
       fetchTeacherPin();
+      fetchClassroomSettings();
     }
   }, [teacher?.id]);
+
+  const fetchClassroomSettings = async () => {
+    if (!teacher?.id) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/${teacher.id}/settings`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.settings) {
+          setClassroomSettings(data.settings);
+          if (data.settings.timer_duration) {
+            setGlobalTimerDuration(data.settings.timer_duration.toString());
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Could not load classroom settings:", err);
+    }
+  };
+
+  const handleSaveSettings = async (customSettings = null) => {
+    if (!teacher?.id) return;
+    setIsSavingSettings(true);
+    const toSave = customSettings || classroomSettings;
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/${teacher.id}/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(toSave)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setClassroomSettings(data.settings);
+        showToast(isEn ? "Classroom settings saved successfully!" : "Matagumpay na na-save ang mga setting ng silid-aralan!", "success");
+      } else {
+        showToast(data.error || (isEn ? "Failed to save settings." : "Bigo sa pag-save ng setting."), "error");
+      }
+    } catch (err) {
+      console.error("Error saving settings:", err);
+      showToast(isEn ? "An error occurred while saving settings." : "May naganap na error sa pag-save ng setting.", "error");
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
+  const handleToggleSetting = async (key, val) => {
+    const updated = { ...classroomSettings, [key]: val };
+    setClassroomSettings(updated);
+    await handleSaveSettings(updated);
+  };
 
   const fetchTokenStatus = async () => {
     try {
@@ -159,32 +261,40 @@ export default function TeacherPortal() {
     }
   };
 
-  const handleRegeneratePin = async () => {
+  const handleRegeneratePin = () => {
     if (!teacher?.id || isRegeneratingPin) return;
-    const confirmMsg = isEn
-      ? "Are you sure you want to generate a new PIN? Old students using the previous PIN will no longer be able to enter."
-      : "Sigurado ka bang nais mong gumawa ng bagong PIN? Ang mga dating estudyante na may lumang PIN ay hindi na makakapasok.";
-    if (!window.confirm(confirmMsg)) return;
-
-    setIsRegeneratingPin(true);
-    setPinFeedback('');
-    try {
-      const res = await fetch(`${API_BASE}/api/teacher/regenerate-pin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teacher_id: teacher.id })
-      });
-      const data = await res.json();
-      if (data.success && data.classroom_pin) {
-        setClassroomPin(data.classroom_pin);
-        setPinFeedback(isEn ? "New PIN generated! Previous PIN invalidated." : "Bagong PIN nabuo! Wala nang bisa ang lumang PIN.");
-        setTimeout(() => setPinFeedback(''), 4000);
+    openConfirm({
+      title: isEn ? "Regenerate Classroom PIN?" : "Bumuo ng Bagong Classroom PIN?",
+      message: isEn
+        ? "Are you sure you want to generate a new PIN? Old students using the previous PIN will no longer be able to enter."
+        : "Sigurado ka bang nais mong gumawa ng bagong PIN? Ang mga dating estudyante na may lumang PIN ay hindi na makakapasok.",
+      confirmText: isEn ? "Generate New PIN" : "Bumuo ng Bagong PIN",
+      cancelText: isEn ? "Cancel" : "Kanselahin",
+      type: "warning",
+      onConfirm: async () => {
+        setIsRegeneratingPin(true);
+        setPinFeedback('');
+        try {
+          const res = await fetch(`${API_BASE}/api/teacher/regenerate-pin`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ teacher_id: teacher.id })
+          });
+          const data = await res.json();
+          if (data.success && data.classroom_pin) {
+            setClassroomPin(data.classroom_pin);
+            setPinFeedback(isEn ? "New PIN generated! Previous PIN invalidated." : "Bagong PIN nabuo! Wala nang bisa ang lumang PIN.");
+            showToast(isEn ? "New PIN generated successfully!" : "Matagumpay na nabuo ang bagong PIN!", "success");
+            setTimeout(() => setPinFeedback(''), 4000);
+          }
+        } catch (err) {
+          console.error("Error regenerating PIN:", err);
+          showToast(isEn ? "Failed to generate new PIN." : "Bigo sa pagbuo ng bagong PIN.", "error");
+        } finally {
+          setIsRegeneratingPin(false);
+        }
       }
-    } catch (err) {
-      console.error("Error regenerating PIN:", err);
-    } finally {
-      setIsRegeneratingPin(false);
-    }
+    });
   };
 
   const handleCopyPin = () => {
@@ -295,22 +405,29 @@ export default function TeacherPortal() {
   // Handle Forgot Password - Step 1
   const handleForgotStep1 = async (e) => {
     e.preventDefault();
+    const cleanUsername = forgotUsername.trim();
+    if (!cleanUsername) return;
     setAuthLoading(true);
     setAuthError('');
     try {
       const res = await fetch(`${API_BASE}/api/teacher/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: forgotUsername })
+        body: JSON.stringify({ username: cleanUsername })
       });
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        throw new Error(isEn ? "Failed to connect to recovery service." : "Bigo sa pagkonekta sa serbisyo ng pagbawi.");
+      }
       if (!res.ok || !data.success) {
         throw new Error(data.error || (isEn ? "Username not found." : "Hindi nahanap ang username."));
       }
       setForgotSecurityQuestion(data.security_question);
       setForgotStep(2);
     } catch (err) {
-      setAuthError(err.message);
+      setAuthError(err.message || (isEn ? "Username not found." : "Hindi nahanap ang username."));
     } finally {
       setAuthLoading(false);
     }
@@ -319,6 +436,9 @@ export default function TeacherPortal() {
   // Handle Forgot Password - Step 2
   const handleForgotStep2 = async (e) => {
     e.preventDefault();
+    const cleanUsername = forgotUsername.trim();
+    const cleanAnswer = forgotSecurityAnswer.trim();
+    if (!cleanUsername || !cleanAnswer || !forgotNewPassword) return;
     setAuthLoading(true);
     setAuthError('');
     try {
@@ -326,20 +446,30 @@ export default function TeacherPortal() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: forgotUsername,
-          security_answer: forgotSecurityAnswer,
+          username: cleanUsername,
+          security_answer: cleanAnswer,
           new_password: forgotNewPassword
         })
       });
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        throw new Error(isEn ? "Failed to connect to password reset service." : "Bigo sa pagkonekta sa serbisyo ng pag-reset.");
+      }
       if (!res.ok || !data.success) {
         throw new Error(data.error || (isEn ? "Verification failed." : "Nabigo ang beripikasyon."));
       }
-      setAuthSuccess(isEn ? "Password reset successfully! Please log in." : "Matagumpay na nabago ang password! Pakisuyong mag-login.");
+      setAuthSuccess(isEn ? "Password reset successfully! Please log in with your new password." : "Matagumpay na nabago ang password! Pakisuyong mag-login gamit ang bagong password.");
       setAuthMode('login');
+      setLoginUsername(cleanUsername);
+      setLoginPassword('');
       setForgotStep(1);
+      setForgotUsername('');
+      setForgotSecurityAnswer('');
+      setForgotNewPassword('');
     } catch (err) {
-      setAuthError(err.message);
+      setAuthError(err.message || (isEn ? "Failed to reset password." : "Bigo sa pag-reset ng password."));
     } finally {
       setAuthLoading(false);
     }
@@ -500,21 +630,33 @@ export default function TeacherPortal() {
   };
 
   // Delete Passage
-  const handleDeletePassage = async (passageId) => {
-    const confirmMsg = isEn
-      ? "Are you sure you want to delete this passage?"
-      : "Sigurado ka bang nais mong tanggalin ang talatang ito?";
-    if (!window.confirm(confirmMsg)) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/teacher/passages/${passageId}?teacher_id=${teacher.id}`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
-        fetchPassages();
+  const handleDeletePassage = (passageId, passageTitle = "") => {
+    openConfirm({
+      title: isEn ? "Delete Reading Passage?" : "Tanggalin ang Talata?",
+      message: isEn
+        ? `Are you sure you want to delete this passage${passageTitle ? ` ("${passageTitle}")` : ''}? It will be removed from your classroom assignments.`
+        : `Sigurado ka bang nais mong tanggalin ang talatang ito${passageTitle ? ` ("${passageTitle}")` : ''}? Matatanggal ito mula sa iyong mga takdang aralin sa silid-aralan.`,
+      confirmText: isEn ? "Yes, Delete" : "Oo, Tanggalin",
+      cancelText: isEn ? "Cancel" : "Kanselahin",
+      type: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/teacher/passages/${passageId}?teacher_id=${teacher.id}`, {
+            method: 'DELETE'
+          });
+          if (res.ok) {
+            fetchPassages();
+            showToast(isEn ? "Passage deleted successfully." : "Matagumpay na natanggal ang talata.", "success");
+          } else {
+            const data = await res.json();
+            showToast(data.error || (isEn ? "Failed to delete passage." : "Bigo sa pagtanggal ng talata."), "error");
+          }
+        } catch (err) {
+          console.error("Error deleting passage:", err);
+          showToast(isEn ? "An error occurred while deleting passage." : "May naganap na error sa pagtanggal ng talata.", "error");
+        }
       }
-    } catch (err) {
-      console.error("Error deleting passage:", err);
-    }
+    });
   };
 
   // Import Passage from built-in repository (Choose from our passages)
@@ -644,71 +786,87 @@ export default function TeacherPortal() {
   };
 
   // Delete individual student record
-  const handleDeleteRecord = async (recordId, studentName) => {
+  const handleDeleteRecord = (recordId, studentName) => {
     if (!teacher) return;
-    const confirmMsg = isEn
-      ? `Are you sure you want to delete the reading record for "${studentName}"?`
-      : `Sigurado ka bang nais mong burahin ang talaan ng pagbasa para kay "${studentName}"?`;
-    if (!window.confirm(confirmMsg)) return;
-
-    try {
-      const res = await fetch(`${API_BASE}/api/teacher/records/${recordId}?teacher_id=${teacher.id}`, {
-        method: 'DELETE'
-      });
-      if (res.status === 404) {
-        alert(isEn
-          ? "The server route was not found (404). Please restart your Python backend server (py app.py) to load the new delete route."
-          : "Hindi pa na-load ang bagong delete route sa server (404). Paki-restart ang iyong Python terminal (py app.py)."
-        );
-        return;
-      }
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setRecords(prev => prev.filter(r => r.id !== recordId));
-        if (selectedRecord && selectedRecord.id === recordId) {
-          setSelectedRecord(null);
+    openConfirm({
+      title: isEn ? "Delete Student Record?" : "Burahin ang Talaan ng Mag-aaral?",
+      message: isEn
+        ? `Are you sure you want to delete the reading record for "${studentName}"? This action cannot be undone.`
+        : `Sigurado ka bang nais mong burahin ang talaan ng pagbasa para kay "${studentName}"? Hindi na ito maibabalik.`,
+      confirmText: isEn ? "Yes, Delete" : "Oo, Burahin",
+      cancelText: isEn ? "Cancel" : "Kanselahin",
+      type: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/teacher/records/${recordId}?teacher_id=${teacher.id}`, {
+            method: 'DELETE'
+          });
+          if (res.status === 404) {
+            showToast(isEn
+              ? "The server route was not found (404). Please restart your Python backend server (py app.py)."
+              : "Hindi pa na-load ang bagong delete route sa server (404). Paki-restart ang iyong Python terminal (py app.py).",
+              "error"
+            );
+            return;
+          }
+          const data = await res.json();
+          if (res.ok && data.success) {
+            setRecords(prev => prev.filter(r => r.id !== recordId));
+            if (selectedRecord && selectedRecord.id === recordId) {
+              setSelectedRecord(null);
+            }
+            showToast(isEn ? `Reading record for "${studentName}" deleted.` : `Nabura ang talaan para kay "${studentName}".`, "success");
+          } else {
+            showToast(data.error || (isEn ? "Failed to delete record." : "Bigo sa pagbura ng tala."), "error");
+          }
+        } catch (err) {
+          console.error("Delete record error:", err);
+          showToast(isEn ? "An error occurred while deleting record." : "May naganap na error sa pagbura ng tala.", "error");
         }
-      } else {
-        alert(data.error || (isEn ? "Failed to delete record." : "Bigo sa pagbura ng tala."));
       }
-    } catch (err) {
-      console.error("Delete record error:", err);
-      alert(isEn ? "An error occurred while deleting record." : "May naganap na error sa pagbura ng tala.");
-    }
+    });
   };
 
   // Clear all student records for this teacher
-  const handleClearAllRecords = async () => {
+  const handleClearAllRecords = () => {
     if (!teacher || records.length === 0) return;
-    const confirmMsg = isEn
-      ? `Are you sure you want to CLEAR ALL ${records.length} student records? This action cannot be undone.`
-      : `Sigurado ka bang nais mong BURAHIN ANG LAHAT ng ${records.length} talaan ng mag-aaral? Hindi na ito maibabalik.`;
-    if (!window.confirm(confirmMsg)) return;
-
-    try {
-      const res = await fetch(`${API_BASE}/api/teacher/records/clear`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teacher_id: teacher.id })
-      });
-      if (res.status === 404) {
-        alert(isEn
-          ? "The server route was not found (404). Please restart your Python backend server (py app.py) to load the new clear route."
-          : "Hindi pa na-load ang bagong clear route sa server (404). Paki-restart ang iyong Python terminal (py app.py)."
-        );
-        return;
+    openConfirm({
+      title: isEn ? "Clear All Student Records?" : "Burahin Lahat ng Talaan?",
+      message: isEn
+        ? `Are you sure you want to CLEAR ALL ${records.length} student records? This action cannot be undone.`
+        : `Sigurado ka bang nais mong BURAHIN ANG LAHAT ng ${records.length} talaan ng mag-aaral? Hindi na ito maibabalik.`,
+      confirmText: isEn ? "Yes, Clear All" : "Oo, Burahin Lahat",
+      cancelText: isEn ? "Cancel" : "Kanselahin",
+      type: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/teacher/records/clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ teacher_id: teacher.id })
+          });
+          if (res.status === 404) {
+            showToast(isEn
+              ? "The server route was not found (404). Please restart your Python backend server (py app.py)."
+              : "Hindi pa na-load ang bagong clear route sa server (404). Paki-restart ang iyong Python terminal (py app.py).",
+              "error"
+            );
+            return;
+          }
+          const data = await res.json();
+          if (res.ok && data.success) {
+            setRecords([]);
+            setSelectedRecord(null);
+            showToast(isEn ? "All student records have been cleared." : "Nabura na ang lahat ng talaan ng mag-aaral.", "success");
+          } else {
+            showToast(data.error || (isEn ? "Failed to clear records." : "Bigo sa pagbura ng mga tala."), "error");
+          }
+        } catch (err) {
+          console.error("Clear records error:", err);
+          showToast(isEn ? "An error occurred while clearing records." : "May naganap na error sa pagbura ng mga tala.", "error");
+        }
       }
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setRecords([]);
-        setSelectedRecord(null);
-      } else {
-        alert(data.error || (isEn ? "Failed to clear records." : "Bigo sa pagbura ng mga tala."));
-      }
-    } catch (err) {
-      console.error("Clear records error:", err);
-      alert(isEn ? "An error occurred while clearing records." : "May naganap na error sa pagbura ng mga tala.");
-    }
+    });
   };
 
   // Filter System Passages in Bank Modal
@@ -776,7 +934,7 @@ export default function TeacherPortal() {
             <div className="text-center mb-8">
               <div className="w-14 h-14 bg-gradient-to-tr from-[#0096FF] to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-blue-500/20">
                 <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                 </svg>
               </div>
               <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
@@ -802,17 +960,15 @@ export default function TeacherPortal() {
               <div className="flex bg-gray-100 p-1 rounded-2xl border border-gray-200 mb-6">
                 <button
                   onClick={() => { setAuthMode('login'); setAuthError(''); }}
-                  className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${
-                    authMode === 'login' ? 'bg-white text-[#0096FF] shadow-sm' : 'text-gray-500 hover:text-slate-900'
-                  }`}
+                  className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${authMode === 'login' ? 'bg-white text-[#0096FF] shadow-sm' : 'text-gray-500 hover:text-slate-900'
+                    }`}
                 >
                   {isEn ? "Log In" : "Mag-Login"}
                 </button>
                 <button
                   onClick={() => { setAuthMode('register'); setAuthError(''); }}
-                  className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${
-                    authMode === 'register' ? 'bg-white text-[#0096FF] shadow-sm' : 'text-gray-500 hover:text-slate-900'
-                  }`}
+                  className={`flex-1 py-2 text-sm font-bold rounded-xl transition-all ${authMode === 'register' ? 'bg-white text-[#0096FF] shadow-sm' : 'text-gray-500 hover:text-slate-900'
+                    }`}
                 >
                   {isEn ? "Register" : "Magrehistro"}
                 </button>
@@ -1128,30 +1284,42 @@ export default function TeacherPortal() {
         <div className="flex border-b border-gray-200 mb-8 gap-2">
           <button
             onClick={() => setActiveTab('passages')}
-            className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${
-              activeTab === 'passages'
+            className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${activeTab === 'passages'
                 ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
                 : 'border-transparent text-gray-500 hover:text-slate-900'
-            }`}
+              }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
             {isEn ? `Passage Management (${passages.length})` : `Pamamahala ng Talata (${passages.length})`}
           </button>
 
           <button
             onClick={() => setActiveTab('students')}
-            className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${
-              activeTab === 'students'
+            className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${activeTab === 'students'
                 ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
                 : 'border-transparent text-gray-500 hover:text-slate-900'
-            }`}
+              }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
             {isEn ? `Student Records (${records.length})` : `Talaan ng mga Mag-aaral (${records.length})`}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${activeTab === 'settings'
+                ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
+                : 'border-transparent text-gray-500 hover:text-slate-900'
+              }`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            {isEn ? "Classroom Settings" : "Setting ng Silid-Aralan"}
           </button>
         </div>
 
@@ -1179,7 +1347,7 @@ export default function TeacherPortal() {
                   className="px-5 py-3 bg-white hover:bg-gray-50 text-[#0096FF] border border-[#0096FF]/30 font-bold rounded-2xl shadow-sm flex items-center gap-2 transition-transform hover:scale-[1.02]"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                   </svg>
                   {isEn ? "Choose from Passages" : "Pumili sa mga Talata"}
                 </button>
@@ -1189,124 +1357,10 @@ export default function TeacherPortal() {
                   className="px-6 py-3 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-2xl shadow-lg shadow-blue-500/20 flex items-center gap-2 transition-transform hover:scale-[1.02]"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
                   </svg>
                   {isEn ? "Add Custom Passage" : "Magdagdag ng Talata"}
                 </button>
-              </div>
-            </div>
-
-            {/* Classroom PIN & Session Settings */}
-            <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 mb-8 shadow-sm">
-              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-blue-50 text-[#0096FF] flex items-center justify-center flex-shrink-0 border border-blue-100">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-gray-100 text-gray-600 border border-gray-200">
-                        {isEn ? "Classroom PIN" : "PIN ng Silid-Aralan"}
-                      </span>
-                      <span className="flex h-2 w-2 relative">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-500 max-w-xl mt-1">
-                      {isEn
-                        ? "Students enter this 6-digit PIN on the Classroom page to enter your reading session."
-                        : "Ilalagay ng mga mag-aaral ang 6-digit PIN na ito sa pahina ng Classroom upang makapasok."}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full md:w-auto">
-                  <div className="flex items-center justify-center bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 font-mono font-bold text-xl text-gray-800 tracking-widest select-all">
-                    {classroomPin || "------"}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleCopyPin}
-                      title="Copy PIN"
-                      className="flex-1 sm:flex-none px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors border border-gray-200 shadow-sm"
-                    >
-                      <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                      </svg>
-                      {isEn ? "Copy PIN" : "Kopyahin"}
-                    </button>
-
-                    <button
-                      onClick={handleRegeneratePin}
-                      disabled={isRegeneratingPin}
-                      title="Generate New PIN"
-                      className="flex-1 sm:flex-none px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors border border-gray-200 shadow-sm whitespace-nowrap disabled:opacity-50"
-                    >
-                      <svg className={`w-3.5 h-3.5 text-gray-500 ${isRegeneratingPin ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      {isRegeneratingPin ? (isEn ? "Generating..." : "Bumubuo...") : (isEn ? "Generate New PIN" : "Bagong PIN")}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {pinFeedback && (
-                <div className="mt-3 px-4 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-center gap-2">
-                  <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                  </svg>
-                  {pinFeedback}
-                </div>
-              )}
-
-              {/* Row 2: Aligned Simple Assessment Timer Duration */}
-              <div className="pt-3.5 mt-3.5 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-[#0096FF] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span className="text-xs font-bold text-gray-800">
-                    {isEn ? "Assessment Timer Duration:" : "Oras ng Pagsusulit:"}
-                  </span>
-                  <span className="text-[11px] text-gray-500 hidden md:inline">
-                    {isEn ? "(applied to all classroom passages)" : "(ilalapat sa lahat ng talata)"}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 self-end sm:self-auto">
-                  <div className="flex items-center bg-gray-50 border border-gray-300 rounded-xl px-2.5 py-1.5 focus-within:border-[#0096FF] focus-within:bg-white">
-                    <input
-                      type="number"
-                      min="5"
-                      max="600"
-                      value={globalTimerDuration}
-                      onChange={(e) => setGlobalTimerDuration(e.target.value)}
-                      className="w-14 text-center font-bold text-slate-900 bg-transparent focus:outline-none text-xs"
-                    />
-                    <span className="text-[11px] font-bold text-gray-500 ml-1">sec</span>
-                  </div>
-
-                  <button
-                    onClick={handleApplyGlobalTimer}
-                    disabled={globalTimerSaving}
-                    className="px-3.5 py-1.5 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-xl text-xs transition-colors shadow-sm whitespace-nowrap disabled:opacity-50"
-                  >
-                    {globalTimerSaving
-                      ? (isEn ? "Applying..." : "Inilalapat...")
-                      : (isEn ? "Apply to All Passages" : "Ilapat sa Lahat ng Talata")}
-                  </button>
-
-                  {globalTimerFeedback && (
-                    <span className="text-xs font-bold text-emerald-600 whitespace-nowrap animate-pulse">
-                      {globalTimerFeedback}
-                    </span>
-                  )}
-                </div>
               </div>
             </div>
 
@@ -1358,7 +1412,7 @@ export default function TeacherPortal() {
               <div className="bg-white border border-gray-200 rounded-3xl p-12 text-center shadow-sm">
                 <div className="w-16 h-16 bg-gray-100 text-gray-400 rounded-2xl flex items-center justify-center mx-auto mb-4">
                   <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 mb-1">
@@ -1391,11 +1445,10 @@ export default function TeacherPortal() {
                   return (
                     <div
                       key={p.id}
-                      className={`relative bg-white border rounded-3xl p-6 shadow-sm hover:shadow-md flex flex-col justify-between transition-all ${
-                        p.is_active
+                      className={`relative bg-white border rounded-3xl p-6 shadow-sm hover:shadow-md flex flex-col justify-between transition-all ${p.is_active
                           ? 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/15 shadow-emerald-500/5'
                           : 'border-gray-200 hover:border-gray-300'
-                      }`}
+                        }`}
                     >
                       <div>
                         {/* Header Badges */}
@@ -1440,11 +1493,10 @@ export default function TeacherPortal() {
                       <div className="flex flex-col gap-2">
                         <button
                           onClick={() => handleTogglePassageActive(p.id)}
-                          className={`w-full py-2.5 border rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                            p.is_active
+                          className={`w-full py-2.5 border rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${p.is_active
                               ? 'bg-emerald-50 hover:bg-red-50 text-emerald-700 hover:text-red-700 border-emerald-300 hover:border-red-300'
                               : 'bg-white hover:bg-emerald-50 text-gray-700 hover:text-emerald-700 border-gray-300 hover:border-emerald-300 shadow-sm'
-                          }`}
+                            }`}
                         >
                           {p.is_active ? (
                             <>
@@ -1470,7 +1522,7 @@ export default function TeacherPortal() {
                             {isEn ? "Edit" : "I-edit"}
                           </button>
                           <button
-                            onClick={() => handleDeletePassage(p.id)}
+                            onClick={() => handleDeletePassage(p.id, p.title)}
                             className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 font-bold rounded-xl text-xs transition-colors"
                           >
                             {isEn ? "Delete" : "Tanggalin"}
@@ -1544,7 +1596,7 @@ export default function TeacherPortal() {
                   className="w-full px-4 py-2.5 pl-10 bg-white border border-gray-200 rounded-2xl text-sm text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] shadow-sm"
                 />
                 <svg className="w-5 h-5 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
               </div>
 
@@ -1567,7 +1619,7 @@ export default function TeacherPortal() {
                   className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 disabled:opacity-50 transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
                   {isEn ? "Export to Excel / CSV" : "I-export sa Excel / CSV"}
                 </button>
@@ -1651,6 +1703,410 @@ export default function TeacherPortal() {
             </div>
           </div>
         )}
+
+        {/* -------------------------------------------------------------
+            TAB 3: CLASSROOM SETTINGS (CONFIGURED BY TEACHER)
+            ------------------------------------------------------------- */}
+        {activeTab === 'settings' && (
+          <div className="space-y-8 animate-in fade-in duration-300">
+            {/* Header */}
+            <div>
+              <h2 className="text-2xl font-black text-slate-900 tracking-tight">
+                {isEn ? "Classroom Settings" : "Mga Setting ng Silid-Aralan"}
+              </h2>
+              <p className="text-gray-500 text-sm mt-1">
+                {isEn
+                  ? "Configure room access, timer limits, auto-progression, and assessment experience for your classroom."
+                  : "Pamahalaan ang access sa silid, takdang oras, awtomatikong paglipat, at mga setting ng pagsusulit."}
+              </p>
+            </div>
+
+            {/* Settings Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+              {/* CARD 1: Classroom Access PIN */}
+              <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-7 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-blue-50 text-[#0096FF] flex items-center justify-center border border-blue-100 shadow-sm">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h3 className="text-base font-extrabold text-slate-900">
+                          {isEn ? "Classroom Access PIN" : "PIN ng Silid-Aralan"}
+                        </h3>
+                        <p className="text-xs text-gray-500">
+                          {isEn ? "Door code for student entry" : "Kodigo para sa pagpasok ng mag-aaral"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                      {isEn ? "Room Active" : "Aktibong Silid"}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-gray-600 leading-relaxed mb-5">
+                    {isEn
+                      ? "Share this 6-digit PIN with your students. They will enter this code on the Classroom page to connect to your assigned reading passages."
+                      : "Ibahagi ang 6-digit PIN na ito sa iyong mga mag-aaral. Ilalagay nila ito sa pahina ng Silid-Aralan upang makapasok."}
+                  </p>
+
+                  <div className="bg-slate-50 border border-gray-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-3">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider block mb-1">
+                        {isEn ? "Your 6-Digit Room Code" : "Ang Iyong 6-Digit Code"}
+                      </span>
+                      <span className="font-mono text-3xl font-black text-slate-900 tracking-widest select-all">
+                        {classroomPin || "------"}
+                      </span>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCopyPin}
+                        className="px-4 py-2.5 bg-white hover:bg-gray-100 text-slate-700 font-bold text-xs rounded-xl border border-gray-200 shadow-sm transition-all flex items-center gap-1.5"
+                      >
+                        <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                        </svg>
+                        <span>{isEn ? "Copy" : "Kopyahin"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleRegeneratePin}
+                        disabled={isRegeneratingPin}
+                        className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-[#0096FF] font-bold text-xs rounded-xl border border-blue-200 shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        <svg className={`w-4 h-4 ${isRegeneratingPin ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        <span>{isRegeneratingPin ? (isEn ? "Generating..." : "Bumubuo...") : (isEn ? "New PIN" : "Bagong PIN")}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {pinFeedback && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-center gap-2 animate-in fade-in">
+                      <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      <span>{pinFeedback}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* CARD 2: Assessment Timer Duration */}
+              <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-7 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-11 h-11 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100 shadow-sm">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="text-base font-extrabold text-slate-900">
+                        {isEn ? "Class Assessment Timer Duration" : "Takdang Oras ng Pagsusulit"}
+                      </h3>
+                      <p className="text-xs text-gray-500">
+                        {isEn ? "Reading time limit per passage" : "Limitasyon sa oras bawat talata"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-gray-600 leading-relaxed mb-5">
+                    {isEn
+                      ? "Sets the default duration (seconds) students have to complete each reading passage before automatic stop. You can also mass-apply this to all active passages."
+                      : "Itinatakda ang default na oras (segundo) ng pagbasa bago kusa itong huminto. Maaari mo rin itong ilapat sa lahat ng mga talata."}
+                  </p>
+
+                  <div className="bg-slate-50 border border-gray-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-3">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        min="10"
+                        max="600"
+                        value={globalTimerDuration}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setGlobalTimerDuration(val);
+                          setClassroomSettings(prev => ({ ...prev, timer_duration: parseInt(val, 10) || 60 }));
+                        }}
+                        className="w-24 px-3 py-2 bg-white border border-gray-300 rounded-xl text-center font-mono font-black text-lg text-slate-900 focus:outline-none focus:border-[#0096FF] focus:ring-2 focus:ring-blue-100"
+                      />
+                      <span className="text-xs font-bold text-gray-700">
+                        {isEn ? "Seconds per passage" : "Segundo bawat talata"}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleApplyGlobalTimer}
+                      disabled={globalTimerSaving}
+                      className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-[#0096FF] hover:from-blue-700 hover:to-blue-600 text-white font-extrabold rounded-xl text-xs shadow-md shadow-blue-500/20 transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    >
+                      {globalTimerSaving ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          <span>{isEn ? "Applying..." : "Inilalapat..."}</span>
+                        </>
+                      ) : (
+                        <span>{isEn ? "Apply to All Passages" : "Ilapat sa Lahat"}</span>
+                      )}
+                    </button>
+                  </div>
+
+                  {globalTimerFeedback && (
+                    <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-800 flex items-center gap-2 animate-in fade-in">
+                      <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      <span>{globalTimerFeedback}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* CARD 3: Auto-Continue & Countdown Duration */}
+              <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-7 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100 shadow-sm">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h3 className="text-base font-extrabold text-slate-900">
+                          {isEn ? "Auto-Continue to Next Passage" : "Kusang Paglipat sa Susunod na Talata"}
+                        </h3>
+                        <p className="text-xs text-gray-500">
+                          {isEn ? "Hands-free continuous reading mode" : "Tuluy-tuloy na pagbasa"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Toggle Switch */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSetting('auto_continue', !classroomSettings.auto_continue)}
+                      className={`relative inline-flex h-7 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${classroomSettings.auto_continue ? 'bg-[#0096FF]' : 'bg-gray-300'
+                        }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${classroomSettings.auto_continue ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                      />
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-gray-600 leading-relaxed mb-5">
+                    {classroomSettings.auto_continue
+                      ? (isEn
+                        ? "Auto-continue is ON. After completing a passage, the system displays quick metrics and automatically counts down to advance to the next passage."
+                        : "Naka-ON ang kusang paglipat. Pagkatapos ng talata, kusang magbibilang ang sistema upang magpatuloy sa susunod na talata.")
+                      : (isEn
+                        ? "Auto-continue is OFF. Students or teachers review their completed passage metrics and must manually click 'Proceed' to move to the next passage."
+                        : "Naka-OFF ang kusang paglipat. Dapat i-click ng mag-aaral o guro ang 'Magpatuloy' bago lumipat sa susunod na talata.")}
+                  </p>
+
+                  {/* Countdown Duration Picker */}
+                  <div className={`p-4 rounded-2xl border transition-all ${classroomSettings.auto_continue
+                      ? 'bg-blue-50/60 border-blue-200'
+                      : 'bg-gray-50 border-gray-200 opacity-50 pointer-events-none'
+                    }`}>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 block">
+                          {isEn ? "Auto-Advance Countdown Duration" : "Tagal ng Countdown Bago Lumipat"}
+                        </span>
+                        <span className="text-[11px] text-gray-500">
+                          {isEn ? "Seconds to review score before starting next passage" : "Segundo para suriin ang marka bago magsimula"}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        {[3, 4, 5, 8, 10].map((sec) => (
+                          <button
+                            key={sec}
+                            type="button"
+                            onClick={() => handleToggleSetting('auto_continue_countdown', sec)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${classroomSettings.auto_continue_countdown === sec
+                                ? 'bg-[#0096FF] text-white shadow-sm'
+                                : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'
+                              }`}
+                          >
+                            {sec}s
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* CARD 4: Shuffle Passages for Each Student */}
+              <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-7 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center border border-purple-100 shadow-sm">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h3 className="text-base font-extrabold text-slate-900">
+                          {isEn ? "Shuffle Passages for Each Student" : "Paghaluin ang Pagkakasunod-sunod (Shuffle)"}
+                        </h3>
+                        <p className="text-xs text-gray-500">
+                          {isEn ? "Randomize passage sequence per student" : "Iba-ibang pagkakasunod-sunod bawat mag-aaral"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Toggle Switch */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSetting('shuffle_passages', !classroomSettings.shuffle_passages)}
+                      className={`relative inline-flex h-7 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${classroomSettings.shuffle_passages ? 'bg-[#0096FF]' : 'bg-gray-300'
+                        }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${classroomSettings.shuffle_passages ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                      />
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-gray-600 leading-relaxed mb-5">
+                    {classroomSettings.shuffle_passages
+                      ? (isEn
+                        ? "Shuffling is ENABLED. Each student joining your session will receive the active passages in a randomized order. This ensures students seated next to each other do not read the identical passage simultaneously."
+                        : "Naka-ENABLE ang shuffle. Bawat mag-aaral na papasok ay makatatanggap ng random na pagkakasunod-sunod ng mga talata upang maiwasan ang panggagaya o sabay na pagbasa ng magkatabing bata.")
+                      : (isEn
+                        ? "Shuffling is OFF. Every student takes the assigned passages in the exact standard order (Passage 1, Passage 2, Passage 3)."
+                        : "Naka-OFF ang shuffle. Pare-parehong sunod-sunod ang babasahin ng lahat ng mag-aaral (Talata 1, Talata 2, Talata 3).")}
+                  </p>
+
+                  <div className="p-3.5 bg-purple-50/70 border border-purple-200 rounded-2xl flex items-center gap-2.5 text-xs text-purple-900 font-semibold">
+                    <svg className="w-4 h-4 text-purple-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>
+                      {isEn
+                        ? "Recommended for group classroom settings where multiple tablets/desktops are active at the same time."
+                        : "Inirerekomenda para sa mga sabay-sabay na pagsusulit sa klase gamit ang maraming gadyet."}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* CARD 5: Live Audio Experience & Feedback Settings */}
+              <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-7 shadow-sm hover:shadow-md transition-shadow lg:col-span-2">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="w-11 h-11 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 shadow-sm">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold text-slate-900">
+                      {isEn ? "Classroom Audio & Feedback Experience" : "Tugon sa Tunog at Pagsusuri ng Pagbasa"}
+                    </h3>
+                    <p className="text-xs text-gray-500">
+                      {isEn ? "Visual aids and sound cues during student assessment" : "Mga gabay sa paningin at tunog habang nagbabasa"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Waveform toggle */}
+                  <div className="p-4 bg-slate-50 border border-gray-200 rounded-2xl flex items-center justify-between gap-4">
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">
+                        {isEn ? "Live Audio Waveform Visualizer" : "Live Soundwave Visualizer"}
+                      </span>
+                      <span className="text-[11px] text-gray-500">
+                        {isEn ? "Displays animated soundwaves as the child speaks" : "Nagpapakita ng galaw ng boses habang nagbabasa"}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSetting('show_waveform', !classroomSettings.show_waveform)}
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${classroomSettings.show_waveform ? 'bg-[#0096FF]' : 'bg-gray-300'
+                        }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${classroomSettings.show_waveform ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Chime toggle */}
+                  <div className="p-4 bg-slate-50 border border-gray-200 rounded-2xl flex items-center justify-between gap-4">
+                    <div>
+                      <span className="text-xs font-bold text-slate-900 block">
+                        {isEn ? "Completion Audio Chime" : "Tunog ng Pagtatapos (Chime)"}
+                      </span>
+                      <span className="text-[11px] text-gray-500">
+                        {isEn ? "Plays cheerful two-tone chime when last word is read" : "Tumutunog kapag matagumpay na natapos ang talata"}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSetting('play_chime', !classroomSettings.play_chime)}
+                      className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${classroomSettings.play_chime ? 'bg-[#0096FF]' : 'bg-gray-300'
+                        }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${classroomSettings.play_chime ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Bottom Save Action Bar */}
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => handleSaveSettings()}
+                disabled={isSavingSettings}
+                className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-blue-600 to-[#0096FF] hover:from-blue-700 hover:to-blue-600 text-white font-black text-sm rounded-2xl shadow-xl shadow-blue-500/25 transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {isSavingSettings ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    <span>{isEn ? "Saving Settings..." : "Inililigtas ang mga Setting..."}</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>{isEn ? "Save Classroom Settings" : "I-save ang mga Setting ng Silid-Aralan"}</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* -------------------------------------------------------------
@@ -1687,11 +2143,10 @@ export default function TeacherPortal() {
                   <button
                     key={cat}
                     onClick={() => setBankCategory(cat)}
-                    className={`px-4 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-                      bankCategory === cat
+                    className={`px-4 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${bankCategory === cat
                         ? 'bg-white text-[#0096FF] shadow-sm'
                         : 'text-gray-600 hover:text-slate-900'
-                    }`}
+                      }`}
                   >
                     {cat === 'all' ? (isEn ? 'All Levels' : 'Lahat ng Antas') : cat}
                   </button>
@@ -1707,7 +2162,7 @@ export default function TeacherPortal() {
                   className="w-full px-3.5 py-2 pl-9 bg-gray-50 border border-gray-300 rounded-xl text-xs text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
                 />
                 <svg className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
               </div>
             </div>
@@ -1762,11 +2217,10 @@ export default function TeacherPortal() {
                   return (
                     <div
                       key={item.id}
-                      className={`border rounded-2xl p-4 sm:p-5 transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${
-                        isChecked
+                      className={`border rounded-2xl p-4 sm:p-5 transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${isChecked
                           ? 'bg-blue-50/50 border-[#0096FF] shadow-sm'
                           : 'bg-gray-50/70 border-gray-200 hover:border-blue-300'
-                      }`}
+                        }`}
                     >
                       <div className="flex items-start gap-3 flex-1">
                         <input
@@ -1894,17 +2348,16 @@ export default function TeacherPortal() {
                   <div
                     key={p.id}
                     onClick={() => handleToggleTempActiveId(p.id)}
-                    className={`flex items-center justify-between p-3.5 rounded-2xl border cursor-pointer transition-all ${
-                      isChecked
+                    className={`flex items-center justify-between p-3.5 rounded-2xl border cursor-pointer transition-all ${isChecked
                         ? 'bg-blue-50/50 border-[#0096FF] shadow-sm'
                         : 'bg-white border-gray-200 hover:border-gray-300'
-                    }`}
+                      }`}
                   >
                     <div className="flex items-center gap-3">
                       <input
                         type="checkbox"
                         checked={isChecked}
-                        onChange={() => {}}
+                        onChange={() => { }}
                         className="w-4 h-4 text-[#0096FF] rounded border-gray-300 focus:ring-[#0096FF] cursor-pointer"
                       />
                       <div>
@@ -2068,11 +2521,10 @@ export default function TeacherPortal() {
                         key={preset}
                         type="button"
                         onClick={() => setPassageTimer(preset)}
-                        className={`px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors ${
-                          parseInt(passageTimer, 10) === preset
+                        className={`px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors ${parseInt(passageTimer, 10) === preset
                             ? 'bg-[#0096FF] text-white border-[#0096FF]'
                             : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'
-                        }`}
+                          }`}
                       >
                         {preset}s
                       </button>
@@ -2242,6 +2694,97 @@ export default function TeacherPortal() {
                 {isEn ? "Close" : "Isara"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* -------------------------------------------------------------
+          CENTERED CONFIRMATION MODAL POPUP (REPLACES BROWSER DIALOG)
+          ------------------------------------------------------------- */}
+      {confirmDialog.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white border border-gray-100 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl shadow-slate-900/25 animate-in zoom-in-95 duration-200 text-center relative overflow-hidden">
+
+            {/* Top Icon Badge */}
+            <div className={`w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-sm ${confirmDialog.type === 'danger'
+                ? 'bg-rose-50 border border-rose-100 text-rose-600'
+                : 'bg-amber-50 border border-amber-100 text-amber-600'
+              }`}>
+              {confirmDialog.type === 'danger' ? (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              ) : (
+                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              )}
+            </div>
+
+            {/* Title */}
+            <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight mb-2">
+              {confirmDialog.title}
+            </h3>
+
+            {/* Message */}
+            <p className="text-gray-600 text-sm leading-relaxed mb-6 max-w-sm mx-auto">
+              {confirmDialog.message}
+            </p>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 justify-center">
+              <button
+                type="button"
+                onClick={closeConfirm}
+                className="flex-1 py-3 px-5 rounded-2xl bg-gray-100 hover:bg-gray-200 text-slate-700 font-bold text-sm transition-all active:scale-[0.98]"
+              >
+                {confirmDialog.cancelText}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const action = confirmDialog.onConfirm;
+                  closeConfirm();
+                  if (action) action();
+                }}
+                className={`flex-1 py-3 px-5 rounded-2xl text-white font-extrabold text-sm shadow-lg transition-all hover:scale-[1.01] active:scale-[0.98] ${confirmDialog.type === 'danger'
+                    ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-500/25'
+                    : 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/25'
+                  }`}
+              >
+                {confirmDialog.confirmText}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Modern Toast Notification */}
+      {portalToast && (
+        <div className="fixed top-6 right-6 z-50 max-w-md w-full sm:w-auto animate-in slide-in-from-top-4 fade-in duration-300">
+          <div className={`p-4 rounded-2xl shadow-xl border flex items-center gap-3 ${portalToast.type === 'error'
+              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            }`}>
+            {portalToast.type === 'error' ? (
+              <svg className="w-5 h-5 flex-shrink-0 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5 flex-shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+            <span className="text-xs sm:text-sm font-semibold">{portalToast.message}</span>
+            <button
+              onClick={() => setPortalToast(null)}
+              className="ml-auto text-gray-400 hover:text-gray-700 p-1"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </div>
       )}
