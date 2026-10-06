@@ -4,124 +4,6 @@ import { beginnerPassages } from './data/passages'; // NEW IMPORT
 import { useLanguage } from './contexts/LanguageContext';
 import SoundWaveBackground from './components/SoundWaveBackground';
 
-// Helper to tokenize and normalize words for live satisfaction matching
-const tokenizeWords = (text) => {
-  if (!text) return [];
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/gi, ' ')
-    .split(/\s+/)
-    .filter(Boolean);
-};
-
-// Check if two words phonetically or semantically match in Filipino reading
-const isWordMatch = (w1, w2) => {
-  if (!w1 || !w2) return false;
-  if (w1 === w2) return true;
-
-  // Common Filipino shorthand / contractions / variants
-  if ((w1 === 'mga' && w2 === 'manga') || (w1 === 'manga' && w2 === 'mga')) return true;
-  if ((w1 === 'ng' && w2 === 'nang') || (w1 === 'nang' && w2 === 'ng')) return true;
-  if ((w1 === 'may' && w2 === 'mayroon') || (w1 === 'mayroon' && w2 === 'may')) return true;
-  if ((w1 === 'dyan' && w2 === 'diyan') || (w1 === 'diyan' && w2 === 'dyan')) return true;
-  if ((w1 === 'doon' && w2 === 'dun') || (w1 === 'dun' && w2 === 'doon')) return true;
-
-  // Normalize Tagalog vowel shifts (o <-> u, e <-> i)
-  const n1 = w1.replace(/o/g, 'u').replace(/e/g, 'i');
-  const n2 = w2.replace(/o/g, 'u').replace(/e/g, 'i');
-  if (n1 === n2) return true;
-
-  // Prefix / stem match for words >= 4 letters
-  if (w1.length >= 4 && w2.length >= 4) {
-    if (w1.startsWith(w2.slice(0, -1)) || w2.startsWith(w1.slice(0, -1))) return true;
-    if (w1.slice(0, 4) === w2.slice(0, 4)) return true;
-  }
-
-  // Levenshtein distance <= 1 for words >= 4 letters
-  if (Math.abs(w1.length - w2.length) <= 1 && w1.length >= 4) {
-    let diff = 0;
-    let i = 0, j = 0;
-    while (i < n1.length && j < n2.length) {
-      if (n1[i] !== n2[j]) {
-        diff++;
-        if (diff > 1) break;
-        if (n1.length > n2.length) i++;
-        else if (n2.length > n1.length) j++;
-        else { i++; j++; }
-      } else {
-        i++; j++;
-      }
-    }
-    if (diff <= 1) return true;
-  }
-
-  return false;
-};
-
-// Check if the live spoken transcript satisfies all or nearly all words of the passage
-const checkWordsSatisfied = (targetText, spokenText) => {
-  const targetWords = tokenizeWords(targetText);
-  const spokenWords = tokenizeWords(spokenText);
-
-  if (targetWords.length === 0 || spokenWords.length === 0) {
-    return { satisfied: false, matchCount: 0, totalTarget: targetWords.length, matchRatio: 0 };
-  }
-
-  // 1. Sequential matching with 4-word lookahead
-  let targetIdx = 0;
-  let matchCount = 0;
-
-  for (let sIdx = 0; sIdx < spokenWords.length; sIdx++) {
-    const sWord = spokenWords[sIdx];
-    let matchedAhead = -1;
-    for (let lookahead = 0; lookahead <= 4; lookahead++) {
-      const checkIdx = targetIdx + lookahead;
-      if (checkIdx < targetWords.length && isWordMatch(sWord, targetWords[checkIdx])) {
-        matchedAhead = checkIdx;
-        break;
-      }
-    }
-
-    if (matchedAhead !== -1) {
-      matchCount++;
-      targetIdx = matchedAhead + 1;
-    }
-  }
-
-  // 2. Bag-of-words coverage matching
-  let bagMatchCount = 0;
-  const usedSpoken = new Set();
-  for (let t = 0; t < targetWords.length; t++) {
-    for (let s = 0; s < spokenWords.length; s++) {
-      if (!usedSpoken.has(s) && isWordMatch(targetWords[t], spokenWords[s])) {
-        bagMatchCount++;
-        usedSpoken.add(s);
-        break;
-      }
-    }
-  }
-
-  const seqRatio = matchCount / targetWords.length;
-  const bagRatio = bagMatchCount / targetWords.length;
-  const bestRatio = Math.max(seqRatio, bagRatio);
-  const isShort = targetWords.length <= 10;
-  const reachedNearEnd = targetIdx >= Math.max(1, targetWords.length - (isShort ? 1 : 2));
-
-  // Satisfied when reaching near the end:
-  // Short passage (<= 10 words): >= 65% match and reached near end, or >= 75% overall
-  // Long passage (> 10 words): >= 80% match and reached near end
-  const satisfied = isShort
-    ? ((reachedNearEnd && bestRatio >= 0.65) || bestRatio >= 0.75)
-    : (reachedNearEnd && bestRatio >= 0.80);
-
-  return {
-    satisfied,
-    matchCount: Math.max(matchCount, bagMatchCount),
-    totalTarget: targetWords.length,
-    matchRatio: bestRatio
-  };
-};
-
 export default function Beginner() {
   const { t, language } = useLanguage();
   const isEn = language === 'en';
@@ -152,8 +34,6 @@ export default function Beginner() {
   const [isSilence, setIsSilence] = useState(false);
   const [isCountingDown, setIsCountingDown] = useState(false);
   const [countdownValue, setCountdownValue] = useState(0);
-  const [isSatisfiedCompleted, setIsSatisfiedCompleted] = useState(false);
-
   // Memory to store all 25 passages so the Results page can read them
   const [phaseScores, setPhaseScores] = useState([]);
 
@@ -161,19 +41,7 @@ export default function Beginner() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const stopTimeoutRef = useRef(null);
-  const speechRecRef = useRef(null);
-  const autoStopTimeoutRef = useRef(null);
   const isRecordingRef = useRef(false);
-  const lastSoundTimeRef = useRef(Date.now());
-  const soundDetectedRef = useRef(false);
-  const speechDurationMsRef = useRef(0);
-  const hasTriggeredAutoStopRef = useRef(false);
-  const silenceCheckIntervalRef = useRef(null);
-  const lastSpeechMatchRatioRef = useRef(0);
-  const isSatisfiedRef = useRef(false);
-  const startTimeRef = useRef(null);
-  const lastWordSpokenTimeRef = useRef(null);
-  const hasSpokenRef = useRef(false);
 
   // Refs for the MIC TEST phase
   const testRecorderRef = useRef(null);
@@ -206,15 +74,10 @@ export default function Beginner() {
   useEffect(() => {
     return () => {
       isRecordingRef.current = false;
-      if (silenceCheckIntervalRef.current) clearInterval(silenceCheckIntervalRef.current);
-      if (autoStopTimeoutRef.current) clearTimeout(autoStopTimeoutRef.current);
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
       if (audioContextRef.current) audioContextRef.current.close();
       if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
       if (stopTimeoutRef.current) clearTimeout(stopTimeoutRef.current);
-      if (speechRecRef.current) {
-        try { speechRecRef.current.abort(); } catch (e) {}
-      }
     };
   }, []);
 
@@ -236,36 +99,11 @@ export default function Beginner() {
     setIsRecording(false);
     setIsProcessing(true);
 
-    if (silenceCheckIntervalRef.current) {
-      clearInterval(silenceCheckIntervalRef.current);
-      silenceCheckIntervalRef.current = null;
-    }
-    if (autoStopTimeoutRef.current) {
-      clearTimeout(autoStopTimeoutRef.current);
-    }
-    if (speechRecRef.current) {
-      try { speechRecRef.current.abort(); } catch (e) {}
-      speechRecRef.current = null;
-    }
-
     stopTimeoutRef.current = setTimeout(() => {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
     }, 200);
-  };
-
-  const triggerAutoStop = (reason = "completed", delayMs = 300) => {
-    if (hasTriggeredAutoStopRef.current || !isRecordingRef.current) return;
-    hasTriggeredAutoStopRef.current = true;
-    isSatisfiedRef.current = true;
-    setIsSatisfiedCompleted(true);
-    console.log(`[AUTO-STOP TRIGGERED] Beginner Reason: ${reason}. Finalizing audio in ${delayMs}ms...`);
-
-    if (autoStopTimeoutRef.current) clearTimeout(autoStopTimeoutRef.current);
-    autoStopTimeoutRef.current = setTimeout(() => {
-      stopRecording();
-    }, delayMs);
   };
 
   useEffect(() => {
@@ -313,165 +151,8 @@ export default function Beginner() {
           mediaRecorderRef.current.start();
         }
         isRecordingRef.current = true;
-        hasTriggeredAutoStopRef.current = false;
-        isSatisfiedRef.current = false;
-        speechDurationMsRef.current = 0;
-        lastSpeechMatchRatioRef.current = 0;
-        lastSoundTimeRef.current = Date.now();
-        soundDetectedRef.current = false;
-        startTimeRef.current = Date.now();
         setIsRecording(true);
         setElapsedTime(0);
-        setIsSatisfiedCompleted(false);
-
-        // Smart Silence Detection & Voice Activity Auto-Stop
-        // Checks every 100ms via Web Audio API AnalyserNode
-        if (silenceCheckIntervalRef.current) clearInterval(silenceCheckIntervalRef.current);
-        silenceCheckIntervalRef.current = setInterval(() => {
-          if (!isRecordingRef.current || hasTriggeredAutoStopRef.current) return;
-
-          const now = Date.now();
-          const recordingAgeMs = now - (startTimeRef.current || now);
-
-          // Sample audio level
-          if (analyserRef.current) {
-            const bufferLength = analyserRef.current.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-            analyserRef.current.getByteTimeDomainData(dataArray);
-
-            let sum = 0;
-            for (let i = 0; i < bufferLength; i++) {
-              const val = (dataArray[i] - 128) / 128.0;
-              sum += val * val;
-            }
-            const rms = Math.sqrt(sum / bufferLength);
-
-            // Threshold for human speech activity: sensitive to quiet and normal readers
-            if (rms > 0.016) {
-              lastSoundTimeRef.current = now;
-              soundDetectedRef.current = true;
-              hasSpokenRef.current = true;
-              speechDurationMsRef.current += 100;
-            }
-          }
-
-          const currentWords = currentTextRef.current ? currentTextRef.current.trim().split(/\s+/).filter(Boolean) : [];
-          const isShortPassage = currentWords.length <= 10;
-
-          // Buffer: 1200ms grace period for short passages, 2200ms for longer passages
-          const gracePeriod = isShortPassage ? 1200 : 2200;
-          if (recordingAgeMs < gracePeriod) return;
-
-          const silenceElapsedMs = now - lastSoundTimeRef.current;
-          const totalVoiceMs = speechDurationMsRef.current;
-          const matchRatio = lastSpeechMatchRatioRef.current;
-          const studentHasSpoken = hasSpokenRef.current || totalVoiceMs >= 100;
-
-          // Case 1: True Completed Reading (Satisfied reader reached end of passage)
-          const finishSilence = isShortPassage ? 1200 : 1500;
-          if (isSatisfiedRef.current && silenceElapsedMs >= finishSilence) {
-            triggerAutoStop("words_satisfied", 300);
-            return;
-          }
-
-          // Case 2: High word match (completed reading >= 85% of passage) followed by post-reading silence
-          const highMatchThreshold = 0.85;
-          const highMatchSilence = isShortPassage ? 2000 : 2500;
-          if (matchRatio >= highMatchThreshold && silenceElapsedMs >= highMatchSilence) {
-            triggerAutoStop("high_match_silence", 300);
-            return;
-          }
-
-          // Case 3: Dead air ahead of time on an UNFINISHED passage (Student stopped reading / abandoned)
-          // CRITICAL: NEVER cut off a student while they are actively reading or pausing to breathe!
-          // Short: 5.0s acoustic silence. Long: 7.0s acoustic silence!
-          const deadAirThreshold = isShortPassage ? 5000 : 7000;
-          if (studentHasSpoken && silenceElapsedMs >= deadAirThreshold) {
-            triggerAutoStop("dead_air_silence_ahead", 300);
-            return;
-          }
-
-          // Case 4: Initial Dead Air (no speech at all from start)
-          const initialDeadAirThreshold = isShortPassage ? 6000 : 8500;
-          if (!studentHasSpoken && recordingAgeMs >= initialDeadAirThreshold && silenceElapsedMs >= initialDeadAirThreshold) {
-            triggerAutoStop("initial_dead_air_silence", 300);
-            return;
-          }
-        }, 100);
-
-        // Web Speech Recognition for hands-free auto-stop when satisfied
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (SpeechRecognition) {
-          try {
-            if (speechRecRef.current) {
-              try { speechRecRef.current.abort(); } catch (e) {}
-            }
-            const recognition = new SpeechRecognition();
-            recognition.continuous = true;
-            recognition.interimResults = true;
-            try {
-              recognition.lang = 'tl-PH';
-            } catch (e) {
-              recognition.lang = 'fil-PH';
-            }
-
-            let accumulatedSpoken = '';
-
-            recognition.onresult = (event) => {
-              if (hasTriggeredAutoStopRef.current || !isRecordingRef.current) return;
-
-              let currentInterim = '';
-              for (let i = event.resultIndex; i < event.results.length; i++) {
-                const trans = event.results[i][0].transcript;
-                if (event.results[i].isFinal) {
-                  accumulatedSpoken += ' ' + trans;
-                } else {
-                  currentInterim += ' ' + trans;
-                }
-              }
-
-              const totalSpoken = (accumulatedSpoken + ' ' + currentInterim).trim();
-              if (totalSpoken) {
-                const now = Date.now();
-                lastWordSpokenTimeRef.current = now;
-                lastSoundTimeRef.current = now;
-                hasSpokenRef.current = true;
-              }
-
-              const check = checkWordsSatisfied(currentTextRef.current, totalSpoken);
-              lastSpeechMatchRatioRef.current = check.matchRatio;
-
-              if (check.satisfied) {
-                isSatisfiedRef.current = true;
-                if (!hasTriggeredAutoStopRef.current) {
-                  triggerAutoStop("words_satisfied", 300);
-                }
-              }
-            };
-
-            recognition.onerror = (e) => {
-              console.warn("[SpeechRecognition] warning:", e.error);
-              if (e.error === 'language-not-supported' && recognition.lang === 'tl-PH') {
-                try {
-                  recognition.lang = 'fil-PH';
-                } catch (err) {}
-              }
-            };
-
-            recognition.onend = () => {
-              if (isRecordingRef.current && !hasTriggeredAutoStopRef.current) {
-                try {
-                  recognition.start();
-                } catch (err) {}
-              }
-            };
-
-            recognition.start();
-            speechRecRef.current = recognition;
-          } catch (e) {
-            console.warn("SpeechRecognition init error:", e);
-          }
-        }
       };
 
       startRecording();
@@ -648,7 +329,6 @@ export default function Beginner() {
       stopRecording();
     } else {
       setIsSilence(false);
-      setIsSatisfiedCompleted(false);
       audioChunksRef.current = [];
       setHasRecorded(false);
       setIsCountingDown(true);
@@ -827,25 +507,21 @@ export default function Beginner() {
               <div className="relative flex items-center justify-center w-36 h-36">
                 {isRecording && (
                   <>
-                    <span className={`absolute inset-0 rounded-full animate-ping pointer-events-none ${isSatisfiedCompleted ? 'bg-emerald-400/40' : 'bg-red-400/30'}`}></span>
-                    <span className={`absolute w-28 h-28 rounded-full animate-pulse pointer-events-none ${isSatisfiedCompleted ? 'bg-emerald-500/30' : 'bg-[#0096FF]/20'}`}></span>
+                    <span className="absolute inset-0 rounded-full animate-ping pointer-events-none bg-red-400/30"></span>
+                    <span className="absolute w-28 h-28 rounded-full animate-pulse pointer-events-none bg-[#0096FF]/20"></span>
                   </>
                 )}
                 <button
                   onClick={toggleRecording}
                   disabled={isProcessing || isCountingDown}
                   className={`w-24 h-24 rounded-full flex items-center justify-center shadow-lg transform transition-all hover:scale-105 relative z-10 ${
-                    isSatisfiedCompleted
-                      ? 'bg-emerald-500 scale-105 shadow-emerald-500/40'
-                      : isRecording
+                    isRecording
                       ? 'bg-red-500 hover:bg-red-600 animate-pulse'
                       : 'bg-black hover:bg-gray-800'
                   } ${(isProcessing || isCountingDown) ? 'opacity-50 cursor-not-allowed hover:scale-100' : ''}`}
                 >
                   <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    {isSatisfiedCompleted ? (
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
-                    ) : isRecording ? (
+                    {isRecording ? (
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
                     ) : (
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
@@ -856,9 +532,7 @@ export default function Beginner() {
             )}
 
             <p className={`mt-4 font-bold text-lg text-center min-h-[1.75rem] transition-colors ${
-              isSatisfiedCompleted
-                ? 'text-emerald-600 font-extrabold animate-pulse'
-                : isRecording
+              isRecording
                 ? 'text-red-500'
                 : isProcessing
                 ? 'text-[#0096FF] animate-pulse'
@@ -866,10 +540,8 @@ export default function Beginner() {
                 ? 'text-red-600'
                 : 'text-gray-500'
             }`}>
-              {isSatisfiedCompleted
-                ? (isEn ? "All words completed! Finalizing evaluation..." : "Kusang natapos ang pagbasa! Isinusumite...")
-                : isRecording
-                ? (isEn ? "Reading in progress... (Auto-stops when finished)" : "Kasalukuyang nagbabasa... (Kusang hihinto pagkatapos)")
+              {isRecording
+                ? t("eval.recording")
                 : isProcessing
                 ? t("eval.processing")
                 : isSilence

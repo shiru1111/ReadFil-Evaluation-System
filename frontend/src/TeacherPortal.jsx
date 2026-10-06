@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useLanguage } from './contexts/LanguageContext';
 import SoundWaveBackground from './components/SoundWaveBackground';
@@ -55,14 +55,16 @@ export default function TeacherPortal() {
   // Login Form
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   // Register Form
   const [regName, setRegName] = useState('');
   const [regUsername, setRegUsername] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [showRegPassword, setShowRegPassword] = useState(false);
   const [regSecurityQuestion, setRegSecurityQuestion] = useState(
-    isEn ? 'What is the name of your favorite teacher?' : 'Ano ang pangalan ng paborito mong guro?'
+    isEn ? 'What was the first school you taught at?' : 'Ano ang unang paaralan kung saan ka nagturo?'
   );
   const [regSecurityAnswer, setRegSecurityAnswer] = useState('');
 
@@ -72,6 +74,7 @@ export default function TeacherPortal() {
   const [forgotSecurityQuestion, setForgotSecurityQuestion] = useState('');
   const [forgotSecurityAnswer, setForgotSecurityAnswer] = useState('');
   const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [showForgotNewPassword, setShowForgotNewPassword] = useState(false);
 
   // Dashboard Active Tab: 'passages' | 'students'
   const [activeTab, setActiveTab] = useState('passages');
@@ -92,7 +95,8 @@ export default function TeacherPortal() {
     show_waveform: true,
     play_chime: true,
     immediate_stutter_alerts: true,
-    allow_retake_current: false
+    allow_retake_current: false,
+    auto_send_email: false
   });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
@@ -102,7 +106,7 @@ export default function TeacherPortal() {
   const [editingPassage, setEditingPassage] = useState(null);
   const [passageTitle, setPassageTitle] = useState('');
   const [passageContent, setPassageContent] = useState('');
-  const [passageGrade, setPassageGrade] = useState('Grade 4');
+  const [passageGrade, setPassageGrade] = useState(4);
   const [passageTimer, setPassageTimer] = useState(() => {
     return parseInt(localStorage.getItem('readfil_teacher_default_timer'), 10) || 60;
   });
@@ -126,6 +130,162 @@ export default function TeacherPortal() {
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRecord, setSelectedRecord] = useState(null); // for detail modal
+  const [activePassageTab, setActivePassageTab] = useState(0); // 0, 1, ... or 'all'
+  const [traceDisplayMode, setTraceDisplayMode] = useState('card'); // 'card' | 'table'
+
+  useEffect(() => {
+    if (selectedRecord) {
+      setActivePassageTab(0);
+    }
+  }, [selectedRecord]);
+
+  // Parse passages and partition trace data for selectedRecord
+  const recordPassages = useMemo(() => {
+    if (!selectedRecord) return [];
+    const rawTitle = selectedRecord.passage_title || '';
+    const traces = selectedRecord.trace_json || [];
+
+    // Check if traces already have explicit passage indices / titles
+    const hasEmbeddedPassages = traces.some(t => t && (t.passage_index !== undefined || t.passage_title !== undefined));
+    if (hasEmbeddedPassages) {
+      const map = new Map();
+      traces.forEach(step => {
+        const idx = step.passage_index !== undefined ? step.passage_index - 1 : 0;
+        const title = step.passage_title || `Passage #${idx + 1}`;
+        if (!map.has(idx)) {
+          map.set(idx, {
+            index: idx,
+            title: title,
+            trace: [],
+            correct_words: step.passage_correct,
+            total_target_words: step.passage_total,
+            accuracy_rate: step.passage_accuracy,
+            wcpm: step.passage_wcpm,
+            errors_detected: step.passage_errors,
+            stutter_words: step.passage_stutters || []
+          });
+        }
+        map.get(idx).trace.push(step);
+      });
+
+      const list = Array.from(map.values()).sort((a, b) => a.index - b.index);
+      return list.map(p => {
+        const totalWords = p.total_target_words ?? p.trace.filter(s => s.target && s.target !== '-').length;
+        const errors = p.errors_detected ?? p.trace.filter(s => !s.is_correct && s.target !== '-').length;
+        const correct = p.correct_words ?? Math.max(0, totalWords - errors);
+        const acc = p.accuracy_rate ?? (totalWords > 0 ? Math.round((correct / totalWords) * 100) : 100);
+        return {
+          ...p,
+          total_target_words: totalWords,
+          correct_words: correct,
+          errors_detected: errors,
+          accuracy_rate: acc,
+          wcpm: p.wcpm || selectedRecord.wcpm
+        };
+      });
+    }
+
+    // If not embedded, parse titles from passage_title
+    let titles = [];
+    if (rawTitle.includes(' • ') || /^Set\s*\(\d+\s*Passages?\):/i.test(rawTitle)) {
+      const clean = rawTitle.replace(/^Set\s*\(\d+\s*Passages?\):\s*/i, '');
+      titles = clean.split(' • ').map(s => s.trim()).filter(Boolean);
+    }
+
+    if (titles.length <= 1) {
+      return [{
+        index: 0,
+        title: titles[0] || rawTitle || (isEn ? "Reading Passage" : "Babasahing Talata"),
+        trace: traces,
+        correct_words: selectedRecord.correct_words,
+        total_target_words: selectedRecord.total_target_words,
+        accuracy_rate: selectedRecord.accuracy_rate,
+        wcpm: selectedRecord.wcpm,
+        errors_detected: selectedRecord.errors_detected,
+        stutter_words: selectedRecord.stutter_words || []
+      }];
+    }
+
+    // Multi-passage without embedded passage_index: partition traces across titles
+    const passageWordCounts = titles.map(title => {
+      const match = passages.find(p => p.title.trim().toLowerCase() === title.toLowerCase()) ||
+                    systemPassageCatalog.find(p => p.title.trim().toLowerCase() === title.toLowerCase());
+      if (match && match.content) {
+        return match.content.trim().split(/\s+/).length;
+      }
+      return null;
+    });
+
+    const allHaveCounts = passageWordCounts.every(c => c !== null);
+    let partitionedTraces = [];
+
+    if (allHaveCounts) {
+      let curr = 0;
+      for (let i = 0; i < titles.length; i++) {
+        const count = passageWordCounts[i];
+        let collected = [];
+        let targetCount = 0;
+        while (curr < traces.length && targetCount < count) {
+          collected.push(traces[curr]);
+          if (traces[curr].target && traces[curr].target !== '-') {
+            targetCount++;
+          }
+          curr++;
+        }
+        partitionedTraces.push(collected);
+      }
+    } else {
+      const targetStepsCount = traces.filter(s => s.target && s.target !== '-').length;
+      const wordsPerPassage = Math.max(1, Math.floor(targetStepsCount / titles.length));
+      let curr = 0;
+      for (let i = 0; i < titles.length; i++) {
+        let collected = [];
+        let targetCount = 0;
+        const isLast = i === titles.length - 1;
+        while (curr < traces.length && (isLast || targetCount < wordsPerPassage)) {
+          collected.push(traces[curr]);
+          if (traces[curr].target && traces[curr].target !== '-') {
+            targetCount++;
+          }
+          curr++;
+        }
+        partitionedTraces.push(collected);
+      }
+    }
+
+    return titles.map((title, i) => {
+      const pTrace = partitionedTraces[i] || [];
+      const targetWords = pTrace.filter(s => s.target && s.target !== '-').length;
+      const errors = pTrace.filter(s => !s.is_correct && s.target !== '-').length;
+      const correct = Math.max(0, targetWords - errors);
+      const acc = targetWords > 0 ? Math.round((correct / targetWords) * 100) : 100;
+      return {
+        index: i,
+        title: title,
+        trace: pTrace,
+        total_target_words: targetWords,
+        correct_words: correct,
+        errors_detected: errors,
+        accuracy_rate: acc,
+        wcpm: selectedRecord.wcpm,
+        stutter_words: []
+      };
+    });
+  }, [selectedRecord, passages, isEn]);
+
+  // Classroom PIN Folders & Sessions State
+  const [folders, setFolders] = useState([]);
+  const [foldersLoading, setFoldersLoading] = useState(false);
+  const [selectedFolder, setSelectedFolder] = useState(null); // null = folders grid; folder object = viewing that folder's records
+  const [viewMode, setViewMode] = useState('folders'); // 'folders' | 'table'
+  const [folderSearchQuery, setFolderSearchQuery] = useState('');
+
+  // Folder Modals State
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
+  const [archiveFolderName, setArchiveFolderName] = useState('');
+  const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
+  const [renamingFolder, setRenamingFolder] = useState(null);
+  const [renameInput, setRenameInput] = useState('');
 
   // System Token Status
   const [tokenStatus, setTokenStatus] = useState(null);
@@ -174,10 +334,11 @@ export default function TeacherPortal() {
     setConfirmDialog(prev => ({ ...prev, isOpen: false, onConfirm: null }));
   };
 
-  // Load Passages and Records on Login
+  // Load Passages, Folders, and Records on Login
   useEffect(() => {
     if (teacher?.id) {
       fetchPassages();
+      fetchFolders();
       fetchRecords();
       fetchTokenStatus();
       fetchTeacherPin();
@@ -261,46 +422,221 @@ export default function TeacherPortal() {
     }
   };
 
-  const handleRegeneratePin = () => {
+  const fetchFolders = async () => {
+    if (!teacher?.id) return;
+    try {
+      setFoldersLoading(true);
+      const res = await fetch(`${API_BASE}/api/teacher/folders?teacher_id=${teacher.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.folders) {
+          setFolders(data.folders);
+          if (data.current_pin) {
+            setClassroomPin(data.current_pin);
+          }
+          if (selectedFolder) {
+            const updated = data.folders.find(f => f.pin === selectedFolder.pin);
+            if (updated) setSelectedFolder(updated);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch folders:", err);
+    } finally {
+      setFoldersLoading(false);
+    }
+  };
+
+  // Open modal to name old session before generating a new PIN
+  const handleOpenArchiveModal = () => {
+    const activeFolder = folders.find(f => f.is_active || f.pin === classroomPin);
+    const defaultName = activeFolder?.folder_name && !activeFolder.folder_name.startsWith('Class Session (PIN:')
+      ? activeFolder.folder_name
+      : (isEn ? `Section Session (${classroomPin || 'Current'})` : `Pangkat Session (${classroomPin || 'Kasalukuyan'})`);
+    setArchiveFolderName(defaultName);
+    setIsArchiveModalOpen(true);
+  };
+
+  const handleConfirmRegeneratePin = async (e) => {
+    if (e) e.preventDefault();
     if (!teacher?.id || isRegeneratingPin) return;
+
+    setIsRegeneratingPin(true);
+    setPinFeedback('');
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/regenerate-pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          teacher_id: teacher.id,
+          archive_folder_name: archiveFolderName.trim()
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.classroom_pin) {
+        setClassroomPin(data.classroom_pin);
+        setIsArchiveModalOpen(false);
+        showToast(
+          isEn
+            ? `New PIN generated (${data.classroom_pin})! Previous session archived into folder.`
+            : `Bagong PIN nabuo (${data.classroom_pin})! Na-save ang nakaraang sesyon sa folder.`,
+          "success"
+        );
+        await fetchFolders();
+        if (selectedFolder) {
+          fetchRecords('', selectedFolder.pin);
+        } else {
+          fetchRecords('', 'all');
+        }
+      } else {
+        showToast(data.error || (isEn ? "Failed to generate new PIN." : "Bigo sa pagbuo ng bagong PIN."), "error");
+      }
+    } catch (err) {
+      console.error("Error regenerating PIN:", err);
+      showToast(isEn ? "Failed to generate new PIN." : "Bigo sa pagbuo ng bagong PIN.", "error");
+    } finally {
+      setIsRegeneratingPin(false);
+    }
+  };
+
+  const handleOpenRenameFolder = (folder, e) => {
+    if (e) e.stopPropagation();
+    setRenamingFolder(folder);
+    setRenameInput(folder.folder_name);
+    setIsRenameModalOpen(true);
+  };
+
+  const handleSaveRenameFolder = async (e) => {
+    if (e) e.preventDefault();
+    if (!teacher?.id || !renamingFolder || !renameInput.trim()) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/teacher/folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          teacher_id: teacher.id,
+          pin: renamingFolder.pin,
+          folder_name: renameInput.trim()
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(isEn ? "Folder renamed successfully!" : "Matagumpay na napalitan ang pangalan ng folder!", "success");
+        setIsRenameModalOpen(false);
+        setRenamingFolder(null);
+        await fetchFolders();
+        if (selectedFolder && selectedFolder.pin === renamingFolder.pin) {
+          setSelectedFolder(prev => ({ ...prev, folder_name: renameInput.trim() }));
+          fetchRecords(searchQuery, renamingFolder.pin);
+        }
+      } else {
+        showToast(data.error || (isEn ? "Failed to rename folder." : "Bigo sa pagpalit ng pangalan."), "error");
+      }
+    } catch (err) {
+      console.error("Rename folder error:", err);
+      showToast(isEn ? "An error occurred while renaming folder." : "May naganap na error sa pagpalit ng pangalan.", "error");
+    }
+  };
+
+  const handleDeleteFolder = (folder, e) => {
+    if (e) e.stopPropagation();
+    if (!teacher?.id) return;
+
+    const isActive = folder.is_active || folder.pin === classroomPin;
     openConfirm({
-      title: isEn ? "Regenerate Classroom PIN?" : "Bumuo ng Bagong Classroom PIN?",
+      title: isEn ? `Delete Folder "${folder.folder_name}"?` : `Burahin ang Folder "${folder.folder_name}"?`,
       message: isEn
-        ? "Are you sure you want to generate a new PIN? Old students using the previous PIN will no longer be able to enter."
-        : "Sigurado ka bang nais mong gumawa ng bagong PIN? Ang mga dating estudyante na may lumang PIN ay hindi na makakapasok.",
-      confirmText: isEn ? "Generate New PIN" : "Bumuo ng Bagong PIN",
+        ? `Are you sure you want to delete this folder (PIN: ${folder.pin}) and ALL of its ${folder.student_count || 0} student assessment records? ${isActive ? "Since this is your active PIN, a new active PIN will be generated automatically." : "This action cannot be undone."}`
+        : `Sigurado ka bang nais mong burahin ang folder na ito (PIN: ${folder.pin}) at ang lahat ng ${folder.student_count || 0} na talaan ng pagsusuri nito? ${isActive ? "Dahil ito ang kasalukuyang aktibong PIN, awtomatikong bubuo ng bagong PIN." : "Hindi na ito maibabalik."}`,
+      confirmText: isEn ? "Yes, Delete Folder" : "Oo, Burahin ang Folder",
       cancelText: isEn ? "Cancel" : "Kanselahin",
-      type: "warning",
+      type: "danger",
       onConfirm: async () => {
-        setIsRegeneratingPin(true);
-        setPinFeedback('');
         try {
-          const res = await fetch(`${API_BASE}/api/teacher/regenerate-pin`, {
+          const res = await fetch(`${API_BASE}/api/teacher/folders/delete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ teacher_id: teacher.id })
+            body: JSON.stringify({
+              teacher_id: teacher.id,
+              pin: folder.pin
+            })
           });
           const data = await res.json();
-          if (data.success && data.classroom_pin) {
-            setClassroomPin(data.classroom_pin);
-            setPinFeedback(isEn ? "New PIN generated! Previous PIN invalidated." : "Bagong PIN nabuo! Wala nang bisa ang lumang PIN.");
-            showToast(isEn ? "New PIN generated successfully!" : "Matagumpay na nabuo ang bagong PIN!", "success");
-            setTimeout(() => setPinFeedback(''), 4000);
+          if (res.ok && data.success) {
+            showToast(isEn ? "Folder and records deleted successfully." : "Matagumpay na nabura ang folder at mga talaan nito.", "success");
+            if (selectedFolder && selectedFolder.pin === folder.pin) {
+              setSelectedFolder(null);
+            }
+            await fetchFolders();
+            fetchRecords();
+          } else {
+            showToast(data.error || (isEn ? "Failed to delete folder." : "Bigo sa pagbura ng folder."), "error");
           }
         } catch (err) {
-          console.error("Error regenerating PIN:", err);
-          showToast(isEn ? "Failed to generate new PIN." : "Bigo sa pagbuo ng bagong PIN.", "error");
-        } finally {
-          setIsRegeneratingPin(false);
+          console.error("Delete folder error:", err);
+          showToast(isEn ? "An error occurred while deleting folder." : "May naganap na error sa pagbura ng folder.", "error");
         }
       }
     });
   };
 
-  const handleCopyPin = () => {
-    if (!classroomPin) return;
-    navigator.clipboard.writeText(classroomPin);
+  const handleExportFolderCSV = (pin = null) => {
+    if (!teacher) return;
+    const targetPin = pin || (selectedFolder ? selectedFolder.pin : '');
+    const url = targetPin
+      ? `${API_BASE}/api/teacher/records/export?teacher_id=${teacher.id}&pin=${encodeURIComponent(targetPin)}`
+      : `${API_BASE}/api/teacher/records/export?teacher_id=${teacher.id}`;
+    window.open(url, '_blank');
+  };
+
+  const handleClearFolderRecords = (folder = null) => {
+    const targetFolder = folder || selectedFolder;
+    if (!teacher || !targetFolder) return;
+    openConfirm({
+      title: isEn ? `Clear Records in "${targetFolder.folder_name}"?` : `Burahin ang mga Tala sa "${targetFolder.folder_name}"?`,
+      message: isEn
+        ? `Are you sure you want to clear all student records for PIN ${targetFolder.pin}? The folder itself will remain.`
+        : `Sigurado ka bang nais mong burahin ang lahat ng talaan ng mag-aaral para sa PIN ${targetFolder.pin}? Mananatili ang mismong folder.`,
+      confirmText: isEn ? "Yes, Clear Folder Records" : "Oo, Burahin ang mga Tala",
+      cancelText: isEn ? "Cancel" : "Kanselahin",
+      type: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/teacher/records/clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              teacher_id: teacher.id,
+              pin: targetFolder.pin
+            })
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            showToast(isEn ? "Folder records cleared." : "Nabura na ang mga talaan sa folder.", "success");
+            fetchRecords(searchQuery, targetFolder.pin);
+            fetchFolders();
+          } else {
+            showToast(data.error || (isEn ? "Failed to clear records." : "Bigo sa pagbura."), "error");
+          }
+        } catch (err) {
+          console.error("Clear folder records error:", err);
+          showToast(isEn ? "An error occurred." : "May naganap na error.", "error");
+        }
+      }
+    });
+  };
+
+  const handleCopyPin = (pinToCopy = null) => {
+    // Prevent MouseEvent from onClick from being copied as [object Object]
+    const rawCode = (pinToCopy && (typeof pinToCopy === 'string' || typeof pinToCopy === 'number'))
+      ? pinToCopy
+      : classroomPin;
+    const code = String(rawCode || '').trim();
+    if (!code) return;
+    navigator.clipboard.writeText(code);
     setPinFeedback(isEn ? "PIN copied to clipboard!" : "Kopya na ang PIN sa clipboard!");
+    showToast(isEn ? `PIN ${code} copied to clipboard!` : `Kopya na ang PIN ${code}!`, "success");
     setTimeout(() => setPinFeedback(''), 3000);
   };
 
@@ -312,7 +648,6 @@ export default function TeacherPortal() {
         const data = await res.json();
         const list = data.passages || [];
         setPassages(list);
-        // If there's an active passage with timer, use it as baseline
         const active = list.find(p => p.is_active);
         if (active && active.timer_seconds && !localStorage.getItem('readfil_teacher_default_timer')) {
           setGlobalTimerDuration(active.timer_seconds);
@@ -323,13 +658,18 @@ export default function TeacherPortal() {
     }
   };
 
-  const fetchRecords = async (query = '') => {
+  const fetchRecords = async (query = '', pin = null) => {
     if (!teacher) return;
     try {
       setRecordsLoading(true);
-      const url = query
-        ? `${API_BASE}/api/teacher/records?teacher_id=${teacher.id}&search=${encodeURIComponent(query)}`
-        : `${API_BASE}/api/teacher/records?teacher_id=${teacher.id}`;
+      let url = `${API_BASE}/api/teacher/records?teacher_id=${teacher.id}`;
+      if (query && query.trim()) {
+        url += `&search=${encodeURIComponent(query.trim())}`;
+      }
+      const targetPin = pin !== null ? pin : (selectedFolder ? selectedFolder.pin : '');
+      if (targetPin && targetPin !== 'all') {
+        url += `&pin=${encodeURIComponent(targetPin)}`;
+      }
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
@@ -341,6 +681,17 @@ export default function TeacherPortal() {
       setRecordsLoading(false);
     }
   };
+
+  // Re-fetch records when drilling down into or out of a folder
+  useEffect(() => {
+    if (teacher?.id) {
+      if (selectedFolder) {
+        fetchRecords(searchQuery, selectedFolder.pin);
+      } else if (viewMode === 'table') {
+        fetchRecords(searchQuery, 'all');
+      }
+    }
+  }, [selectedFolder, viewMode]);
 
   // Handle Login
   const handleLogin = async (e) => {
@@ -519,6 +870,11 @@ export default function TeacherPortal() {
 
     const timerVal = Math.max(5, parseInt(passageTimer, 10) || 60);
 
+    const rawGradeNum = parseInt(passageGrade, 10);
+    const cleanGradeNum = Math.min(10, Math.max(2, isNaN(rawGradeNum) ? 4 : rawGradeNum));
+    const gradeCategory = cleanGradeNum >= 7 ? "High School" : "Elementary";
+    const formattedGrade = `Grade ${cleanGradeNum} (${gradeCategory})`;
+
     setPassageSaving(true);
     try {
       if (editingPassage) {
@@ -527,7 +883,7 @@ export default function TeacherPortal() {
           ...p,
           title: passageTitle,
           content: passageContent,
-          grade_level: passageGrade,
+          grade_level: formattedGrade,
           timer_seconds: timerVal
         } : p));
 
@@ -538,7 +894,7 @@ export default function TeacherPortal() {
             teacher_id: teacher.id,
             title: passageTitle,
             content: passageContent,
-            grade_level: passageGrade,
+            grade_level: formattedGrade,
             timer_seconds: timerVal
           })
         });
@@ -552,7 +908,7 @@ export default function TeacherPortal() {
             teacher_id: teacher.id,
             title: passageTitle,
             content: passageContent,
-            grade_level: passageGrade,
+            grade_level: formattedGrade,
             timer_seconds: timerVal,
             is_active: passages.length === 0
           })
@@ -804,12 +1160,19 @@ export default function TeacherPortal() {
     }
   };
 
+  // Helper to parse numeric grade between 2 and 10
+  const parseGradeNum = (gradeStr) => {
+    const num = parseInt(String(gradeStr || '').replace(/\D/g, ''), 10);
+    if (!isNaN(num) && num >= 2 && num <= 10) return num;
+    return 4;
+  };
+
   // Open Edit Modal
   const openEditModal = (p) => {
     setEditingPassage(p);
     setPassageTitle(p.title);
     setPassageContent(p.content);
-    setPassageGrade(p.grade_level || 'Grade 4');
+    setPassageGrade(parseGradeNum(p.grade_level));
     setPassageTimer(p.timer_seconds || parseInt(globalTimerDuration, 10) || 60);
     setIsPassageModalOpen(true);
   };
@@ -819,7 +1182,7 @@ export default function TeacherPortal() {
     setEditingPassage(null);
     setPassageTitle('');
     setPassageContent('');
-    setPassageGrade('Grade 4');
+    setPassageGrade(4);
     setPassageTimer(parseInt(globalTimerDuration, 10) || 60);
     setIsPassageModalOpen(true);
   };
@@ -1041,14 +1404,34 @@ export default function TeacherPortal() {
                   <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
                     {isEn ? "Password" : "Password"}
                   </label>
-                  <input
-                    type="password"
-                    required
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showLoginPassword ? "text" : "password"}
+                      required
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full pl-4 pr-11 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-[#0096FF] transition-colors focus:outline-none"
+                      title={showLoginPassword ? (isEn ? "Hide password" : "Itago ang password") : (isEn ? "Show password" : "Ipakita ang password")}
+                      aria-label={showLoginPassword ? "Hide password" : "Show password"}
+                    >
+                      {showLoginPassword ? (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex justify-end">
@@ -1120,14 +1503,34 @@ export default function TeacherPortal() {
                   <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
                     {isEn ? "Password" : "Password"}
                   </label>
-                  <input
-                    type="password"
-                    required
-                    value={regPassword}
-                    onChange={(e) => setRegPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showRegPassword ? "text" : "password"}
+                      required
+                      value={regPassword}
+                      onChange={(e) => setRegPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full pl-4 pr-11 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegPassword(!showRegPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-[#0096FF] transition-colors focus:outline-none"
+                      title={showRegPassword ? (isEn ? "Hide password" : "Itago ang password") : (isEn ? "Show password" : "Ipakita ang password")}
+                      aria-label={showRegPassword ? "Hide password" : "Show password"}
+                    >
+                      {showRegPassword ? (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 <div>
@@ -1139,17 +1542,23 @@ export default function TeacherPortal() {
                     onChange={(e) => setRegSecurityQuestion(e.target.value)}
                     className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 text-xs focus:outline-none focus:border-[#0096FF] focus:bg-white"
                   >
-                    <option value={isEn ? "What is the name of your favorite teacher?" : "Ano ang pangalan ng paborito mong guro?"}>
-                      {isEn ? "What is the name of your favorite teacher?" : "Ano ang pangalan ng paborito mong guro?"}
+                    <option value={isEn ? "What was the first school you taught at?" : "Ano ang unang paaralan kung saan ka nagturo?"}>
+                      {isEn ? "What was the first school you taught at?" : "Ano ang unang paaralan kung saan ka nagturo?"}
                     </option>
-                    <option value={isEn ? "What was the name of your first elementary school?" : "Ano ang pangalan ng iyong unang mababang paaralan?"}>
-                      {isEn ? "What was the name of your first elementary school?" : "Ano ang pangalan ng iyong unang mababang paaralan?"}
+                    <option value={isEn ? "What was the first grade level or subject you taught?" : "Ano ang unang baitang o asignatura na itinuro mo?"}>
+                      {isEn ? "What was the first grade level or subject you taught?" : "Ano ang unang baitang o asignatura na itinuro mo?"}
                     </option>
-                    <option value={isEn ? "What is your favorite subject?" : "Ano ang paborito mong asignatura?"}>
-                      {isEn ? "What is your favorite subject?" : "Ano ang paborito mong asignatura?"}
+                    <option value={isEn ? "What is your favorite subject to teach?" : "Ano ang paborito mong asignaturang ituro?"}>
+                      {isEn ? "What is your favorite subject to teach?" : "Ano ang paborito mong asignaturang ituro?"}
                     </option>
-                    <option value={isEn ? "What is your favorite color?" : "Ano ang paborito mong kulay?"}>
-                      {isEn ? "What is your favorite color?" : "Ano ang paborito mong kulay?"}
+                    <option value={isEn ? "What college or university did you earn your teaching degree from?" : "Saang kolehiyo o unibersidad mo natapos ang iyong kursong edukasyon?"}>
+                      {isEn ? "What college or university did you earn your teaching degree from?" : "Saang kolehiyo o unibersidad mo natapos ang iyong kursong edukasyon?"}
+                    </option>
+                    <option value={isEn ? "What was the section name of your first advisory class?" : "Ano ang pangalan ng section ng iyong unang advisory class?"}>
+                      {isEn ? "What was the section name of your first advisory class?" : "Ano ang pangalan ng section ng iyong unang advisory class?"}
+                    </option>
+                    <option value={isEn ? "What year did you pass your Licensure Examination for Teachers (LET)?" : "Anong taon mo naipasa ang Licensure Examination for Teachers (LET)?"}>
+                      {isEn ? "What year did you pass your Licensure Examination for Teachers (LET)?" : "Anong taon mo naipasa ang Licensure Examination for Teachers (LET)?"}
                     </option>
                   </select>
                 </div>
@@ -1245,14 +1654,34 @@ export default function TeacherPortal() {
                       <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1">
                         {isEn ? "New Password" : "Bagong Password"}
                       </label>
-                      <input
-                        type="password"
-                        required
-                        value={forgotNewPassword}
-                        onChange={(e) => setForgotNewPassword(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full px-4 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white"
-                      />
+                      <div className="relative">
+                        <input
+                          type={showForgotNewPassword ? "text" : "password"}
+                          required
+                          value={forgotNewPassword}
+                          onChange={(e) => setForgotNewPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full pl-4 pr-11 py-2.5 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] focus:bg-white transition-colors"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowForgotNewPassword(!showForgotNewPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-[#0096FF] transition-colors focus:outline-none"
+                          title={showForgotNewPassword ? (isEn ? "Hide password" : "Itago ang password") : (isEn ? "Show password" : "Ipakita ang password")}
+                          aria-label={showForgotNewPassword ? "Hide password" : "Show password"}
+                        >
+                          {showForgotNewPassword ? (
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                            </svg>
+                          ) : (
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex gap-2">
@@ -1330,8 +1759,8 @@ export default function TeacherPortal() {
           <button
             onClick={() => setActiveTab('passages')}
             className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${activeTab === 'passages'
-                ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
-                : 'border-transparent text-gray-500 hover:text-slate-900'
+              ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
+              : 'border-transparent text-gray-500 hover:text-slate-900'
               }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1343,8 +1772,8 @@ export default function TeacherPortal() {
           <button
             onClick={() => setActiveTab('students')}
             className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${activeTab === 'students'
-                ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
-                : 'border-transparent text-gray-500 hover:text-slate-900'
+              ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
+              : 'border-transparent text-gray-500 hover:text-slate-900'
               }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1356,8 +1785,8 @@ export default function TeacherPortal() {
           <button
             onClick={() => setActiveTab('settings')}
             className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${activeTab === 'settings'
-                ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
-                : 'border-transparent text-gray-500 hover:text-slate-900'
+              ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
+              : 'border-transparent text-gray-500 hover:text-slate-900'
               }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1491,8 +1920,8 @@ export default function TeacherPortal() {
                     <div
                       key={p.id}
                       className={`relative bg-white border rounded-3xl p-6 shadow-sm hover:shadow-md flex flex-col justify-between transition-all ${p.is_active
-                          ? 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/15 shadow-emerald-500/5'
-                          : 'border-gray-200 hover:border-gray-300'
+                        ? 'border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/15 shadow-emerald-500/5'
+                        : 'border-gray-200 hover:border-gray-300'
                         }`}
                     >
                       <div>
@@ -1549,8 +1978,8 @@ export default function TeacherPortal() {
                         <button
                           onClick={() => handleTogglePassageActive(p.id)}
                           className={`w-full py-2.5 border rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${p.is_active
-                              ? 'bg-emerald-50 hover:bg-red-50 text-emerald-700 hover:text-red-700 border-emerald-300 hover:border-red-300'
-                              : 'bg-white hover:bg-emerald-50 text-gray-700 hover:text-emerald-700 border-gray-300 hover:border-emerald-300 shadow-sm'
+                            ? 'bg-emerald-50 hover:bg-red-50 text-emerald-700 hover:text-red-700 border-emerald-300 hover:border-red-300'
+                            : 'bg-white hover:bg-emerald-50 text-gray-700 hover:text-emerald-700 border-gray-300 hover:border-emerald-300 shadow-sm'
                             }`}
                         >
                           {p.is_active ? (
@@ -1596,166 +2025,704 @@ export default function TeacherPortal() {
             TAB 2: STUDENT MONITORING & RECORDS
             ------------------------------------------------------------- */}
         {activeTab === 'students' && (
-          <div>
-            {/* Stat Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-              <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
-                <span className="text-xs uppercase font-bold text-gray-500">
-                  {isEn ? "Total Assessments" : "Kabuuang Pagsusuri"}
-                </span>
-                <div className="text-3xl font-black text-slate-900 mt-1">{totalStudents}</div>
-                <div className="text-[11px] text-gray-400 mt-1">
-                  {isEn ? "logged student records" : "mga naitalang resulta"}
+          <div className="space-y-6">
+            {/* -------------------------------------------------------------
+                TOP HEADER & VIEW SWITCHER BAR
+                ------------------------------------------------------------- */}
+            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white border border-gray-200 rounded-3xl p-6 shadow-sm">
+              <div>
+                <div className="flex items-center gap-3">
+                  {selectedFolder && (
+                    <button
+                      onClick={() => setSelectedFolder(null)}
+                      className="p-2 -ml-1 text-gray-500 hover:text-[#0096FF] hover:bg-blue-50 rounded-xl transition-colors border border-gray-200"
+                      title={isEn ? "Back to All Folders" : "Bumalik sa Lahat ng Folder"}
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                      </svg>
+                    </button>
+                  )}
+                  <div>
+                    <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                      {selectedFolder ? (
+                        <>
+                          <span>{selectedFolder.folder_name}</span>
+                          <button
+                            onClick={(e) => handleOpenRenameFolder(selectedFolder, e)}
+                            className="p-1 text-gray-400 hover:text-[#0096FF] transition-colors"
+                            title={isEn ? "Rename this folder" : "Palitan ang pangalan ng folder"}
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          </button>
+                        </>
+                      ) : (
+                        isEn ? "Classroom PIN Folders & Student Records" : "Mga Folder ng PIN at Talaan ng Mag-aaral"
+                      )}
+                    </h2>
+                    <p className="text-gray-500 text-xs sm:text-sm mt-0.5">
+                      {selectedFolder
+                        ? (isEn
+                          ? `Classroom PIN: ${selectedFolder.pin} • Assessment Records & Reading Reports`
+                          : `Classroom PIN: ${selectedFolder.pin} • Talaan at Ulat ng Pagbasa`)
+                        : (isEn
+                          ? "Organize student records per PIN/section. When you reset the PIN, previous records remain safely stored in folders."
+                          : "Ayusin ang mga talaan ng mag-aaral bawat PIN/pangkat. Kapag nag-reset ng PIN, ligtas na naitatabi sa folder ang mga lumang tala.")}
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
-                <span className="text-xs uppercase font-bold text-gray-500">
-                  {isEn ? "Average Accuracy" : "Karaniwang Accuracy"}
-                </span>
-                <div className="text-3xl font-black text-[#0096FF] mt-1">{avgAccuracy}%</div>
-                <div className="text-[11px] text-gray-400 mt-1">Reading Accuracy Rate</div>
-              </div>
+              {/* Action Buttons & Switchers */}
+              <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+                {selectedFolder ? (
+                  <>
+                    <button
+                      onClick={() => setSelectedFolder(null)}
+                      className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-slate-700 font-bold rounded-2xl text-xs sm:text-sm flex items-center gap-2 transition-colors border border-gray-200"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                      </svg>
+                      <span>{isEn ? "All Folders" : "Lahat ng Folder"}</span>
+                    </button>
 
-              <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
-                <span className="text-xs uppercase font-bold text-gray-500">
-                  {isEn ? "Average WCPM" : "Karaniwang WCPM"}
-                </span>
-                <div className="text-3xl font-black text-blue-600 mt-1">{avgWcpm}</div>
-                <div className="text-[11px] text-gray-400 mt-1">Words Correct / Minute</div>
-              </div>
+                    <button
+                      onClick={() => handleExportFolderCSV(selectedFolder.pin)}
+                      disabled={records.length === 0}
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      <span>{isEn ? "Export Folder CSV" : "I-export ang Folder (CSV)"}</span>
+                    </button>
 
-              <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm flex flex-col justify-between">
-                <span className="text-xs uppercase font-bold text-gray-500">
-                  {isEn ? "Phil-IRI Level" : "Phil-IRI Antas"}
-                </span>
-                <div className="flex gap-2 text-xs font-bold mt-2">
-                  <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">{independentCount} Ind</span>
-                  <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">{instructionalCount} Ins</span>
-                  <span className="px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">{frustrationCount} Fru</span>
+                    <button
+                      onClick={() => handleClearFolderRecords(selectedFolder)}
+                      disabled={records.length === 0}
+                      className="px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold rounded-2xl text-xs sm:text-sm flex items-center gap-1.5 transition-colors disabled:opacity-40"
+                      title={isEn ? "Clear records in this folder" : "Burahin ang tala sa folder"}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      <span className="hidden sm:inline">{isEn ? "Clear Records" : "Burahin"}</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {/* View Switcher: Folders vs Table */}
+                    <div className="flex bg-gray-100 p-1 rounded-2xl border border-gray-200">
+                      <button
+                        onClick={() => setViewMode('folders')}
+                        className={`px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${viewMode === 'folders'
+                          ? 'bg-white text-[#0096FF] shadow-sm'
+                          : 'text-gray-600 hover:text-slate-900'
+                          }`}
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                        <span>{isEn ? "Folders View" : "Naka-Folder"}</span>
+                      </button>
+
+                      <button
+                        onClick={() => setViewMode('table')}
+                        className={`px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 ${viewMode === 'table'
+                          ? 'bg-white text-[#0096FF] shadow-sm'
+                          : 'text-gray-600 hover:text-slate-900'
+                          }`}
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                        </svg>
+                        <span>{isEn ? "All Records List" : "Lahat ng Tala"}</span>
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={handleOpenArchiveModal}
+                      className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-[#0096FF] font-bold rounded-2xl text-xs sm:text-sm flex items-center gap-2 border border-blue-200 transition-colors shadow-sm"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                      </svg>
+                      <span>{isEn ? "New Session / PIN" : "Bagong Sesyon / PIN"}</span>
+                    </button>
+
+                    <button
+                      onClick={handleExportCSV}
+                      disabled={records.length === 0}
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs sm:text-sm flex items-center gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      <span>{isEn ? "Export All CSV" : "I-export Lahat"}</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* -------------------------------------------------------------
+                MODE 1: DRILLED DOWN INTO A SPECIFIC FOLDER
+                ------------------------------------------------------------- */}
+            {selectedFolder ? (
+              <div className="space-y-6">
+                {/* Active PIN & Folder Meta Card */}
+                <div className="bg-gradient-to-r from-blue-50/70 via-indigo-50/40 to-white border border-blue-200/80 rounded-3xl p-6 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 rounded-2xl bg-[#0096FF] text-white flex items-center justify-center shadow-lg shadow-blue-500/20">
+                      <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xl font-black text-slate-900 tracking-wider">
+                          PIN: {selectedFolder.pin}
+                        </span>
+                        <button
+                          onClick={() => handleCopyPin(selectedFolder.pin)}
+                          className="p-1 text-gray-400 hover:text-slate-800 transition-colors"
+                          title={isEn ? "Copy PIN" : "Kopyahin ang PIN"}
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                          </svg>
+                        </button>
+
+                        {(selectedFolder.is_active || selectedFolder.pin === classroomPin) ? (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            {isEn ? "Currently Active PIN" : "Kasalukuyang Aktibong PIN"}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-xs font-bold">
+                            {isEn ? "Archived Session" : "Nakatagong Sesyon"}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {isEn ? "Created:" : "Ginawa:"} {formatDateTime(selectedFolder.created_at)}
+                        {selectedFolder.last_activity && (
+                          <span> &bull; {isEn ? "Last assessment:" : "Huling pagsusuri:"} {formatDateTime(selectedFolder.last_activity)}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => handleOpenRenameFolder(selectedFolder, e)}
+                      className="px-4 py-2 bg-white hover:bg-gray-100 text-slate-700 font-bold rounded-xl text-xs border border-gray-200 shadow-sm transition-colors flex items-center gap-1.5"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                      <span>{isEn ? "Rename Folder" : "Palitan ang Pangalan"}</span>
+                    </button>
+
+                    {(!selectedFolder.is_active && selectedFolder.pin !== classroomPin) && (
+                      <button
+                        onClick={(e) => handleDeleteFolder(selectedFolder, e)}
+                        className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold rounded-xl text-xs transition-colors flex items-center gap-1"
+                        title={isEn ? "Delete this folder and records" : "Burahin ang folder na ito"}
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        <span>{isEn ? "Delete Folder" : "Burahin"}</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Folder Specific Stat Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                    <span className="text-xs uppercase font-bold text-gray-500">
+                      {isEn ? "Folder Assessments" : "Mga Pagsusuri sa Folder"}
+                    </span>
+                    <div className="text-3xl font-black text-slate-900 mt-1">{records.length}</div>
+                    <div className="text-[11px] text-gray-400 mt-1">
+                      {isEn ? "records in this session" : "mga resulta sa sesyon"}
+                    </div>
+                  </div>
+
+                  <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                    <span className="text-xs uppercase font-bold text-gray-500">
+                      {isEn ? "Average Accuracy" : "Karaniwang Accuracy"}
+                    </span>
+                    <div className="text-3xl font-black text-[#0096FF] mt-1">{avgAccuracy}%</div>
+                    <div className="text-[11px] text-gray-400 mt-1">Reading Accuracy Rate</div>
+                  </div>
+
+                  <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm">
+                    <span className="text-xs uppercase font-bold text-gray-500">
+                      {isEn ? "Average WCPM" : "Karaniwang WCPM"}
+                    </span>
+                    <div className="text-3xl font-black text-blue-600 mt-1">{avgWcpm}</div>
+                    <div className="text-[11px] text-gray-400 mt-1">Words Correct / Minute</div>
+                  </div>
+
+                  <div className="bg-white border border-gray-200 rounded-3xl p-5 shadow-sm flex flex-col justify-between">
+                    <span className="text-xs uppercase font-bold text-gray-500">
+                      {isEn ? "Phil-IRI Level" : "Phil-IRI Antas"}
+                    </span>
+                    <div className="flex gap-2 text-xs font-bold mt-2">
+                      <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">{independentCount} Ind</span>
+                      <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">{instructionalCount} Ins</span>
+                      <span className="px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">{frustrationCount} Fru</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Search Bar for this folder */}
+                <div className="relative max-w-md">
+                  <input
+                    type="text"
+                    placeholder={isEn ? "Search student in this folder..." : "Maghanap sa folder na ito..."}
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      fetchRecords(e.target.value, selectedFolder.pin);
+                    }}
+                    className="w-full px-4 py-2.5 pl-10 bg-white border border-gray-200 rounded-2xl text-sm text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] shadow-sm"
+                  />
+                  <svg className="w-5 h-5 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+
+                {/* Records Table for this folder */}
+                <div className="bg-white border border-gray-200 rounded-3xl overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-sm">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200 text-gray-600 text-xs uppercase font-bold tracking-wider">
+                          <th className="py-4 px-6">{isEn ? "Student" : "Mag-aaral"}</th>
+                          <th className="py-4 px-6">{isEn ? "Passage" : "Babasahin"}</th>
+                          <th className="py-4 px-6">Accuracy</th>
+                          <th className="py-4 px-6">WCPM</th>
+                          <th className="py-4 px-6">Composite</th>
+                          <th className="py-4 px-6">{isEn ? "Level (Phil-IRI)" : "Antas (Phil-IRI)"}</th>
+                          <th className="py-4 px-6">{isEn ? "Date" : "Petsa"}</th>
+                          <th className="py-4 px-6 text-center">{isEn ? "Action" : "Aksyon"}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {records.length === 0 ? (
+                          <tr>
+                            <td colSpan="8" className="py-12 text-center text-gray-400 font-medium">
+                              {recordsLoading
+                                ? (isEn ? "Retrieving folder records..." : "Kinukuha ang talaan sa folder...")
+                                : (isEn ? "No student results in this folder yet." : "Wala pang talaan ng mag-aaral sa folder na ito.")}
+                            </td>
+                          </tr>
+                        ) : (
+                          records.map((r) => {
+                            let levelBadge = 'bg-gray-100 text-gray-700 border border-gray-200';
+                            if (r.reading_level === 'Independent') levelBadge = 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+                            else if (r.reading_level === 'Instructional') levelBadge = 'bg-amber-50 text-amber-700 border border-amber-200';
+                            else if (r.reading_level === 'Frustration') levelBadge = 'bg-red-50 text-red-700 border border-red-200';
+
+                            return (
+                              <tr key={r.id} className="hover:bg-blue-50/40 transition-colors">
+                                <td className="py-4 px-6 font-bold text-slate-900">{r.student_name}</td>
+                                <td className="py-4 px-6 text-slate-700">{r.passage_title}</td>
+                                <td className="py-4 px-6 font-mono font-bold text-[#0096FF]">{r.accuracy_rate}%</td>
+                                <td className="py-4 px-6 font-mono font-bold text-slate-800">{r.wcpm}</td>
+                                <td className="py-4 px-6 font-mono text-slate-600">{r.composite_score}</td>
+                                <td className="py-4 px-6">
+                                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${levelBadge}`}>
+                                    {r.reading_level}
+                                  </span>
+                                </td>
+                                <td className="py-4 px-6 text-xs text-gray-500 font-medium whitespace-nowrap">
+                                  {formatDateTime(r.timestamp)}
+                                </td>
+                                <td className="py-4 px-6 text-center">
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button
+                                      onClick={() => setSelectedRecord(r)}
+                                      className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0096FF] font-bold rounded-lg text-xs transition-colors border border-blue-200"
+                                    >
+                                      {isEn ? "Details" : "Detalye"}
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteRecord(r.id, r.student_name)}
+                                      className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-bold rounded-lg text-xs transition-colors border border-rose-200 flex items-center gap-1"
+                                      title={isEn ? "Delete record" : "Burahin ang tala"}
+                                    >
+                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                      </svg>
+                                      <span className="hidden xl:inline">{isEn ? "Delete" : "Burahin"}</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : viewMode === 'folders' ? (
+              /* -------------------------------------------------------------
+                 MODE 2: FOLDERS GRID VIEW
+                 ------------------------------------------------------------- */
+              <div className="space-y-6">
+                {/* Search & Meta Bar */}
+                <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4">
+                  <div className="relative flex-1 max-w-md">
+                    <input
+                      type="text"
+                      placeholder={isEn ? "Search folders by section name or PIN..." : "Maghanap ng folder ayon sa pangalan o PIN..."}
+                      value={folderSearchQuery}
+                      onChange={(e) => setFolderSearchQuery(e.target.value)}
+                      className="w-full px-4 py-2.5 pl-10 bg-white border border-gray-200 rounded-2xl text-sm text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] shadow-sm"
+                    />
+                    <svg className="w-5 h-5 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
 
-            {/* Filter & Export Bar */}
-            <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 mb-6">
-              <div className="relative flex-1 max-w-md">
-                <input
-                  type="text"
-                  placeholder={isEn ? "Search by student name..." : "Maghanap ayon sa pangalan ng mag-aaral..."}
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    fetchRecords(e.target.value);
-                  }}
-                  className="w-full px-4 py-2.5 pl-10 bg-white border border-gray-200 rounded-2xl text-sm text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] shadow-sm"
-                />
-                <svg className="w-5 h-5 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
+                  <div className="text-xs font-semibold text-gray-500 text-right">
+                    {isEn
+                      ? `Showing ${folders.length} class folder${folders.length === 1 ? '' : 's'}`
+                      : `Ipinapakita ang ${folders.length} folder ng klase`}
+                  </div>
+                </div>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  onClick={handleClearAllRecords}
-                  disabled={records.length === 0}
-                  className="px-5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold rounded-2xl text-sm flex items-center justify-center gap-2 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed transition-all hover:scale-[1.01] active:scale-[0.99]"
-                  title={isEn ? "Delete all student evaluation records" : "Burahin ang lahat ng talaan"}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  {isEn ? "Clear All Records" : "Burahin Lahat"}
-                </button>
-
-                <button
-                  onClick={handleExportCSV}
-                  disabled={records.length === 0}
-                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 disabled:opacity-50 transition-colors"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  {isEn ? "Export to Excel / CSV" : "I-export sa Excel / CSV"}
-                </button>
-              </div>
-            </div>
-
-            {/* Records Table */}
-            <div className="bg-white border border-gray-200 rounded-3xl overflow-hidden shadow-sm">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200 text-gray-600 text-xs uppercase font-bold tracking-wider">
-                      <th className="py-4 px-6">{isEn ? "Student" : "Mag-aaral"}</th>
-                      <th className="py-4 px-6">{isEn ? "Passage" : "Babasahin"}</th>
-                      <th className="py-4 px-6">Accuracy</th>
-                      <th className="py-4 px-6">WCPM</th>
-                      <th className="py-4 px-6">Composite</th>
-                      <th className="py-4 px-6">{isEn ? "Level (Phil-IRI)" : "Antas (Phil-IRI)"}</th>
-                      <th className="py-4 px-6">{isEn ? "Date" : "Petsa"}</th>
-                      <th className="py-4 px-6 text-center">{isEn ? "Action" : "Aksyon"}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {records.length === 0 ? (
-                      <tr>
-                        <td colSpan="8" className="py-12 text-center text-gray-400 font-medium">
-                          {recordsLoading
-                            ? (isEn ? "Retrieving records..." : "Kinukuha ang talaan...")
-                            : (isEn ? "No student results found." : "Walang nahanap na resulta ng mag-aaral.")}
-                        </td>
-                      </tr>
-                    ) : (
-                      records.map((r) => {
-                        let levelBadge = 'bg-gray-100 text-gray-700 border border-gray-200';
-                        if (r.reading_level === 'Independent') levelBadge = 'bg-emerald-50 text-emerald-700 border border-emerald-200';
-                        else if (r.reading_level === 'Instructional') levelBadge = 'bg-amber-50 text-amber-700 border border-amber-200';
-                        else if (r.reading_level === 'Frustration') levelBadge = 'bg-red-50 text-red-700 border border-red-200';
-
+                {/* Folder Cards Grid */}
+                {folders.length === 0 ? (
+                  <div className="bg-white border border-gray-200 rounded-3xl p-12 text-center text-gray-400">
+                    <svg className="w-16 h-16 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                    </svg>
+                    <p className="font-bold text-slate-700 text-base mb-1">
+                      {isEn ? "No Classroom Folders Yet" : "Wala Pang Folder ng Klase"}
+                    </p>
+                    <p className="text-xs max-w-sm mx-auto mb-5 text-gray-500">
+                      {isEn
+                        ? "Folders are created automatically whenever you generate an active PIN or complete an assessment."
+                        : "Awtomatikong nagagawa ang mga folder sa tuwing may aktibong PIN o may nakumpletong pagsusuri."}
+                    </p>
+                    <button
+                      onClick={handleOpenArchiveModal}
+                      className="px-5 py-2.5 bg-[#0096FF] hover:bg-blue-600 text-white font-bold rounded-2xl text-xs transition-colors shadow-md shadow-blue-500/20"
+                    >
+                      {isEn ? "Create Session PIN" : "Gumawa ng PIN ng Sesyon"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {folders
+                      .filter(f => {
+                        if (!folderSearchQuery.trim()) return true;
+                        const q = folderSearchQuery.toLowerCase().trim();
                         return (
-                          <tr key={r.id} className="hover:bg-blue-50/40 transition-colors">
-                            <td className="py-4 px-6 font-bold text-slate-900">{r.student_name}</td>
-                            <td className="py-4 px-6 text-slate-700">{r.passage_title}</td>
-                            <td className="py-4 px-6 font-mono font-bold text-[#0096FF]">{r.accuracy_rate}%</td>
-                            <td className="py-4 px-6 font-mono font-bold text-slate-800">{r.wcpm}</td>
-                            <td className="py-4 px-6 font-mono text-slate-600">{r.composite_score}</td>
-                            <td className="py-4 px-6">
-                              <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${levelBadge}`}>
-                                {r.reading_level}
-                              </span>
-                            </td>
-                            <td className="py-4 px-6 text-xs text-gray-500 font-medium whitespace-nowrap">
-                              {formatDateTime(r.timestamp)}
-                            </td>
-                            <td className="py-4 px-6 text-center">
-                              <div className="flex items-center justify-center gap-2">
+                          (f.folder_name && f.folder_name.toLowerCase().includes(q)) ||
+                          (f.pin && f.pin.toLowerCase().includes(q))
+                        );
+                      })
+                      .map((f) => {
+                        const isActive = f.is_active || f.pin === classroomPin;
+                        return (
+                          <div
+                            key={f.id || f.pin}
+                            className={`bg-white rounded-3xl border transition-all duration-200 hover:shadow-lg flex flex-col justify-between p-6 relative overflow-hidden group ${isActive
+                              ? 'border-[#0096FF]/60 ring-2 ring-[#0096FF]/15 shadow-sm'
+                              : 'border-gray-200 hover:border-gray-300'
+                              }`}
+                          >
+                            {/* Top row: Badges */}
+                            <div>
+                              <div className="flex items-center justify-between gap-2 mb-4">
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center border shadow-sm ${isActive
+                                    ? 'bg-blue-50 text-[#0096FF] border-blue-200'
+                                    : 'bg-slate-50 text-slate-600 border-slate-200'
+                                    }`}>
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                                    </svg>
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-1 font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200">
+                                      <span>PIN: {f.pin}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  {isActive ? (
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
+                                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                      {isEn ? "Active Session" : "Aktibo"}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[11px] font-bold">
+                                      {isEn ? "Archived" : "Nakatago"}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Title & Date */}
+                              <div className="mb-4">
+                                <div className="flex items-start justify-between gap-2">
+                                  <h3
+                                    onClick={() => setSelectedFolder(f)}
+                                    className="text-lg font-black text-slate-900 tracking-tight cursor-pointer hover:text-[#0096FF] transition-colors line-clamp-1"
+                                    title={f.folder_name}
+                                  >
+                                    {f.folder_name}
+                                  </h3>
+                                  <button
+                                    onClick={(e) => handleOpenRenameFolder(f, e)}
+                                    className="p-1 text-gray-400 hover:text-[#0096FF] transition-colors flex-shrink-0"
+                                    title={isEn ? "Rename folder" : "Palitan ang pangalan"}
+                                  >
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                    </svg>
+                                  </button>
+                                </div>
+                                <p className="text-[11px] text-gray-400 mt-0.5">
+                                  {f.last_activity
+                                    ? `${isEn ? "Activity:" : "Huling tala:"} ${formatDateTime(f.last_activity)}`
+                                    : `${isEn ? "Created:" : "Ginawa:"} ${formatDateTime(f.created_at)}`}
+                                </p>
+                              </div>
+
+                              {/* Key Metrics Box */}
+                              <div className="bg-slate-50 border border-gray-100 rounded-2xl p-3.5 mb-5 space-y-2">
+                                <div className="grid grid-cols-3 text-center divide-x divide-gray-200">
+                                  <div>
+                                    <span className="text-[10px] uppercase font-bold text-gray-400 block">
+                                      {isEn ? "Students" : "Mag-aaral"}
+                                    </span>
+                                    <span className="text-base font-black text-slate-900">
+                                      {f.student_count || 0}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase font-bold text-gray-400 block">
+                                      Accuracy
+                                    </span>
+                                    <span className="text-base font-black text-[#0096FF]">
+                                      {f.avg_accuracy ? `${f.avg_accuracy}%` : "—"}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] uppercase font-bold text-gray-400 block">
+                                      WCPM
+                                    </span>
+                                    <span className="text-base font-black text-slate-800">
+                                      {f.avg_wcpm || "—"}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Phil-IRI Mini Pills */}
+                                <div className="pt-2 border-t border-gray-200 flex items-center justify-center gap-1.5 text-[10px] font-bold">
+                                  <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    {f.independent_count || 0} Ind
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                    {f.instructional_count || 0} Ins
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">
+                                    {f.frustration_count || 0} Fru
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Card Footer Actions */}
+                            <div className="space-y-2 pt-2 border-t border-gray-100">
+                              <button
+                                onClick={() => setSelectedFolder(f)}
+                                className="w-full py-2.5 bg-[#0096FF] hover:bg-blue-600 text-white font-black text-xs rounded-xl shadow-md shadow-blue-500/20 transition-all flex items-center justify-center gap-1.5 hover:scale-[1.01] active:scale-[0.99]"
+                              >
+                                <span>{isEn ? "Open Folder & Records" : "Buksan ang Folder"}</span>
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                                </svg>
+                              </button>
+
+                              <div className="flex gap-2">
                                 <button
-                                  onClick={() => setSelectedRecord(r)}
-                                  className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0096FF] font-bold rounded-lg text-xs transition-colors border border-blue-200"
+                                  onClick={() => handleExportFolderCSV(f.pin)}
+                                  disabled={!f.student_count || f.student_count === 0}
+                                  className="flex-1 py-1.5 bg-gray-50 hover:bg-gray-100 text-slate-700 font-bold rounded-xl text-xs transition-colors border border-gray-200 flex items-center justify-center gap-1 disabled:opacity-40"
+                                  title={isEn ? "Export CSV for this folder" : "I-export ang CSV"}
                                 >
-                                  {isEn ? "Details" : "Detalye"}
+                                  <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                  </svg>
+                                  <span>CSV</span>
                                 </button>
+
                                 <button
-                                  onClick={() => handleDeleteRecord(r.id, r.student_name)}
-                                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-bold rounded-lg text-xs transition-colors border border-rose-200 flex items-center gap-1"
-                                  title={isEn ? "Delete record" : "Burahin ang tala"}
+                                  onClick={(e) => handleOpenRenameFolder(f, e)}
+                                  className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 text-slate-700 font-bold rounded-xl text-xs transition-colors border border-gray-200 flex items-center justify-center"
+                                  title={isEn ? "Rename folder" : "Palitan ang pangalan"}
+                                >
+                                  <svg className="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                  </svg>
+                                </button>
+
+                                <button
+                                  onClick={(e) => handleDeleteFolder(f, e)}
+                                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl text-xs transition-colors border border-rose-200 flex items-center justify-center"
+                                  title={isEn ? "Delete folder and records" : "Burahin ang folder"}
                                 >
                                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                                   </svg>
-                                  <span className="hidden xl:inline">{isEn ? "Delete" : "Burahin"}</span>
                                 </button>
                               </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* -------------------------------------------------------------
+                 MODE 3: FLAT ALL RECORDS LIST
+                 ------------------------------------------------------------- */
+              <div className="space-y-6">
+                {/* Search Bar & Clear All */}
+                <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4">
+                  <div className="relative flex-1 max-w-md">
+                    <input
+                      type="text"
+                      placeholder={isEn ? "Search across all student records..." : "Maghanap sa lahat ng talaan..."}
+                      value={searchQuery}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        fetchRecords(e.target.value, 'all');
+                      }}
+                      className="w-full px-4 py-2.5 pl-10 bg-white border border-gray-200 rounded-2xl text-sm text-slate-900 placeholder-gray-400 focus:outline-none focus:border-[#0096FF] shadow-sm"
+                    />
+                    <svg className="w-5 h-5 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleClearAllRecords}
+                      disabled={records.length === 0}
+                      className="px-5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold rounded-2xl text-sm flex items-center justify-center gap-2 shadow-sm disabled:opacity-40 transition-all hover:scale-[1.01] active:scale-[0.99]"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      {isEn ? "Clear All Records" : "Burahin Lahat"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Flat Table */}
+                <div className="bg-white border border-gray-200 rounded-3xl overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-sm">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-200 text-gray-600 text-xs uppercase font-bold tracking-wider">
+                          <th className="py-4 px-6">{isEn ? "Student" : "Mag-aaral"}</th>
+                          <th className="py-4 px-6">{isEn ? "Folder / PIN" : "Folder / PIN"}</th>
+                          <th className="py-4 px-6">{isEn ? "Passage" : "Babasahin"}</th>
+                          <th className="py-4 px-6">Accuracy</th>
+                          <th className="py-4 px-6">WCPM</th>
+                          <th className="py-4 px-6">Composite</th>
+                          <th className="py-4 px-6">{isEn ? "Level (Phil-IRI)" : "Antas (Phil-IRI)"}</th>
+                          <th className="py-4 px-6">{isEn ? "Date" : "Petsa"}</th>
+                          <th className="py-4 px-6 text-center">{isEn ? "Action" : "Aksyon"}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {records.length === 0 ? (
+                          <tr>
+                            <td colSpan="9" className="py-12 text-center text-gray-400 font-medium">
+                              {recordsLoading
+                                ? (isEn ? "Retrieving records..." : "Kinukuha ang talaan...")
+                                : (isEn ? "No student results found." : "Walang nahanap na resulta ng mag-aaral.")}
                             </td>
                           </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
+                        ) : (
+                          records.map((r) => {
+                            let levelBadge = 'bg-gray-100 text-gray-700 border border-gray-200';
+                            if (r.reading_level === 'Independent') levelBadge = 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+                            else if (r.reading_level === 'Instructional') levelBadge = 'bg-amber-50 text-amber-700 border border-amber-200';
+                            else if (r.reading_level === 'Frustration') levelBadge = 'bg-red-50 text-red-700 border border-red-200';
+
+                            return (
+                              <tr key={r.id} className="hover:bg-blue-50/40 transition-colors">
+                                <td className="py-4 px-6 font-bold text-slate-900">{r.student_name}</td>
+                                <td className="py-4 px-6">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-blue-50 border border-blue-200 text-xs font-bold text-slate-800">
+                                    <svg className="w-3.5 h-3.5 text-[#0096FF]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                                    </svg>
+                                    <span>{r.folder_name || (r.classroom_pin ? `PIN: ${r.classroom_pin}` : "General")}</span>
+                                  </span>
+                                </td>
+                                <td className="py-4 px-6 text-slate-700">{r.passage_title}</td>
+                                <td className="py-4 px-6 font-mono font-bold text-[#0096FF]">{r.accuracy_rate}%</td>
+                                <td className="py-4 px-6 font-mono font-bold text-slate-800">{r.wcpm}</td>
+                                <td className="py-4 px-6 font-mono text-slate-600">{r.composite_score}</td>
+                                <td className="py-4 px-6">
+                                  <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${levelBadge}`}>
+                                    {r.reading_level}
+                                  </span>
+                                </td>
+                                <td className="py-4 px-6 text-xs text-gray-500 font-medium whitespace-nowrap">
+                                  {formatDateTime(r.timestamp)}
+                                </td>
+                                <td className="py-4 px-6 text-center">
+                                  <div className="flex items-center justify-center gap-2">
+                                    <button
+                                      onClick={() => setSelectedRecord(r)}
+                                      className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-[#0096FF] font-bold rounded-lg text-xs transition-colors border border-blue-200"
+                                    >
+                                      {isEn ? "Details" : "Detalye"}
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteRecord(r.id, r.student_name)}
+                                      className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-bold rounded-lg text-xs transition-colors border border-rose-200 flex items-center gap-1"
+                                      title={isEn ? "Delete record" : "Burahin ang tala"}
+                                    >
+                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                      </svg>
+                                      <span className="hidden xl:inline">{isEn ? "Delete" : "Burahin"}</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -1824,7 +2791,7 @@ export default function TeacherPortal() {
                     <div className="flex gap-2">
                       <button
                         type="button"
-                        onClick={handleCopyPin}
+                        onClick={() => handleCopyPin()}
                         className="px-4 py-2.5 bg-white hover:bg-gray-100 text-slate-700 font-bold text-xs rounded-xl border border-gray-200 shadow-sm transition-all flex items-center gap-1.5"
                       >
                         <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1835,14 +2802,14 @@ export default function TeacherPortal() {
 
                       <button
                         type="button"
-                        onClick={handleRegeneratePin}
+                        onClick={handleOpenArchiveModal}
                         disabled={isRegeneratingPin}
                         className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-[#0096FF] font-bold text-xs rounded-xl border border-blue-200 shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50"
                       >
                         <svg className={`w-4 h-4 ${isRegeneratingPin ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                         </svg>
-                        <span>{isRegeneratingPin ? (isEn ? "Generating..." : "Bumubuo...") : (isEn ? "New PIN" : "Bagong PIN")}</span>
+                        <span>{isRegeneratingPin ? (isEn ? "Generating..." : "Bumubuo...") : (isEn ? "New PIN / Session" : "Bagong PIN / Sesyon")}</span>
                       </button>
                     </div>
                   </div>
@@ -1976,8 +2943,8 @@ export default function TeacherPortal() {
 
                   {/* Countdown Duration Picker */}
                   <div className={`p-4 rounded-2xl border transition-all ${classroomSettings.auto_continue
-                      ? 'bg-blue-50/60 border-blue-200'
-                      : 'bg-gray-50 border-gray-200 opacity-50 pointer-events-none'
+                    ? 'bg-blue-50/60 border-blue-200'
+                    : 'bg-gray-50 border-gray-200 opacity-50 pointer-events-none'
                     }`}>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div>
@@ -1996,8 +2963,8 @@ export default function TeacherPortal() {
                             type="button"
                             onClick={() => handleToggleSetting('auto_continue_countdown', sec)}
                             className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all ${classroomSettings.auto_continue_countdown === sec
-                                ? 'bg-[#0096FF] text-white shadow-sm'
-                                : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'
+                              ? 'bg-[#0096FF] text-white shadow-sm'
+                              : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'
                               }`}
                           >
                             {sec}s
@@ -2135,6 +3102,55 @@ export default function TeacherPortal() {
                 </div>
               </div>
 
+              {/* CARD 6: Auto-Send Certificate to Teacher Email */}
+              <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-7 shadow-sm hover:shadow-md transition-shadow lg:col-span-2">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-sky-50 text-[#0096FF] flex items-center justify-center border border-sky-100 shadow-sm flex-shrink-0">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-base font-extrabold text-slate-900">
+                          {isEn ? "Auto-Send Certificate to Teacher Email" : "Awtomatikong Ipadala ang Sertipiko sa Email ng Guro"}
+                        </h3>
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
+                          {isEn ? "Default: OFF" : "Default: Naka-OFF"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        {isEn ? "Automatically dispatch completed reading certificates to your teacher email" : "Kusang ipadala ang sertipiko ng mag-aaral sa iyong email pagkatapos ng pagsusulit"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Toggle Switch */}
+                  <button
+                    type="button"
+                    onClick={() => handleToggleSetting('auto_send_email', !classroomSettings.auto_send_email)}
+                    className={`relative inline-flex h-7 w-12 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${classroomSettings.auto_send_email ? 'bg-[#0096FF]' : 'bg-gray-300'
+                      }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${classroomSettings.auto_send_email ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                    />
+                  </button>
+                </div>
+
+                <p className="text-xs text-gray-600 leading-relaxed">
+                  {classroomSettings.auto_send_email
+                    ? (isEn
+                      ? `Auto-send is ENABLED. When a student completes their classroom reading assessment, their official evaluation certificate will be dispatched automatically to your registered account email (${teacher?.email || 'your email'}).`
+                      : `Naka-ENABLE ang awtomatikong pagpapadala. Kapag natapos ng mag-aaral ang pagsusulit sa klase, kusang ipapadala ang kanilang sertipiko sa iyong rehistradong email (${teacher?.email || 'iyong email'}).`)
+                    : (isEn
+                      ? "Auto-send is OFF (Default). Certificates will not be dispatched automatically in the background. Students or teachers can review results first and click 'Send to Teacher Email' manually on the results screen whenever needed."
+                      : "Naka-OFF ang awtomatikong pagpapadala (Default). Hindi kusang magpapadala ng email sa background. Maaaring suriin muna ang resulta at i-click na lamang ang 'Ipadala sa Email ng Guro' kung kinakailangan.")}
+                </p>
+              </div>
+
             </div>
 
             {/* Bottom Save Action Bar */}
@@ -2168,8 +3184,14 @@ export default function TeacherPortal() {
           MODAL: CHOOSE FROM SYSTEM PASSAGE BANK
           ------------------------------------------------------------- */}
       {isPassageBankModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-4xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] flex flex-col">
+        <div 
+          onClick={() => setIsPassageBankModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-4xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] flex flex-col cursor-default"
+          >
             <div className="flex justify-between items-start mb-4 pb-4 border-b border-gray-100">
               <div>
                 <h3 className="text-2xl font-black text-slate-900">
@@ -2199,8 +3221,8 @@ export default function TeacherPortal() {
                     key={cat}
                     onClick={() => setBankCategory(cat)}
                     className={`px-4 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${bankCategory === cat
-                        ? 'bg-white text-[#0096FF] shadow-sm'
-                        : 'text-gray-600 hover:text-slate-900'
+                      ? 'bg-white text-[#0096FF] shadow-sm'
+                      : 'text-gray-600 hover:text-slate-900'
                       }`}
                   >
                     {cat === 'all' ? (isEn ? 'All Levels' : 'Lahat ng Antas') : cat}
@@ -2273,8 +3295,8 @@ export default function TeacherPortal() {
                     <div
                       key={item.id}
                       className={`border rounded-2xl p-4 sm:p-5 transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 ${isChecked
-                          ? 'bg-blue-50/50 border-[#0096FF] shadow-sm'
-                          : 'bg-gray-50/70 border-gray-200 hover:border-blue-300'
+                        ? 'bg-blue-50/50 border-[#0096FF] shadow-sm'
+                        : 'bg-gray-50/70 border-gray-200 hover:border-blue-300'
                         }`}
                     >
                       <div className="flex items-start gap-3 flex-1">
@@ -2349,8 +3371,14 @@ export default function TeacherPortal() {
           MODAL: CONFIGURE CLASSROOM ASSESSMENT SET
           ------------------------------------------------------------- */}
       {isManageSetModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] flex flex-col">
+        <div 
+          onClick={() => setIsManageSetModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] flex flex-col cursor-default"
+          >
             <div className="flex justify-between items-start mb-4 pb-4 border-b border-gray-100">
               <div>
                 <h3 className="text-2xl font-black text-slate-900">
@@ -2404,8 +3432,8 @@ export default function TeacherPortal() {
                     key={p.id}
                     onClick={() => handleToggleTempActiveId(p.id)}
                     className={`flex items-center justify-between p-3.5 rounded-2xl border cursor-pointer transition-all ${isChecked
-                        ? 'bg-blue-50/50 border-[#0096FF] shadow-sm'
-                        : 'bg-white border-gray-200 hover:border-gray-300'
+                      ? 'bg-blue-50/50 border-[#0096FF] shadow-sm'
+                      : 'bg-white border-gray-200 hover:border-gray-300'
                       }`}
                   >
                     <div className="flex items-center gap-3">
@@ -2468,13 +3496,30 @@ export default function TeacherPortal() {
           MODAL: ADD / EDIT PASSAGE
           ------------------------------------------------------------- */}
       {isPassageModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-2xl font-black text-slate-900 mb-1">
-              {editingPassage
-                ? (isEn ? "Edit Passage" : "I-edit ang Talata")
-                : (isEn ? "Add New Passage" : "Magdagdag ng Bagong Talata")}
-            </h3>
+        <div 
+          onClick={() => setIsPassageModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto cursor-default"
+          >
+            <div className="flex justify-between items-start mb-1">
+              <h3 className="text-2xl font-black text-slate-900">
+                {editingPassage
+                  ? (isEn ? "Edit Passage" : "I-edit ang Talata")
+                  : (isEn ? "Add New Passage" : "Magdagdag ng Bagong Talata")}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsPassageModalOpen(false)}
+                className="p-2 text-gray-400 hover:text-slate-900 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
             <p className="text-gray-500 text-sm mb-6">
               {isEn
                 ? "Set the title, content, and custom reading duration for your class assessment."
@@ -2493,7 +3538,8 @@ export default function TeacherPortal() {
                     if (selected) {
                       setPassageTitle(selected.title);
                       setPassageContent(selected.content);
-                      setPassageGrade(selected.grade);
+                      const gNum = parseInt(String(selected.grade || '').replace(/\D/g, ''), 10);
+                      setPassageGrade(gNum >= 2 && gNum <= 10 ? gNum : (selected.category === 'Expert' ? 7 : (selected.category === 'Moderate' ? 4 : 2)));
                       const wCount = selected.content.trim().split(/\s+/).length;
                       setPassageTimer(parseInt(globalTimerDuration, 10) || Math.max(15, Math.ceil(wCount * 2.5)));
                     }
@@ -2538,20 +3584,88 @@ export default function TeacherPortal() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
-                    {isEn ? "Grade Level" : "Baitang / Antas"}
-                  </label>
-                  <select
-                    value={passageGrade}
-                    onChange={(e) => setPassageGrade(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 text-sm focus:outline-none focus:border-[#0096FF] focus:bg-white"
-                  >
-                    <option value="Grade 4">Grade 4</option>
-                    <option value="Grade 5">Grade 5</option>
-                    <option value="Grade 6">Grade 6</option>
-                    <option value="Grade 7">Grade 7</option>
-                    <option value="General">{isEn ? "General" : "Pangkalahatan (General)"}</option>
-                  </select>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-gray-700">
+                      {isEn ? "Grade Level" : "Baitang / Antas"}
+                    </label>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${parseInt(passageGrade, 10) >= 7
+                        ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                        : 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                      }`}>
+                      {parseInt(passageGrade, 10) >= 7 ? "High School" : "Elementary"}
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="2"
+                      max="10"
+                      step="1"
+                      required
+                      value={passageGrade}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '') {
+                          setPassageGrade('');
+                          return;
+                        }
+                        const num = parseInt(val, 10);
+                        if (isNaN(num)) return;
+                        if (num === 1) {
+                          setPassageGrade(1);
+                          return;
+                        }
+                        if (num >= 2 && num <= 10) {
+                          setPassageGrade(num);
+                        } else if (num > 10) {
+                          setPassageGrade(10);
+                        }
+                      }}
+                      onBlur={() => {
+                        const num = parseInt(passageGrade, 10);
+                        if (isNaN(num) || num < 2) {
+                          setPassageGrade(2);
+                        } else if (num > 10) {
+                          setPassageGrade(10);
+                        }
+                      }}
+                      placeholder="e.g. 4"
+                      className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 text-sm font-bold focus:outline-none focus:border-[#0096FF] focus:bg-white"
+                    />
+                    <span className="absolute right-4 top-3 text-xs text-gray-400 font-semibold">
+                      {parseInt(passageGrade, 10) >= 7 ? "HS" : "Elem"}
+                    </span>
+                  </div>
+                  {/* Quick Select Buttons */}
+                  <div className="flex flex-wrap items-center gap-1 mt-2">
+                    {[2, 3, 4, 5, 6].map((g) => (
+                      <button
+                        key={g}
+                        type="button"
+                        onClick={() => setPassageGrade(g)}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors ${parseInt(passageGrade, 10) === g
+                            ? 'bg-emerald-600 text-white border-emerald-600'
+                            : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'
+                          }`}
+                      >
+                        G{g}
+                      </button>
+                    ))}
+                    <span className="text-gray-300 text-xs px-0.5">|</span>
+                    {[7, 8, 9, 10].map((g) => (
+                      <button
+                        key={g}
+                        type="button"
+                        onClick={() => setPassageGrade(g)}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-colors ${parseInt(passageGrade, 10) === g
+                            ? 'bg-purple-600 text-white border-purple-600'
+                            : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'
+                          }`}
+                      >
+                        G{g}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div>
@@ -2579,8 +3693,8 @@ export default function TeacherPortal() {
                         type="button"
                         onClick={() => setPassageTimer(preset)}
                         className={`px-2 py-0.5 rounded-md text-[11px] font-bold border transition-colors ${parseInt(passageTimer, 10) === preset
-                            ? 'bg-[#0096FF] text-white border-[#0096FF]'
-                            : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'
+                          ? 'bg-[#0096FF] text-white border-[#0096FF]'
+                          : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'
                           }`}
                       >
                         {preset}s
@@ -2631,141 +3745,332 @@ export default function TeacherPortal() {
       {/* -------------------------------------------------------------
           MODAL: STUDENT MISCUE BREAKDOWN
           ------------------------------------------------------------- */}
-      {selectedRecord && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-start mb-6 pb-4 border-b border-gray-200">
-              <div>
-                <span className="text-xs uppercase font-bold text-gray-500">
-                  {isEn ? "Detailed Student Evaluation" : "Detalyadong Pagsusuri ng Mag-aaral"}
-                </span>
-                <h3 className="text-2xl font-black text-slate-900">{selectedRecord.student_name}</h3>
-                <p className="text-sm text-[#0096FF] font-medium">{selectedRecord.passage_title}</p>
-                <p className="text-xs text-gray-400 mt-1">{formatDateTime(selectedRecord.timestamp)}</p>
-              </div>
-              <button
-                onClick={() => setSelectedRecord(null)}
-                className="p-2 text-gray-400 hover:text-slate-900 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
+      {selectedRecord && (() => {
+        const isAllPassagesSelected = activePassageTab === 'all';
+        const currentPassageData = typeof activePassageTab === 'number' ? recordPassages[activePassageTab] : null;
+        const displayedTrace = isAllPassagesSelected ? (selectedRecord.trace_json || []) : (currentPassageData?.trace || selectedRecord.trace_json || []);
+        const displayedAcc = isAllPassagesSelected ? selectedRecord.accuracy_rate : (currentPassageData?.accuracy_rate ?? selectedRecord.accuracy_rate);
+        const displayedWcpm = isAllPassagesSelected ? selectedRecord.wcpm : (currentPassageData?.wcpm ?? selectedRecord.wcpm);
+        const displayedCorrect = isAllPassagesSelected ? selectedRecord.correct_words : (currentPassageData?.correct_words ?? selectedRecord.correct_words);
+        const displayedTotal = isAllPassagesSelected ? selectedRecord.total_target_words : (currentPassageData?.total_target_words ?? selectedRecord.total_target_words);
+        const displayedErrors = isAllPassagesSelected ? selectedRecord.errors_detected : (currentPassageData?.errors_detected ?? selectedRecord.errors_detected);
 
-            {/* Score Grid */}
-            <div className="grid grid-cols-4 gap-3 mb-6">
-              <div className="bg-gray-50 p-3 rounded-2xl border border-gray-200 text-center">
-                <span className="text-[10px] uppercase font-bold text-gray-500">Accuracy</span>
-                <div className="text-xl font-black text-[#0096FF]">{selectedRecord.accuracy_rate}%</div>
+        return (
+          <div 
+            onClick={() => setSelectedRecord(null)}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm cursor-pointer"
+          >
+            <div 
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white border border-gray-200 rounded-3xl p-4 sm:p-8 max-w-3xl w-full shadow-2xl animate-in fade-in zoom-in duration-200 max-h-[92vh] overflow-y-auto cursor-default"
+            >
+              <div className="flex justify-between items-start mb-5 pb-4 border-b border-gray-200">
+                <div>
+                  <span className="text-[10px] sm:text-xs uppercase font-bold text-gray-500">
+                    {isEn ? "Detailed Student Evaluation" : "Detalyadong Pagsusuri ng Mag-aaral"}
+                  </span>
+                  <h3 className="text-xl sm:text-2xl font-black text-slate-900">{selectedRecord.student_name}</h3>
+                  <p className="text-xs sm:text-sm text-[#0096FF] font-medium">{selectedRecord.passage_title}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">{formatDateTime(selectedRecord.timestamp)}</p>
+                </div>
+                <button
+                  onClick={() => setSelectedRecord(null)}
+                  className="p-2 text-gray-400 hover:text-slate-900 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors flex-shrink-0"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
-              <div className="bg-gray-50 p-3 rounded-2xl border border-gray-200 text-center">
-                <span className="text-[10px] uppercase font-bold text-gray-500">WCPM</span>
-                <div className="text-xl font-black text-slate-900">{selectedRecord.wcpm}</div>
-              </div>
-              <div className="bg-gray-50 p-3 rounded-2xl border border-gray-200 text-center">
-                <span className="text-[10px] uppercase font-bold text-gray-500">
-                  {isEn ? "Correct Words" : "Tamang Salita"}
-                </span>
-                <div className="text-xl font-black text-emerald-600">{selectedRecord.correct_words} / {selectedRecord.total_target_words}</div>
-              </div>
-              <div className="bg-gray-50 p-3 rounded-2xl border border-gray-200 text-center">
-                <span className="text-[10px] uppercase font-bold text-gray-500">
-                  {isEn ? "Total Miscues" : "Mga Miscue"}
-                </span>
-                <div className="text-xl font-black text-red-600">{selectedRecord.errors_detected}</div>
-              </div>
-            </div>
 
-            {/* Stutter Badges */}
-            {selectedRecord.stutter_words && selectedRecord.stutter_words.length > 0 && (
-              <div className="mb-6 p-4 rounded-2xl bg-amber-50 border border-amber-200">
-                <span className="text-xs font-bold text-amber-800 block mb-2">
-                  {isEn ? "Detected Disfluencies / Repetitions:" : "Natukoy na Utal / Pag-uulit (Disfluencies):"}
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  {selectedRecord.stutter_words.map((w, i) => (
-                    <span key={i} className="px-2.5 py-1 bg-amber-100 text-amber-800 rounded-lg text-xs font-mono font-bold border border-amber-200">
-                      {w}
-                    </span>
-                  ))}
+              {/* Score Grid (Reflects Active Selection - 2x2 on Mobile, 4 Cols on Desktop) */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 mb-6">
+                <div className="bg-gray-50 p-2.5 sm:p-3 rounded-2xl border border-gray-200 text-center">
+                  <span className="text-[10px] uppercase font-bold text-gray-500">Accuracy</span>
+                  <div className="text-lg sm:text-xl font-black text-[#0096FF]">{displayedAcc}%</div>
+                </div>
+                <div className="bg-gray-50 p-2.5 sm:p-3 rounded-2xl border border-gray-200 text-center">
+                  <span className="text-[10px] uppercase font-bold text-gray-500">WCPM</span>
+                  <div className="text-lg sm:text-xl font-black text-slate-900">{displayedWcpm}</div>
+                </div>
+                <div className="bg-gray-50 p-2.5 sm:p-3 rounded-2xl border border-gray-200 text-center">
+                  <span className="text-[10px] uppercase font-bold text-gray-500">
+                    {isEn ? "Correct Words" : "Tamang Salita"}
+                  </span>
+                  <div className="text-lg sm:text-xl font-black text-emerald-600">{displayedCorrect} / {displayedTotal}</div>
+                </div>
+                <div className="bg-gray-50 p-2.5 sm:p-3 rounded-2xl border border-gray-200 text-center">
+                  <span className="text-[10px] uppercase font-bold text-gray-500">
+                    {isEn ? "Total Miscues" : "Mga Miscue"}
+                  </span>
+                  <div className="text-lg sm:text-xl font-black text-red-600">{displayedErrors}</div>
                 </div>
               </div>
-            )}
 
-            {/* Step-by-Step Alignment Trace */}
-            {selectedRecord.trace_json && selectedRecord.trace_json.length > 0 && (
-              <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-gray-700 block mb-3">
-                  {isEn ? "Word-by-Word Analysis (Needleman-Wunsch Alignment & MLD):" : "Pagsusuri sa Bawat Salita (Needleman-Wunsch Alignment & MLD):"}
-                </span>
-                <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
-                  {selectedRecord.trace_json.map((step, idx) => {
-                    let badge = 'bg-emerald-50 border-emerald-200 text-emerald-800';
-                    let label = isEn ? 'CORRECT' : 'TAMA';
+              {/* Multi-Passage Selector Cards (Separates Passages in Set) */}
+              {recordPassages.length > 1 && (
+                <div className="mb-6 p-4 rounded-2xl bg-slate-50/80 border border-slate-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
+                      {isEn ? "Passages in this Assessment Set:" : "Mga Talata sa Pagsusulit na Ito:"}
+                    </span>
+                    <span className="text-xs font-bold text-[#0096FF]">
+                      {recordPassages.length} {isEn ? "Passages (Click card to inspect)" : "na Talata (I-click para suriin)"}
+                    </span>
+                  </div>
 
-                    if (step.is_vowel_shift) {
-                      badge = 'bg-blue-50 border-blue-200 text-blue-800';
-                      label = 'DIALECT VOWEL SHIFT';
-                    } else if (step.type === 'substitution') {
-                      badge = 'bg-red-50 border-red-200 text-red-800';
-                      label = 'MISPRONUNCIATION';
-                    } else if (step.type === 'deletion') {
-                      badge = 'bg-amber-50 border-amber-200 text-amber-800';
-                      label = isEn ? 'OMISSION (SKIPPED)' : 'OMISSION (LINAKTAWAN)';
-                    } else if (step.type === 'insertion') {
-                      badge = 'bg-purple-50 border-purple-200 text-purple-800';
-                      label = isEn ? 'INSERTION (ADDED)' : 'INSERTION (DAGDAG)';
-                    }
-
-                    return (
-                      <div key={idx} className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${badge}`}>
-                        <div>
-                          <strong className="text-slate-900">Target:</strong> {step.target || "-"} &bull; <strong className="text-slate-900">{isEn ? "Spoken:" : "Binigkas:"}</strong> {step.spoken || "-"}
-                        </div>
-                        <span className="font-mono font-bold text-[10px] uppercase px-2 py-0.5 rounded bg-white/80 border border-current">
-                          {label}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                    {/* All Passages Combined Card */}
+                    <button
+                      type="button"
+                      onClick={() => setActivePassageTab('all')}
+                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                        isAllPassagesSelected
+                          ? 'bg-blue-50 border-[#0096FF] ring-2 ring-[#0096FF]/30 shadow-sm'
+                          : 'bg-white border-gray-200 hover:bg-gray-50 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded-full ${
+                          isAllPassagesSelected ? 'bg-[#0096FF] text-white' : 'bg-gray-200 text-gray-700'
+                        }`}>
+                          {isEn ? "All Combined" : "Lahat ng Talata"}
+                        </span>
+                        <span className="text-xs font-black text-[#0096FF]">{selectedRecord.accuracy_rate}%</span>
+                      </div>
+                      <div className="text-xs font-bold text-slate-900 line-clamp-1">
+                        {isEn ? "Entire Assessment Set" : "Buong Pagsusulit"}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1 flex items-center gap-1.5 font-medium">
+                        <span>{selectedRecord.total_target_words} {isEn ? "words" : "salita"}</span>
+                        <span>&bull;</span>
+                        <span className={selectedRecord.errors_detected > 0 ? "text-red-500 font-bold" : "text-emerald-600 font-bold"}>
+                          {selectedRecord.errors_detected} {isEn ? "miscues" : "mali"}
                         </span>
                       </div>
-                    );
-                  })}
+                    </button>
+
+                    {/* Individual Passage Cards */}
+                    {recordPassages.map((p, idx) => {
+                      const isSelected = !isAllPassagesSelected && activePassageTab === idx;
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setActivePassageTab(idx)}
+                          className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-blue-50 border-[#0096FF] ring-2 ring-[#0096FF]/30 shadow-sm'
+                              : 'bg-white border-gray-200 hover:bg-gray-50 hover:border-gray-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className={`text-[10px] uppercase font-black px-2 py-0.5 rounded-full ${
+                              isSelected ? 'bg-[#0096FF] text-white' : 'bg-gray-100 text-gray-700'
+                            }`}>
+                              {isEn ? `Passage #${idx + 1}` : `Talata #${idx + 1}`}
+                            </span>
+                            <span className="text-xs font-black text-[#0096FF]">{p.accuracy_rate}%</span>
+                          </div>
+                          <div className="text-xs font-bold text-slate-900 line-clamp-1" title={p.title}>
+                            {p.title}
+                          </div>
+                          <div className="text-[11px] text-gray-500 mt-1 flex items-center gap-1.5 font-medium">
+                            <span>{p.total_target_words} {isEn ? "words" : "salita"}</span>
+                            <span>&bull;</span>
+                            <span className={p.errors_detected > 0 ? "text-red-500 font-bold" : "text-emerald-600 font-bold"}>
+                              {p.errors_detected} {isEn ? "miscues" : "mali"}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+              )}
+
+              {/* Stutter Badges */}
+              {selectedRecord.stutter_words && selectedRecord.stutter_words.length > 0 && (
+                <div className="mb-6 p-4 rounded-2xl bg-amber-50 border border-amber-200">
+                  <span className="text-xs font-bold text-amber-800 block mb-2">
+                    {isEn ? "Detected Disfluencies / Repetitions:" : "Natukoy na Utal / Pag-uulit (Disfluencies):"}
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedRecord.stutter_words.map((w, i) => (
+                      <span key={i} className="px-2.5 py-1 bg-amber-100 text-amber-800 rounded-lg text-xs font-mono font-bold border border-amber-200">
+                        {w}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Step-by-Step Alignment Trace */}
+              {displayedTrace && displayedTrace.length > 0 && (
+                <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                    <div>
+                      <span className="text-xs font-bold uppercase tracking-wider text-gray-700 block">
+                        {isEn ? "Word-by-Word Analysis:" : "Pagsusuri sa Bawat Salita:"}
+                      </span>
+                      {recordPassages.length > 1 && (
+                        <span className="text-xs text-[#0096FF] font-bold">
+                          {isAllPassagesSelected
+                            ? (isEn ? "Showing all passages combined" : "Ipinapakita ang lahat ng talata")
+                            : (isEn ? `Showing Passage #${(currentPassageData?.index ?? 0) + 1}: ${currentPassageData?.title}` : `Ipinapakita ang Talata #${(currentPassageData?.index ?? 0) + 1}: ${currentPassageData?.title}`)}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* View Switcher: Card vs Table */}
+                    <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl self-start sm:self-auto border border-gray-200">
+                      <button
+                        type="button"
+                        onClick={() => setTraceDisplayMode('card')}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          traceDisplayMode === 'card'
+                            ? 'bg-white text-[#0096FF] shadow-sm'
+                            : 'text-gray-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {isEn ? "Card View" : "Card View"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTraceDisplayMode('table')}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          traceDisplayMode === 'table'
+                            ? 'bg-white text-[#0096FF] shadow-sm'
+                            : 'text-gray-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {isEn ? "Table View" : "Table View"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {traceDisplayMode === 'card' ? (
+                    <div className="space-y-2 max-h-72 overflow-y-auto pr-2">
+                      {displayedTrace.map((step, idx) => {
+                        let badge = 'bg-emerald-50 border-emerald-200 text-emerald-800';
+                        let label = isEn ? 'CORRECT' : 'TAMA';
+
+                        if (step.is_vowel_shift) {
+                          badge = 'bg-blue-50 border-blue-200 text-blue-800';
+                          label = 'DIALECT VOWEL SHIFT';
+                        } else if (step.type === 'substitution') {
+                          badge = 'bg-red-50 border-red-200 text-red-800';
+                          label = 'MISPRONUNCIATION';
+                        } else if (step.type === 'deletion') {
+                          badge = 'bg-amber-50 border-amber-200 text-amber-800';
+                          label = isEn ? 'OMISSION (SKIPPED)' : 'OMISSION (LINAKTAWAN)';
+                        } else if (step.type === 'insertion') {
+                          badge = 'bg-purple-50 border-purple-200 text-purple-800';
+                          label = isEn ? 'INSERTION (ADDED)' : 'INSERTION (DAGDAG)';
+                        }
+
+                        return (
+                          <div key={idx} className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${badge}`}>
+                            <div>
+                              <strong className="text-slate-900">Target:</strong> {step.target || "-"} &bull; <strong className="text-slate-900">{isEn ? "Spoken:" : "Binigkas:"}</strong> {step.spoken || "-"}
+                            </div>
+                            <span className="font-mono font-bold text-[10px] uppercase px-2 py-0.5 rounded bg-white/80 border border-current">
+                              {label}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="border border-gray-200 rounded-2xl overflow-hidden max-h-72 overflow-y-auto shadow-sm">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 text-gray-500 font-bold uppercase tracking-wider text-[10px]">
+                          <tr>
+                            <th className="py-2.5 px-3 w-12 text-center">#</th>
+                            <th className="py-2.5 px-3">{isEn ? "Target Word" : "Tamang Salita"}</th>
+                            <th className="py-2.5 px-3">{isEn ? "Spoken Word" : "Binigkas na Salita"}</th>
+                            <th className="py-2.5 px-3 text-right">{isEn ? "Classification" : "Kategorya"}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 bg-white">
+                          {displayedTrace.map((step, idx) => {
+                            let badge = 'bg-emerald-50 border-emerald-200 text-emerald-800';
+                            let label = isEn ? 'CORRECT' : 'TAMA';
+
+                            if (step.is_vowel_shift) {
+                              badge = 'bg-blue-50 border-blue-200 text-blue-800';
+                              label = 'DIALECT VOWEL SHIFT';
+                            } else if (step.type === 'substitution') {
+                              badge = 'bg-red-50 border-red-200 text-red-800';
+                              label = 'MISPRONUNCIATION';
+                            } else if (step.type === 'deletion') {
+                              badge = 'bg-amber-50 border-amber-200 text-amber-800';
+                              label = isEn ? 'OMISSION (SKIPPED)' : 'OMISSION (LINAKTAWAN)';
+                            } else if (step.type === 'insertion') {
+                              badge = 'bg-purple-50 border-purple-200 text-purple-800';
+                              label = isEn ? 'INSERTION (ADDED)' : 'INSERTION (DAGDAG)';
+                            }
+
+                            return (
+                              <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
+                                <td className="py-2 px-3 text-center text-gray-400 font-mono font-medium">{idx + 1}</td>
+                                <td className="py-2 px-3 font-bold text-slate-900 font-mono">{step.target || "-"}</td>
+                                <td className="py-2 px-3 text-slate-700 font-mono">{step.spoken || "-"}</td>
+                                <td className="py-2 px-3 text-right">
+                                  <span className={`inline-block font-mono font-bold text-[9px] uppercase px-2 py-0.5 rounded border ${badge}`}>
+                                    {label}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="mt-6 pt-4 border-t border-gray-200 flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-2.5">
+                <button
+                  onClick={() => handleDeleteRecord(selectedRecord.id, selectedRecord.student_name)}
+                  className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl sm:rounded-full text-xs transition-colors border border-rose-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  <span>{isEn ? "Delete This Record" : "Burahin ang Tala"}</span>
+                </button>
+
+                <button
+                  onClick={() => setSelectedRecord(null)}
+                  className="px-6 py-2.5 bg-gray-100 hover:bg-gray-200 text-slate-800 font-bold rounded-xl sm:rounded-full text-xs transition-colors cursor-pointer text-center"
+                >
+                  {isEn ? "Close" : "Isara"}
+                </button>
               </div>
-            )}
-
-            <div className="mt-6 pt-4 border-t border-gray-200 flex justify-between items-center">
-              <button
-                onClick={() => handleDeleteRecord(selectedRecord.id, selectedRecord.student_name)}
-                className="px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-full text-xs transition-colors border border-rose-200 flex items-center gap-1.5"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-                <span>{isEn ? "Delete This Record" : "Burahin ang Tala"}</span>
-              </button>
-
-              <button
-                onClick={() => setSelectedRecord(null)}
-                className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-slate-800 font-bold rounded-full text-xs transition-colors"
-              >
-                {isEn ? "Close" : "Isara"}
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* -------------------------------------------------------------
           CENTERED CONFIRMATION MODAL POPUP (REPLACES BROWSER DIALOG)
           ------------------------------------------------------------- */}
       {confirmDialog.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white border border-gray-100 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl shadow-slate-900/25 animate-in zoom-in-95 duration-200 text-center relative overflow-hidden">
+        <div 
+          onClick={closeConfirm}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-gray-100 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl shadow-slate-900/25 animate-in zoom-in-95 duration-200 text-center relative overflow-hidden cursor-default"
+          >
 
             {/* Top Icon Badge */}
             <div className={`w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-sm ${confirmDialog.type === 'danger'
-                ? 'bg-rose-50 border border-rose-100 text-rose-600'
-                : 'bg-amber-50 border border-amber-100 text-amber-600'
+              ? 'bg-rose-50 border border-rose-100 text-rose-600'
+              : 'bg-amber-50 border border-amber-100 text-amber-600'
               }`}>
               {confirmDialog.type === 'danger' ? (
                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2806,8 +4111,8 @@ export default function TeacherPortal() {
                   if (action) action();
                 }}
                 className={`flex-1 py-3 px-5 rounded-2xl text-white font-extrabold text-sm shadow-lg transition-all hover:scale-[1.01] active:scale-[0.98] ${confirmDialog.type === 'danger'
-                    ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-500/25'
-                    : 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/25'
+                  ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-500/25'
+                  : 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/25'
                   }`}
               >
                 {confirmDialog.confirmText}
@@ -2817,12 +4122,188 @@ export default function TeacherPortal() {
         </div>
       )}
 
+      {/* -------------------------------------------------------------
+          MODAL 1: ARCHIVE CURRENT SESSION & REGENERATE PIN
+          ------------------------------------------------------------- */}
+      {isArchiveModalOpen && (
+        <div 
+          onClick={() => setIsArchiveModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-gray-100 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl shadow-slate-900/25 animate-in zoom-in-95 duration-200 cursor-default relative"
+          >
+            <button
+              type="button"
+              onClick={() => setIsArchiveModalOpen(false)}
+              className="absolute top-5 right-5 p-2 text-gray-400 hover:text-slate-900 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            <div className="flex items-center gap-3.5 mb-5 pr-8">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-[#0096FF] flex items-center justify-center border border-blue-100 shadow-sm flex-shrink-0">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 4H6a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-2m-4-1v8m0 0l3-3m-3 3L9 8m-5 5h2.586a1 1 0 01.707.293l2.414 2.414a1 1 0 00.707.293h3.172a1 1 0 00.707-.293l2.414-2.414a1 1 0 01.707-.293H20" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900 tracking-tight">
+                  {isEn ? "Archive Session & Generate New PIN" : "Itabi ang Sesyon at Bumuo ng Bagong PIN"}
+                </h3>
+                <p className="text-xs text-gray-500">
+                  {isEn ? "Organize this class into a folder before switching PIN" : "Isaayos ang klaseng ito sa folder bago magpalit ng PIN"}
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleConfirmRegeneratePin} className="space-y-4">
+              <div className="p-4 bg-slate-50 border border-gray-200 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-gray-400 block">
+                    {isEn ? "Concluding Session PIN" : "PIN ng Magtatapos na Sesyon"}
+                  </span>
+                  <span className="font-mono text-2xl font-black text-slate-900 tracking-wider">
+                    {classroomPin || "------"}
+                  </span>
+                </div>
+                <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full">
+                  {isEn ? "Will be archived" : "Maitatabi sa folder"}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
+                  {isEn ? "Folder / Class Section Name" : "Pangalan ng Folder / Section ng Klase"}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={archiveFolderName}
+                  onChange={(e) => setArchiveFolderName(e.target.value)}
+                  placeholder={isEn ? "e.g., Grade 4 - Diamond, Section Rose, Morning Class" : "hal., Grade 4 - Diamond, Section Rose, Pang-umaga"}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 placeholder-gray-400 font-bold focus:outline-none focus:border-[#0096FF] focus:bg-white text-sm"
+                  autoFocus
+                />
+                <p className="text-[11px] text-gray-500 mt-1.5 leading-relaxed">
+                  {isEn
+                    ? "All student records and assessment audio traces for this PIN will be stored under this folder name. Any connected student tablet will be safely logged out."
+                    : "Lahat ng resulta at talaan sa PIN na ito ay mase-save sa folder na ito. Ang mga mag-aaral na nakakonekta sa lumang PIN ay awtomatikong madi-disconnect."}
+                </p>
+              </div>
+
+              <div className="flex gap-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setIsArchiveModalOpen(false)}
+                  className="flex-1 py-3 px-4 bg-gray-100 hover:bg-gray-200 text-slate-700 font-bold rounded-2xl text-xs sm:text-sm transition-all"
+                >
+                  {isEn ? "Cancel" : "Kanselahin"}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isRegeneratingPin || !archiveFolderName.trim()}
+                  className="flex-1 py-3 px-4 bg-[#0096FF] hover:bg-blue-600 text-white font-extrabold rounded-2xl text-xs sm:text-sm shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isRegeneratingPin ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                      <span>{isEn ? "Generating PIN..." : "Bumubuo ng PIN..."}</span>
+                    </>
+                  ) : (
+                    <span>{isEn ? "Archive & Generate New PIN" : "Itabi at Gumawa ng Bagong PIN"}</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* -------------------------------------------------------------
+          MODAL 2: RENAME CLASSROOM FOLDER
+          ------------------------------------------------------------- */}
+      {isRenameModalOpen && renamingFolder && (
+        <div 
+          onClick={() => setIsRenameModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-gray-100 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl shadow-slate-900/25 animate-in zoom-in-95 duration-200 cursor-default relative"
+          >
+            <button
+              type="button"
+              onClick={() => setIsRenameModalOpen(false)}
+              className="absolute top-5 right-5 p-2 text-gray-400 hover:text-slate-900 rounded-full bg-gray-100 hover:bg-gray-200 transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            <div className="flex items-center gap-3.5 mb-5 pr-8">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-[#0096FF] flex items-center justify-center border border-blue-100 shadow-sm flex-shrink-0">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900 tracking-tight">
+                  {isEn ? "Rename Classroom Folder" : "Palitan ang Pangalan ng Folder"}
+                </h3>
+                <p className="text-xs text-gray-500">
+                  {isEn ? `Classroom PIN: ${renamingFolder.pin}` : `PIN ng Klase: ${renamingFolder.pin}`}
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveRenameFolder} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-700 mb-1.5">
+                  {isEn ? "Folder / Section Name" : "Pangalan ng Folder / Section"}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={renameInput}
+                  onChange={(e) => setRenameInput(e.target.value)}
+                  placeholder={isEn ? "e.g., Grade 4 - Diamond" : "hal., Grade 4 - Diamond"}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-slate-900 font-bold focus:outline-none focus:border-[#0096FF] focus:bg-white text-sm"
+                  autoFocus
+                />
+              </div>
+
+              <div className="flex gap-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setIsRenameModalOpen(false)}
+                  className="flex-1 py-3 px-4 bg-gray-100 hover:bg-gray-200 text-slate-700 font-bold rounded-2xl text-xs sm:text-sm transition-all"
+                >
+                  {isEn ? "Cancel" : "Kanselahin"}
+                </button>
+                <button
+                  type="submit"
+                  disabled={!renameInput.trim()}
+                  className="flex-1 py-3 px-4 bg-[#0096FF] hover:bg-blue-600 text-white font-extrabold rounded-2xl text-xs sm:text-sm shadow-lg shadow-blue-500/25 transition-all disabled:opacity-50"
+                >
+                  {isEn ? "Save Name" : "I-save ang Pangalan"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Floating Modern Toast Notification */}
       {portalToast && (
         <div className="fixed top-6 right-6 z-50 max-w-md w-full sm:w-auto animate-in slide-in-from-top-4 fade-in duration-300">
           <div className={`p-4 rounded-2xl shadow-xl border flex items-center gap-3 ${portalToast.type === 'error'
-              ? 'bg-rose-50 border-rose-200 text-rose-800'
-              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            ? 'bg-rose-50 border-rose-200 text-rose-800'
+            : 'bg-emerald-50 border-emerald-200 text-emerald-800'
             }`}>
             {portalToast.type === 'error' ? (
               <svg className="w-5 h-5 flex-shrink-0 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">

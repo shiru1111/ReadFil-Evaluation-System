@@ -2900,18 +2900,50 @@ def send_certificate_email():
         msg = MIMEMultipart()
         msg['From'] = sender_email
         msg['To'] = recipient_email
-        msg['Subject'] = f"Your ReadFil Tagalog Reading Certificate - {level} Level"
-
-        body = f"""
-        <html>
-            <body>
-                <h2>Congratulations, {name}!</h2>
-                <p>Attached is your official certificate for completing the <strong>{level} Level</strong> evaluation.</p>
-                <p>Your composite score is: <strong>{score}</strong>.</p>
-                <p>Thank you for using ReadFil!</p>
-            </body>
-        </html>
-        """
+        
+        is_classroom = bool(data.get('is_classroom', False))
+        if is_classroom:
+            msg['Subject'] = f"ReadFil Classroom Certificate: {name} ({level})"
+            body = f"""
+            <html>
+                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+                        <h2 style="color: #0096FF; margin-top: 0;">ReadFil Classroom Assessment Certificate</h2>
+                        <p>Hello Teacher,</p>
+                        <p>Student <strong>{name}</strong> has successfully completed their classroom reading evaluation.</p>
+                        <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+                            <tr>
+                                <td style="padding: 8px; border-bottom: 1px solid #eee; color: #666;">Student Name:</td>
+                                <td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold;">{name}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px; border-bottom: 1px solid #eee; color: #666;">Evaluation Level:</td>
+                                <td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold;">{level}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px; border-bottom: 1px solid #eee; color: #666;">Composite Score:</td>
+                                <td style="padding: 8px; border-bottom: 1px solid #eee; font-weight: bold; color: #0096FF;">{score}</td>
+                            </tr>
+                        </table>
+                        <p>The student's official certificate is attached below as an image for your classroom records.</p>
+                        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+                        <p style="color: #888; font-size: 12px; margin-bottom: 0;">Sent automatically by ReadFil Classroom Evaluation System.</p>
+                    </div>
+                </body>
+            </html>
+            """
+        else:
+            msg['Subject'] = f"Your ReadFil Tagalog Reading Certificate - {level} Level"
+            body = f"""
+            <html>
+                <body>
+                    <h2>Congratulations, {name}!</h2>
+                    <p>Attached is your official certificate for completing the <strong>{level} Level</strong> evaluation.</p>
+                    <p>Your composite score is: <strong>{score}</strong>.</p>
+                    <p>Thank you for using ReadFil!</p>
+                </body>
+            </html>
+            """
         msg.attach(MIMEText(body, 'html'))
 
         # Attach image
@@ -3101,9 +3133,10 @@ def teacher_get_pin(teacher_id):
 def teacher_regenerate_pin():
     data = request.json or {}
     teacher_id = data.get('teacher_id')
+    archive_folder_name = data.get('archive_folder_name')
     if not teacher_id:
         return jsonify({"success": False, "error": "teacher_id required"}), 400
-    res = database.regenerate_teacher_pin(int(teacher_id))
+    res = database.regenerate_teacher_pin(int(teacher_id), archive_folder_name=archive_folder_name)
     return jsonify(res), (200 if res.get('success') else 500)
 
 @app.route('/api/classroom/verify-pin', methods=['POST'])
@@ -3240,29 +3273,70 @@ def classroom_submit_result():
         total_target_words=total_target_words,
         errors_detected=errors_detected,
         stutter_words=stutter_words,
-        trace_json=trace_json
+        trace_json=trace_json,
+        classroom_pin=pin
     )
+    if result.get('success'):
+        teacher_email = database.get_teacher_email(teacher_id)
+        if teacher_email:
+            result['teacher_email'] = teacher_email
     return jsonify(result), 200 if result.get('success') else 400
+
+# Classroom PIN Folders Endpoints
+@app.route('/api/teacher/folders', methods=['GET', 'POST'])
+def teacher_folders_endpoint():
+    if request.method == 'GET':
+        teacher_id = request.args.get('teacher_id', type=int)
+        if not teacher_id:
+            return jsonify({"success": False, "error": "teacher_id parameter required"}), 400
+        res = database.get_teacher_folders(teacher_id)
+        return jsonify(res), 200
+    elif request.method == 'POST':
+        data = request.json or {}
+        teacher_id = data.get('teacher_id')
+        pin = data.get('pin')
+        folder_name = data.get('folder_name')
+        if not teacher_id or not pin or not folder_name:
+            return jsonify({"success": False, "error": "teacher_id, pin, and folder_name are required"}), 400
+        res = database.create_or_rename_folder(int(teacher_id), pin, folder_name)
+        return jsonify(res), 200 if res.get('success') else 400
+
+@app.route('/api/teacher/folders/delete', methods=['POST'])
+def teacher_folder_delete_endpoint():
+    data = request.json or {}
+    teacher_id = data.get('teacher_id')
+    pin = data.get('pin')
+    if not teacher_id or not pin:
+        return jsonify({"success": False, "error": "teacher_id and pin are required"}), 400
+    res = database.delete_teacher_folder(int(teacher_id), pin)
+    return jsonify(res), 200 if res.get('success') else 400
 
 @app.route('/api/teacher/records', methods=['GET'])
 def teacher_records():
     teacher_id = request.args.get('teacher_id', type=int)
     search = request.args.get('search', type=str)
+    pin = request.args.get('pin', type=str)
     if not teacher_id:
         return jsonify({"error": "teacher_id parameter required"}), 400
-    records = database.get_teacher_student_results(teacher_id, search)
+    records = database.get_teacher_student_results(teacher_id, search, pin=pin)
     return jsonify({"records": records}), 200
 
 @app.route('/api/teacher/records/export', methods=['GET'])
 def teacher_records_export():
     teacher_id = request.args.get('teacher_id', type=int)
+    pin = request.args.get('pin', type=str)
     if not teacher_id:
         return jsonify({"error": "teacher_id parameter required"}), 400
-    csv_content = database.export_teacher_results_to_csv(teacher_id)
+    csv_content = database.export_teacher_results_to_csv(teacher_id, pin=pin)
+    
+    filename = f"readfil_class_records_teacher_{teacher_id}.csv"
+    if pin and str(pin).strip().lower() != 'all':
+        filename = f"readfil_records_pin_{pin.strip()}.csv"
+
     return Response(
         csv_content,
         mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=readfil_class_records_teacher_{teacher_id}.csv"}
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
 @app.route('/api/teacher/records/<int:record_id>', methods=['DELETE', 'POST'])
@@ -3281,10 +3355,11 @@ def teacher_delete_record(record_id):
 def teacher_clear_records():
     data = request.json or {}
     teacher_id = data.get('teacher_id') or request.args.get('teacher_id', type=int)
+    pin = data.get('pin') or request.args.get('pin')
     if not teacher_id:
         return jsonify({"success": False, "error": "teacher_id parameter required"}), 400
     
-    result = database.clear_teacher_student_results(int(teacher_id))
+    result = database.clear_teacher_student_results(int(teacher_id), pin=pin)
     return jsonify(result), (200 if result.get('success') else 400)
 
 # 5. Token Availability & Health Check

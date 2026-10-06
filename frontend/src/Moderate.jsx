@@ -539,7 +539,7 @@ export default function Moderate() {
               </div>
             )}
             <p className={`mt-6 font-bold text-lg ${isRecording ? 'text-red-600' : isProcessing ? 'text-[#005FA3] animate-pulse' : isSilence ? 'text-red-600' : 'text-gray-500'}`}>
-              {isRecording ? t("eval.recording_expert") :
+              {isRecording ? t("eval.recording") :
                 isProcessing ? t("eval.processing") :
                   isSilence ? t("eval.no_speech") :
                     (hasRecorded ? t("eval.graded") : t("eval.click_begin_alt"))}

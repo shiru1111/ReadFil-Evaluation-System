@@ -45,6 +45,11 @@ export default function Results() {
     
     setReadingLogs(storedLogs);
 
+    const storedSchoolLevel = localStorage.getItem('classroom_school_level') || 
+                              sessionStorage.getItem('readfil_classroom_school_level') || 
+                              'Elementary';
+    setClassroomSchoolLevel(storedSchoolLevel);
+
     setResultData({
       firstName: storedFirstName,
       lastName: storedLastName,
@@ -54,6 +59,12 @@ export default function Results() {
       date: new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
     });
   }, []);
+
+  const [classroomSchoolLevel, setClassroomSchoolLevel] = useState(() => {
+    return localStorage.getItem('classroom_school_level') || 
+           sessionStorage.getItem('readfil_classroom_school_level') || 
+           'Elementary';
+  });
 
   // =================================================================
   // PHIL-IRI COMPOSITE SCORE & DIAGNOSTIC CLASSIFICATION (CHAPTER III & IV)
@@ -258,18 +269,42 @@ export default function Results() {
     }
   };
 
-  const [isEmailing, setIsEmailing] = useState(false);
+  const isClassroom = (resultData.level || '').toLowerCase().includes('classroom') ||
+                      localStorage.getItem('is_classroom_session') === 'true';
 
-  const handleSendEmail = async () => {
+  const getRecipientEmail = () => {
+    if (isClassroom) {
+      return (
+        localStorage.getItem('readfil_classroom_teacher_email') ||
+        sessionStorage.getItem('readfil_classroom_teacher_email') ||
+        localStorage.getItem('user_email') ||
+        ''
+      );
+    }
+    return localStorage.getItem('user_email') || '';
+  };
+
+  const [isEmailing, setIsEmailing] = useState(false);
+  const [autoEmailStatus, setAutoEmailStatus] = useState(null); // null | 'sending' | 'sent' | 'failed'
+  const autoSentRef = useRef(false);
+
+  const sendEmailDirectly = async (overrideEmail = null, isAuto = false) => {
     if (!certificateRef.current) return;
     
-    const userEmail = localStorage.getItem('user_email');
-    if (!userEmail) {
-      showToast("No email found. Please register an email on the home screen.", "error");
+    const targetEmail = overrideEmail || getRecipientEmail();
+    if (!targetEmail) {
+      if (!isAuto) {
+        showToast(
+          isClassroom
+            ? (isEn ? "No teacher email found for this classroom session." : "Walang nahanap na email ng guro para sa sesyon na ito.")
+            : (isEn ? "No email found. Please register an email on the home screen." : "Walang nahanap na email. Mangyaring magrehistro ng email."),
+          "error"
+        );
+      }
       return;
     }
 
-    setIsEmailing(true);
+    if (!isAuto) setIsEmailing(true);
     const originalStyle = certificateRef.current.style.cssText;
     
     // Temporarily force desktop dimensions for the snapshot
@@ -293,32 +328,91 @@ export default function Results() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          email: userEmail,
-          name: `${resultData.firstName} ${resultData.lastName}`,
-          level: resultData.level,
+          email: targetEmail,
+          name: `${resultData.firstName} ${resultData.lastName}`.trim(),
+          level: isClassroom ? `${classroomSchoolLevel} Classroom Assessment` : resultData.level,
           score: finalScore,
-          image_data: image
+          image_data: image,
+          is_classroom: isClassroom
         })
       });
 
       const data = await response.json();
       if (response.ok) {
-        showToast("Certificate successfully sent! Please check your Inbox and Spam/Drafts folder.", "success");
+        if (isAuto) {
+          setAutoEmailStatus('sent');
+          showToast(
+            isEn 
+              ? `Certificate automatically sent to teacher (${targetEmail})!`
+              : `Awtomatikong naipadala ang sertipiko sa guro (${targetEmail})!`, 
+            "success"
+          );
+        } else {
+          showToast(
+            isClassroom
+              ? (isEn ? `Certificate sent to teacher (${targetEmail})!` : `Naipadala ang sertipiko sa guro (${targetEmail})!`)
+              : (isEn ? "Certificate successfully sent! Please check your Inbox and Spam folder." : "Matagumpay na naipadala ang sertipiko!"), 
+            "success"
+          );
+        }
       } else {
-        showToast(`Failed to send email: ${data.error}`, "error");
+        if (isAuto) {
+          setAutoEmailStatus('failed');
+        } else {
+          showToast(`Failed to send email: ${data.error}`, "error");
+        }
       }
     } catch (error) {
       console.error("Error sending email:", error);
-      showToast(`There was an error sending your certificate: ${error.message || error}`, "error");
+      if (isAuto) {
+        setAutoEmailStatus('failed');
+      } else {
+        showToast(`There was an error sending your certificate: ${error.message || error}`, "error");
+      }
     } finally {
-      // Restore original responsive state immediately
-      certificateRef.current.style.cssText = originalStyle;
-      setIsEmailing(false);
+      if (certificateRef.current) {
+        certificateRef.current.style.cssText = originalStyle;
+      }
+      if (!isAuto) setIsEmailing(false);
     }
   };
 
-  const isClassroom = (resultData.level || '').toLowerCase().includes('classroom') ||
-                      localStorage.getItem('is_classroom_session') === 'true';
+  const handleSendEmail = () => {
+    sendEmailDirectly(null, false);
+  };
+
+  // Automatically deliver classroom certificate to teacher's account email ONLY IF teacher enabled it in classroom settings (Default is OFF)
+  useEffect(() => {
+    if (!isClassroom) return;
+    const isAutoEmailEnabled = localStorage.getItem('readfil_auto_send_email') === 'true';
+    if (!isAutoEmailEnabled) {
+      // Default is OFF! Do not auto-send. Someone can manually click "Send to Teacher Email".
+      return;
+    }
+    const teacherEmail = getRecipientEmail();
+    if (!teacherEmail) return;
+
+    // Use student name and score to prevent duplicate auto-sends across re-renders
+    const studentFingerprint = `${resultData.firstName}_${resultData.lastName}_${finalScore}`.replace(/\s+/g, '_');
+    const sentKey = `readfil_auto_sent_${studentFingerprint}`;
+    
+    if (sessionStorage.getItem(sentKey)) {
+      setAutoEmailStatus('sent');
+      return;
+    }
+
+    if (autoSentRef.current) return;
+    autoSentRef.current = true;
+    sessionStorage.setItem(sentKey, 'true');
+    setAutoEmailStatus('sending');
+
+    // Allow 1.2s for certificate DOM fonts and styles to fully paint before snapshotting
+    const timer = setTimeout(() => {
+      sendEmailDirectly(teacherEmail, true);
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [isClassroom, resultData.firstName, resultData.lastName, finalScore]);
 
   const handleClassroomTestAgain = () => {
     // Clear previous student credentials and results so the next student provides a new name
@@ -343,6 +437,7 @@ export default function Results() {
     localStorage.removeItem('user_firstName');
     localStorage.removeItem('user_lastName');
     localStorage.removeItem('user_email');
+    localStorage.removeItem('readfil_classroom_teacher_email');
     localStorage.removeItem('is_classroom_session');
     sessionStorage.removeItem('classroom_prompt_new_student');
     navigate('/');
@@ -377,7 +472,10 @@ export default function Results() {
               {resultData.firstName} {resultData.lastName}
             </h2>
             <p className="text-base sm:text-lg text-gray-700 leading-relaxed max-w-2xl mx-auto">
-              {t("results.finished")} <span className="font-bold text-gray-900 border-b-2 border-[#0096FF] pb-1">{isClassroom ? 'Classroom' : `${resultData.level} ${t("results.level")}`}</span>.
+              {t("results.finished")}{' '}
+              <span className="font-bold text-gray-900 border-b-2 border-[#0096FF] pb-1">
+                {isClassroom ? `${classroomSchoolLevel} Classroom` : `${resultData.level} ${t("results.level")}`}
+              </span>.
             </p>
             <p className="text-xs text-gray-400 mt-6 font-medium uppercase tracking-widest">{t("results.date")}: {resultData.date}</p>
           </div>
@@ -475,7 +573,9 @@ export default function Results() {
             disabled={isEmailing}
             className={`w-full sm:w-auto px-6 py-3 bg-white text-gray-700 font-bold text-xs uppercase tracking-widest border border-gray-300 shadow-sm transition-colors text-center ${isEmailing ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'}`}
           >
-            {isEmailing ? 'SENDING...' : t("results.send_email")}
+            {isEmailing 
+              ? (isClassroom ? (isEn ? 'SENDING TO TEACHER...' : 'IPINAPADALA SA GURO...') : 'SENDING...') 
+              : (isClassroom ? (isEn ? "Send to Teacher Email" : "Ipadala sa Email ng Guro") : t("results.send_email"))}
           </button>
           
           <button 

@@ -178,27 +178,36 @@ const needlemanWunschAlign = (targetWords, spokenWords) => {
   const lastTargetWord = targetWords[lastTargetIdx];
   const lastSpokenAligned = targetToSpoken[lastTargetIdx];
 
+  const recentSpoken = spokenWords.slice(-4);
+  const lastWordMatchedRecent = recentSpoken.some(sWord =>
+    sWord === lastTargetWord ||
+    isWordMatch(lastTargetWord, sWord) ||
+    wordSimilarity(lastTargetWord, sWord) <= 0.45 ||
+    (lastTargetWord.length >= 3 && sWord.length >= 3 &&
+      (sWord.startsWith(lastTargetWord.slice(0, 3)) || lastTargetWord.startsWith(sWord.slice(0, 3))) &&
+      Math.abs(lastTargetWord.length - sWord.length) <= 3) ||
+    (lastTargetWord.length >= 3 && sWord.length >= 3 &&
+      (sWord.includes(lastTargetWord) || lastTargetWord.includes(sWord)))
+  );
+
   const lastWordMatched = !!(
     (lastSpokenAligned &&
       (lastSpokenAligned === lastTargetWord ||
         isWordMatch(lastTargetWord, lastSpokenAligned) ||
         wordSimilarity(lastTargetWord, lastSpokenAligned) <= 0.45)) ||
-    (spokenWords.length > 0 &&
-      (spokenWords[spokenWords.length - 1] === lastTargetWord ||
-        isWordMatch(lastTargetWord, spokenWords[spokenWords.length - 1]) ||
-        wordSimilarity(lastTargetWord, spokenWords[spokenWords.length - 1]) <= 0.45))
+    lastWordMatchedRecent
   );
 
   const alignRatio = alignedMatches / m;
 
-  // The passage reading is completed strictly if:
+  // The passage reading is completed if:
   // 1. The last target word is matched on the NWA alignment path or uttered at the end
-  // 2. The student has read through virtually the entire passage (>= 75% for short <=10 words, >= 80% for long)
+  // 2. The student has read through a substantial part of the passage
   const isSatisfied = lastWordMatched && (
     m <= 2 ? (alignedMatches >= Math.max(1, m)) :
-      m <= 5 ? (alignedMatches >= Math.max(3, m - 1)) :
-        m <= 10 ? (alignRatio >= 0.75) :
-          (alignRatio >= 0.80 && alignedMatches >= Math.ceil(m * 0.80))
+      m <= 5 ? (alignedMatches >= Math.max(2, m - 2)) :
+        m <= 10 ? (alignRatio >= 0.50 || spokenWords.length >= Math.max(2, m - 3)) :
+          (alignRatio >= 0.45 || spokenWords.length >= Math.floor(m * 0.45))
   );
 
   return {
@@ -209,6 +218,44 @@ const needlemanWunschAlign = (targetWords, spokenWords) => {
     alignRatio,
     targetToSpoken
   };
+};
+
+// Dedicated checker: Checks if the last word of target passage matches or at least matches a bit
+const checkLastWordMatch = (targetWords, spokenWords, alignRatio = 0) => {
+  if (!targetWords || targetWords.length === 0 || !spokenWords || spokenWords.length === 0) {
+    return false;
+  }
+  const m = targetWords.length;
+  const n = spokenWords.length;
+  const lastTarget = targetWords[m - 1];
+  if (!lastTarget) return false;
+
+  // The reader must have progressed into the passage before matching the last word
+  const minSpokenCount = m <= 3 ? 1 : m <= 10 ? Math.max(2, Math.floor(m * 0.4)) : Math.max(4, Math.floor(m * 0.35));
+  if (n < minSpokenCount && alignRatio < 0.25) {
+    return false;
+  }
+
+  // Inspect the trailing spoken words (up to last 4 words)
+  const candidateSpoken = spokenWords.slice(-4);
+  for (const sWord of candidateSpoken) {
+    if (!sWord) continue;
+    if (sWord === lastTarget) return true;
+    if (isWordMatch(lastTarget, sWord)) return true;
+
+    // Fuzzy similarity (Levenshtein distance <= 0.45, or distance <= 2 for words >= 4)
+    if (wordSimilarity(lastTarget, sWord) <= 0.45) return true;
+
+    // Substring or prefix match for words >= 3 characters (e.g., "bata" vs "batang", "araw" vs "kaarawan")
+    if (lastTarget.length >= 3 && sWord.length >= 3) {
+      if (sWord.startsWith(lastTarget.slice(0, 3)) || lastTarget.startsWith(sWord.slice(0, 3))) {
+        if (Math.abs(lastTarget.length - sWord.length) <= 3) return true;
+      }
+      if (sWord.includes(lastTarget) || lastTarget.includes(sWord)) return true;
+    }
+  }
+
+  return false;
 };
 
 // Play gentle completion chime on auto-stop so student is immediately notified
@@ -409,6 +456,7 @@ export default function Classroom() {
   const silenceCheckIntervalRef = useRef(null);
   const lastSpeechMatchRatioRef = useRef(0);
   const isSatisfiedRef = useRef(false);
+  const lastWordMatchedRef = useRef(false);
   const endTimeRef = useRef(null);
   const noiseFloorRef = useRef(0.02);
   const hasSpokenRef = useRef(false);
@@ -433,6 +481,58 @@ export default function Classroom() {
   const animationRef = useRef(null);
   const timerIntervalRef = useRef(null);
   const startTimeRef = useRef(null);
+
+  // Single-Line Multi-Passage Automatic Horizontal Sliding Refs & Bounds
+  const passageScrollContainerRef = useRef(null);
+  const activePillRef = useRef(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const checkScrollBounds = () => {
+    const el = passageScrollContainerRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 6);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 6);
+  };
+
+  // Automatically slide the single-line track so the active passage is always centered & visible
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (activePillRef.current && passageScrollContainerRef.current) {
+        activePillRef.current.scrollIntoView({
+          behavior: 'smooth',
+          inline: 'center',
+          block: 'nearest'
+        });
+      }
+      checkScrollBounds();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [currentIndex, passagesList.length]);
+
+  useEffect(() => {
+    const el = passageScrollContainerRef.current;
+    if (el) {
+      el.addEventListener('scroll', checkScrollBounds, { passive: true });
+      window.addEventListener('resize', checkScrollBounds);
+      checkScrollBounds();
+      return () => {
+        el.removeEventListener('scroll', checkScrollBounds);
+        window.removeEventListener('resize', checkScrollBounds);
+      };
+    }
+  }, [passagesList.length]);
+
+  const handleManualSlide = (direction) => {
+    if (!passageScrollContainerRef.current) return;
+    const scrollAmount = 260;
+    passageScrollContainerRef.current.scrollBy({
+      left: direction === 'left' ? -scrollAmount : scrollAmount,
+      behavior: 'smooth'
+    });
+    setTimeout(checkScrollBounds, 350);
+  };
+
 
   // Strictly terminate and kick out device if teacher regenerated/reset the PIN
   const handleStrictLogoutPinReset = (msg) => {
@@ -517,6 +617,7 @@ export default function Classroom() {
 
       if (data.settings) {
         sessionStorage.setItem('readfil_classroom_settings', JSON.stringify(data.settings));
+        localStorage.setItem('readfil_auto_send_email', data.settings.auto_send_email ? 'true' : 'false');
         setClassroomSettings(data.settings);
         if (data.settings.shuffle_passages && list.length > 1 && evalResultsRef.current.length === 0 && !isRecordingRef.current) {
           list = [...list].sort(() => Math.random() - 0.5);
@@ -697,6 +798,7 @@ export default function Classroom() {
 
       if (data.settings) {
         sessionStorage.setItem('readfil_classroom_settings', JSON.stringify(data.settings));
+        localStorage.setItem('readfil_auto_send_email', data.settings.auto_send_email ? 'true' : 'false');
         setClassroomSettings(data.settings);
         if (data.settings.shuffle_passages && list.length > 1) {
           list = [...list].sort(() => Math.random() - 0.5);
@@ -708,6 +810,11 @@ export default function Classroom() {
       sessionStorage.setItem('readfil_classroom_pin', cleanPin);
       sessionStorage.setItem('readfil_classroom_teacher', JSON.stringify(data.teacher));
       sessionStorage.setItem('readfil_classroom_teacher_id', data.teacher.id.toString());
+      if (data.teacher?.email) {
+        sessionStorage.setItem('readfil_classroom_teacher_email', data.teacher.email);
+        localStorage.setItem('readfil_classroom_teacher_email', data.teacher.email);
+        localStorage.setItem('user_email', data.teacher.email);
+      }
       localStorage.setItem('user_firstName', cleanName);
 
       setStudentName(cleanName);
@@ -719,6 +826,17 @@ export default function Classroom() {
       setGateError('');
 
       if (list.length > 0) {
+        const rawG = list[0]?.grade_level || '';
+        const gNum = parseInt(String(rawG).replace(/\D/g, ''), 10);
+        let sLevel = "Elementary";
+        if (!isNaN(gNum)) {
+          sLevel = gNum >= 7 ? "High School" : "Elementary";
+        } else if (String(rawG).toLowerCase().includes('high') || String(rawG).toLowerCase().includes('expert')) {
+          sLevel = "High School";
+        }
+        sessionStorage.setItem('readfil_classroom_school_level', sLevel);
+        localStorage.setItem('classroom_school_level', sLevel);
+
         currentIndexRef.current = 0;
         setCurrentIndex(0);
         activePassageRef.current = list[0];
@@ -915,6 +1033,7 @@ export default function Classroom() {
       hasTriggeredAutoStopRef.current = false;
       lastSpeechMatchRatioRef.current = 0;
       isSatisfiedRef.current = false;
+      lastWordMatchedRef.current = false;
       noiseFloorRef.current = 0.02;
       endTimeRef.current = null;
       isRecordingRef.current = true;
@@ -1015,8 +1134,10 @@ export default function Classroom() {
               highestMatchRatioRef.current = nwa.alignRatio;
             }
 
-            // When the last word is aligned on NWA, mark satisfied (silence loop will stop cleanly after pause)
-            if (nwa.lastWordAligned) {
+            // Dedicated checker: Check if last word of target passage matches or at least matches a bit
+            const lastWordHit = checkLastWordMatch(targetWords, spokenWords, nwa.alignRatio);
+            if (lastWordHit || nwa.lastWordMatched || nwa.lastWordAligned) {
+              lastWordMatchedRef.current = true;
               isSatisfiedRef.current = true;
             }
 
@@ -1026,6 +1147,7 @@ export default function Classroom() {
               highestMatchRatioRef.current = check.matchRatio;
             }
             if (check.satisfied) {
+              lastWordMatchedRef.current = true;
               isSatisfiedRef.current = true;
             }
           };
@@ -1104,52 +1226,41 @@ export default function Classroom() {
         const targetCount = targetWords.length;
         const isShortPassage = targetCount <= 10;
 
-        // Buffer: 1200ms grace period for short passages (3-10 words), 2200ms for longer passages
-        const gracePeriod = isShortPassage ? 1200 : 2200;
-        if (recordingAgeMs < gracePeriod) return;
+        // Buffer: 800ms minimum recording time to allow initial microphone capture
+        if (recordingAgeMs < 800) return;
+        const isLastWordDone = isSatisfiedRef.current || lastWordMatchedRef.current;
+        if (!isLastWordDone && recordingAgeMs < (isShortPassage ? 1200 : 2200)) return;
 
         const silenceElapsedMs = now - lastSoundTimeRef.current;
         const totalVoiceMs = speechDurationMsRef.current;
         const matchRatio = Math.max(lastSpeechMatchRatioRef.current, highestMatchRatioRef.current);
         const studentHasSpoken = hasSpokenRef.current || totalVoiceMs >= 100 || recognizedWordsCountRef.current > 0;
 
-        // Case 1: True Completed Reading (Satisfied reader reached the end of the passage)
-        // Natural comfortable pause after uttering the final words:
-        // For short passages (3-10 words): 1200ms silence after last word
-        // For longer passages: 1500ms silence after last word
-        const finishSilence = isShortPassage ? 1200 : 1500;
-        if (isSatisfiedRef.current && silenceElapsedMs >= finishSilence) {
-          triggerAutoStop("words_satisfied", 300);
+        // Case 1: Fast Auto-Stop when Last Word Matched (or matched a bit)
+        // If the student uttered/matched the last word, stop much faster after brief acoustic silence (500ms)
+        if (isLastWordDone && silenceElapsedMs >= 500) {
+          triggerAutoStop("last_word_matched_fast", 150);
           return;
         }
 
-        // Case 2: High word match (completed reading >= 85% of passage) followed by post-reading silence
-        // Short (<=10 words): >= 85% match + 2000ms silence
-        // Longer (>10 words): >= 85% match + 2500ms silence
-        const highMatchThreshold = 0.85;
-        const highMatchSilence = isShortPassage ? 2000 : 2500;
-        if (matchRatio >= highMatchThreshold && silenceElapsedMs >= highMatchSilence) {
-          triggerAutoStop("high_match_completed", 300);
+        // Case 2: High overall match fallback (reader completed >= 75% of text, silence >= 1.8s)
+        if (matchRatio >= 0.75 && silenceElapsedMs >= 1800) {
+          triggerAutoStop("high_match_completed", 200);
           return;
         }
 
-        // Case 3: Dead air ahead of time on an UNFINISHED passage (Student stopped reading / abandoned)
-        // CRITICAL: NEVER cut off a student while they are actively reading or pausing to breathe!
-        // For short passages (3-10 words): require 5.0 seconds of complete acoustic silence.
-        // For longer passages (50-100+ words): require 7.0 seconds of complete acoustic silence!
-        const deadAirThreshold = isShortPassage ? 5000 : 7000;
+        // Case 3: Dead air on UNFINISHED passage (last word NOT matched, student stopped reading)
+        // 5 seconds waiting before it stops
+        const deadAirThreshold = 5000;
         if (studentHasSpoken && silenceElapsedMs >= deadAirThreshold) {
-          triggerAutoStop("dead_air_silence_ahead", 300);
+          triggerAutoStop("dead_air_silence_ahead", 200);
           return;
         }
 
         // Case 4: Initial Dead Air (Student hasn't spoken anything at all from the start)
-        // If a student started the test and says nothing at all:
-        // Short passage: 6.0s of pure silence -> stop
-        // Long passage: 8.5s of pure silence -> stop
-        const initialDeadAirThreshold = isShortPassage ? 6000 : 8500;
+        const initialDeadAirThreshold = 5000;
         if (!studentHasSpoken && recordingAgeMs >= initialDeadAirThreshold && silenceElapsedMs >= initialDeadAirThreshold) {
-          triggerAutoStop("initial_dead_air_silence", 300);
+          triggerAutoStop("initial_dead_air_silence", 200);
           return;
         }
       }, 60);
@@ -1408,7 +1519,17 @@ export default function Classroom() {
         const totalErrors = updatedResults.reduce((sum, r) => sum + r.errors_detected, 0);
 
         const allStutters = Array.from(new Set(updatedResults.flatMap(r => r.stutter_words || [])));
-        const allTraces = updatedResults.flatMap(r => r.trace || []);
+        const allTraces = updatedResults.flatMap((r, pIdx) => (r.trace || []).map(step => ({
+          ...step,
+          passage_index: pIdx + 1,
+          passage_title: r.passage_title,
+          passage_accuracy: r.accuracy_rate,
+          passage_wcpm: r.wcpm,
+          passage_correct: r.correct_words,
+          passage_total: r.total_target_words,
+          passage_errors: r.errors_detected,
+          passage_stutters: r.stutter_words || []
+        })));
 
         const overallAccScore = avgAccuracy * 0.5;
         const overallFluScore = Math.min((avgWcpm / targetWcpm) * 50, 50);
@@ -1450,6 +1571,15 @@ export default function Classroom() {
             handleStrictLogoutPinReset(submitData.error);
             return;
           }
+
+          if (submitRes.ok) {
+            const submitData = await submitRes.json();
+            if (submitData?.teacher_email) {
+              sessionStorage.setItem('readfil_classroom_teacher_email', submitData.teacher_email);
+              localStorage.setItem('readfil_classroom_teacher_email', submitData.teacher_email);
+              localStorage.setItem('user_email', submitData.teacher_email);
+            }
+          }
         } catch (logErr) {
           console.warn("Could not save to teacher classroom database:", logErr);
         }
@@ -1470,6 +1600,19 @@ export default function Classroom() {
           level: `Classroom Passage #${idx + 1}: ${r.passage_title}`
         }));
 
+        // Determine whether this classroom assessment is Elementary (<= 6) or High School (>= 7)
+        const activeOrFirstPassage = (passagesListRef.current && passagesListRef.current[0]) || activePassage;
+        const rawGrade = activeOrFirstPassage?.grade_level || '';
+        const gradeNum = parseInt(String(rawGrade).replace(/\D/g, ''), 10);
+        let schoolLevel = "Elementary";
+        if (!isNaN(gradeNum)) {
+          schoolLevel = gradeNum >= 7 ? "High School" : "Elementary";
+        } else if (String(rawGrade).toLowerCase().includes('high') || String(rawGrade).toLowerCase().includes('expert')) {
+          schoolLevel = "High School";
+        }
+        localStorage.setItem('classroom_school_level', schoolLevel);
+        localStorage.setItem('classroom_grade_level', rawGrade);
+
         // Save to localStorage for standard Results.jsx view
         localStorage.setItem('user_firstName', studentName);
         localStorage.setItem('final_accuracy', avgAccuracy.toString());
@@ -1477,6 +1620,16 @@ export default function Classroom() {
         localStorage.setItem('evaluated_level', 'Classroom');
         localStorage.setItem('reading_logs', JSON.stringify(logsForResults));
         localStorage.setItem('is_classroom_session', 'true');
+        localStorage.setItem('readfil_auto_send_email', classroomSettings?.auto_send_email ? 'true' : 'false');
+
+        // Ensure teacher email is retained in localStorage for certificate email dispatch
+        const finalTeacherEmail = gateTeacher?.email ||
+                                  sessionStorage.getItem('readfil_classroom_teacher_email') ||
+                                  localStorage.getItem('readfil_classroom_teacher_email');
+        if (finalTeacherEmail) {
+          localStorage.setItem('readfil_classroom_teacher_email', finalTeacherEmail);
+          localStorage.setItem('user_email', finalTeacherEmail);
+        }
 
         // Redirect to Results Page
         navigate('/results');
@@ -1924,40 +2077,131 @@ export default function Classroom() {
 
         {/* Multi-Passage Sequence Progress Bar */}
         {passagesList.length > 1 && (
-          <div className="bg-white border border-gray-200 rounded-2xl p-4 mb-6 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-                {isEn ? "Assessment Progress:" : "Progreso sa Pagsusulit:"}
-              </span>
-              <span className="text-sm font-extrabold text-[#0096FF]">
-                {currentIndex + 1} / {passagesList.length}
-              </span>
+          <div className="bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl sm:rounded-3xl p-3.5 sm:p-5 mb-6 shadow-sm shadow-blue-500/5 relative overflow-hidden transition-all">
+            
+            {/* Header: Label, Progress Counter & Track */}
+            <div className="flex items-center justify-between gap-3 mb-3 px-1">
+              <div className="flex items-center gap-2 sm:gap-2.5">
+                <div className="w-2 h-2 rounded-full bg-[#0096FF] animate-pulse flex-shrink-0"></div>
+                <span className="text-[11px] sm:text-xs font-black uppercase tracking-wider text-slate-500">
+                  {isEn ? "Assessment Progress" : "Progreso sa Pagsusulit"}
+                </span>
+                <span className="text-[11px] sm:text-xs font-black text-[#0096FF] bg-blue-50 border border-blue-200/90 px-2 sm:px-2.5 py-0.5 rounded-full shadow-sm">
+                  {currentIndex + 1} / {passagesList.length}
+                </span>
+              </div>
+
+              {/* Progress Percentage & Animated Micro-Bar */}
+              <div className="flex items-center gap-2 sm:gap-3">
+                <span className="text-xs font-bold text-slate-700 font-mono">
+                  {Math.round(((currentIndex + 1) / passagesList.length) * 100)}%
+                </span>
+                <div className="w-20 sm:w-36 bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200/80 p-[1px] flex-shrink-0">
+                  <div 
+                    className="bg-gradient-to-r from-[#0096FF] to-blue-600 h-full rounded-full transition-all duration-500 ease-out shadow-sm"
+                    style={{ width: `${Math.round(((currentIndex + 1) / passagesList.length) * 100)}%` }}
+                  />
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              {passagesList.map((p, idx) => {
-                const isDone = idx < currentIndex;
-                const isCurrent = idx === currentIndex;
-                return (
-                  <div
-                    key={p.id || idx}
-                    className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold transition-all ${isDone
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        : isCurrent
-                          ? 'bg-blue-50 text-[#0096FF] border border-blue-200 ring-2 ring-blue-500/20'
-                          : 'bg-gray-50 text-gray-400 border border-gray-200'
+            {/* Strictly ONE LINE ONLY with Auto-Slide, Side Fade Masks & Floating Controls */}
+            <div className="relative flex items-center w-full group">
+              
+              {/* Left Subtle Edge Fade Mask */}
+              {canScrollLeft && (
+                <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-8 sm:w-12 bg-gradient-to-r from-white via-white/80 to-transparent z-10 transition-opacity duration-300" />
+              )}
+
+              {/* Floating Left Slide Button */}
+              {canScrollLeft && (
+                <button
+                  type="button"
+                  onClick={() => handleManualSlide('left')}
+                  className="absolute left-1 z-20 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white/95 backdrop-blur-md border border-slate-200 text-slate-600 hover:text-[#0096FF] hover:border-blue-200 shadow-md flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+                  title={isEn ? "Slide left" : "I-slide pakaliwa"}
+                  aria-label="Slide left"
+                >
+                  <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              )}
+
+              {/* One line only horizontal scroll track */}
+              <div 
+                ref={passageScrollContainerRef}
+                className="flex items-center gap-2 overflow-x-auto py-1 px-1 sm:px-2 max-w-full flex-nowrap whitespace-nowrap no-scrollbar scroll-smooth w-full"
+              >
+                {passagesList.map((p, idx) => {
+                  const isDone = idx < currentIndex;
+                  const isCurrent = idx === currentIndex;
+                  return (
+                    <div
+                      key={p.id || idx}
+                      ref={isCurrent ? activePillRef : null}
+                      className={`flex-shrink-0 whitespace-nowrap flex items-center gap-2 px-3 sm:px-3.5 py-1.5 rounded-xl sm:rounded-2xl text-xs font-bold transition-all select-none ${
+                        isDone
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200/90 shadow-sm'
+                          : isCurrent
+                            ? 'bg-gradient-to-r from-blue-600 to-[#0096FF] text-white shadow-md shadow-blue-500/25 ring-2 ring-blue-400/40 font-extrabold scale-[1.02]'
+                            : 'bg-slate-50 text-slate-500 border border-slate-200/80 hover:bg-slate-100 hover:text-slate-700'
                       }`}
-                  >
-                    <span>#{idx + 1}</span>
-                    <span className="truncate max-w-[90px]">{p.title}</span>
-                    {isDone && (
-                      <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
-                  </div>
-                );
-              })}
+                    >
+                      {/* Pill Badge */}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold ${
+                        isCurrent 
+                          ? 'bg-white/20 text-white' 
+                          : isDone 
+                            ? 'bg-emerald-100 text-emerald-700' 
+                            : 'bg-slate-200 text-slate-600'
+                      }`}>
+                        #{idx + 1}
+                      </span>
+
+                      {/* Active indicator dot */}
+                      {isCurrent && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping flex-shrink-0"></span>
+                      )}
+
+                      {/* Title */}
+                      <span className="truncate max-w-[110px] sm:max-w-[150px] md:max-w-[180px]">
+                        {p.title}
+                      </span>
+
+                      {/* Done Checkmark */}
+                      {isDone && (
+                        <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Right Subtle Edge Fade Mask */}
+              {canScrollRight && (
+                <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-8 sm:w-12 bg-gradient-to-l from-white via-white/80 to-transparent z-10 transition-opacity duration-300" />
+              )}
+
+              {/* Floating Right Slide Button */}
+              {canScrollRight && (
+                <button
+                  type="button"
+                  onClick={() => handleManualSlide('right')}
+                  className="absolute right-1 z-20 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white/95 backdrop-blur-md border border-slate-200 text-slate-600 hover:text-[#0096FF] hover:border-blue-200 shadow-md flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+                  title={isEn ? "Slide right" : "I-slide pakanan"}
+                  aria-label="Slide right"
+                >
+                  <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              )}
+
             </div>
           </div>
         )}
@@ -1973,7 +2217,7 @@ export default function Classroom() {
         </div>
 
         {/* Reading Material Card - Matching Easy / Beginner UI */}
-        <div className="bg-white/90 backdrop-blur-md p-5 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl shadow-sky-100/50 border border-white/80 mb-8 relative">
+        <div className="bg-white/90 backdrop-blur-md p-4 sm:p-10 rounded-2xl sm:rounded-[2rem] shadow-xl shadow-sky-100/50 border border-white/80 mb-8 relative">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl sm:text-2xl font-bold text-[#0096FF]">
               {isEn ? "Reading Material" : "Materyal sa Pagbasa"}
@@ -1983,7 +2227,7 @@ export default function Classroom() {
             </span>
           </div>
 
-          <div className="p-5 pb-20 sm:p-8 sm:pb-16 bg-gray-50 rounded-xl border border-gray-200 min-h-[160px] flex flex-col items-center justify-center relative">
+          <div className="p-4 pb-20 sm:p-8 sm:pb-16 bg-gray-50 rounded-xl border border-gray-200 min-h-[160px] flex flex-col items-center justify-center relative">
             {isCountingDown && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 backdrop-blur-sm rounded-xl">
                 <span className="text-6xl sm:text-8xl font-black text-[#0096FF] animate-pulse">
@@ -1992,7 +2236,7 @@ export default function Classroom() {
               </div>
             )}
 
-            <p className={`text-xl sm:text-2xl leading-relaxed text-center font-medium text-black transition-all duration-300 ${!isRecording && !isProcessing ? 'blur-sm select-none' : ''}`}>
+            <p className={`text-lg sm:text-2xl leading-relaxed text-center font-medium text-black transition-all duration-300 ${!isRecording && !isProcessing ? 'blur-sm select-none' : ''}`}>
               "{activePassage?.content || ''}"
             </p>
 
@@ -2003,7 +2247,7 @@ export default function Classroom() {
             )}
 
             {/* Timer pill in bottom-right matching Easy / Beginner UI */}
-            <div className={`absolute bottom-4 right-6 flex items-center gap-2 font-mono font-bold bg-white px-3.5 py-1.5 rounded-full border shadow-sm text-sm transition-all ${isTimeCritical && isRecording
+            <div className={`absolute bottom-3 right-4 sm:bottom-4 sm:right-6 flex items-center gap-2 font-mono font-bold bg-white px-3.5 py-1.5 rounded-full border shadow-sm text-sm transition-all ${isTimeCritical && isRecording
                 ? 'border-red-300 text-red-600 animate-pulse'
                 : 'border-gray-200 text-gray-600'
               }`}>
@@ -2091,7 +2335,7 @@ export default function Classroom() {
               : isRecording
                 ? (isEn ? "Reading in progress... (Auto-stops when finished)" : "Kasalukuyang nagbabasa... (Kusang hihinto pagkatapos)")
                 : isProcessing
-                  ? (isEn ? "Evaluating reading via ASR engine..." : "Sinusuri ng ASR engine ang iyong pagbasa...")
+                  ? (isEn ? "Evaluating reading..." : "Sinusuri ang iyong pagbasa...")
                   : isCountingDown
                     ? (isEn ? "Get ready..." : "Humanda...")
                     : isSilenceError
@@ -2112,8 +2356,14 @@ export default function Classroom() {
 
       {/* Interstitial Modal Between Passages */}
       {isBetweenPassages && lastPassageSummary && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl animate-in zoom-in-95 duration-200 text-center">
+        <div 
+          onClick={handleProceedToNextPassage}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in duration-200 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl animate-in zoom-in-95 duration-200 text-center cursor-default"
+          >
             <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-4 border border-emerald-200">
               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
@@ -2200,8 +2450,26 @@ export default function Classroom() {
 
       {/* Student Name Modal */}
       {isNameModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl animate-in fade-in zoom-in duration-200">
+        <div 
+          onClick={() => setIsNameModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-gray-200 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl animate-in fade-in zoom-in duration-200 relative cursor-default"
+          >
+            {/* Close Button X */}
+            <button
+              type="button"
+              onClick={() => setIsNameModalOpen(false)}
+              className="absolute top-5 right-5 p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-all"
+              aria-label="Close"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
             <h3 className="text-xl font-black text-slate-900 mb-2">
               {isEn ? "Student Name" : "Pangalan ng Mag-aaral"}
             </h3>
@@ -2251,8 +2519,26 @@ export default function Classroom() {
 
       {/* Leave Classroom Confirmation Modal */}
       {isLeaveModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white border border-gray-100 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl shadow-slate-900/25 animate-in zoom-in-95 duration-200 text-center relative overflow-hidden">
+        <div 
+          onClick={() => setIsLeaveModalOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-gray-100 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl shadow-slate-900/25 animate-in zoom-in-95 duration-200 text-center relative overflow-hidden cursor-default"
+          >
+            {/* Close Button X */}
+            <button
+              type="button"
+              onClick={() => setIsLeaveModalOpen(false)}
+              className="absolute top-4 right-4 p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-all"
+              aria-label="Close"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
             <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-sm bg-rose-50 border border-rose-100 text-rose-600">
               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
