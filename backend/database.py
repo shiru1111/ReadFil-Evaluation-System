@@ -7,6 +7,7 @@ import os
 import sqlite3
 import json
 import io
+import tempfile
 import csv
 import random
 import secrets
@@ -1754,4 +1755,115 @@ def get_admin_audit_logs(limit=100):
         return [dict(r) for r in cursor.fetchall()]
     finally:
         conn.close()
+
+def restore_database_from_bytes(file_content, admin_password=None, current_session_token=None):
+    """
+    Safely restores SQLite database from raw bytes using sqlite3.Connection.backup().
+    Bypasses Windows file locking (WinError 5 / WinError 32) and preserves active connections.
+    """
+    if not file_content or len(file_content) < 100:
+        return {"success": False, "error": "Uploaded file is too small or empty."}
+
+    # 1. Header check
+    if not file_content.startswith(b"SQLite format 3"):
+        return {"success": False, "error": "Invalid SQLite database file. Header check failed."}
+
+    # 2. Write to a temporary file to inspect and validate
+    temp_fd, temp_file_path = tempfile.mkstemp(suffix=".db")
+    try:
+        with os.fdopen(temp_fd, "wb") as f:
+            f.write(file_content)
+
+        # 3. Open temporary database and inspect integrity
+        src_conn = sqlite3.connect(temp_file_path, timeout=10)
+        src_cursor = src_conn.cursor()
+
+        # Check SQLite integrity
+        integrity_row = src_cursor.execute("PRAGMA integrity_check").fetchone()
+        if not integrity_row or integrity_row[0].lower() != "ok":
+            src_conn.close()
+            return {"success": False, "error": f"Database integrity check failed: {integrity_row[0] if integrity_row else 'Corrupt file'}"}
+
+        # Check that this database is actually a ReadFil database
+        tables = [r[0] for r in src_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        if not any(t in tables for t in ['teachers', 'admin_account', 'custom_passages', 'student_results']):
+            src_conn.close()
+            return {"success": False, "error": "Uploaded file is not a valid ReadFil database. Missing core tables."}
+
+        # 4. Check password authorization if admin_password was provided
+        # Allow matching EITHER the active local DB admin account OR the incoming DB admin account
+        if admin_password:
+            pwd_valid = False
+
+            # Check active local DB
+            if os.path.exists(DB_PATH):
+                try:
+                    local_conn = get_db_connection()
+                    local_admin = local_conn.execute("SELECT password_hash FROM admin_account WHERE id = 1").fetchone()
+                    local_conn.close()
+                    if local_admin and check_password_hash(local_admin['password_hash'], admin_password):
+                        pwd_valid = True
+                except Exception:
+                    pass
+
+            # Check incoming DB if not yet verified
+            if not pwd_valid and 'admin_account' in tables:
+                try:
+                    src_cursor.execute("SELECT password_hash FROM admin_account WHERE id = 1")
+                    inc_admin = src_cursor.fetchone()
+                    if inc_admin and check_password_hash(inc_admin[0], admin_password):
+                        pwd_valid = True
+                except Exception:
+                    pass
+
+            if not pwd_valid:
+                src_conn.close()
+                return {"success": False, "error": "Incorrect administrator password."}
+
+        # 5. Create safety backup of the active database before replacing
+        if os.path.exists(DB_PATH):
+            try:
+                safety_conn = sqlite3.connect(DB_PATH, timeout=10)
+                backup_safety = sqlite3.connect(DB_PATH + ".safety_backup")
+                safety_conn.backup(backup_safety)
+                backup_safety.close()
+                safety_conn.close()
+            except Exception as be:
+                print(f"[BACKUP NOTICE] Safety backup note: {be}")
+
+        # 6. Perform online backup restore: source -> dest
+        dest_conn = sqlite3.connect(DB_PATH, timeout=30)
+        src_conn.backup(dest_conn)
+        dest_conn.commit()
+        dest_conn.close()
+        src_conn.close()
+
+        # 7. Run init_db() to apply any pending schema migrations on the restored database
+        init_db()
+
+        # 8. Re-attach current session token if provided so admin is not logged out
+        if current_session_token:
+            try:
+                s_conn = get_db_connection()
+                s_conn.execute(
+                    "INSERT OR REPLACE INTO admin_sessions (token, expires_at) VALUES (?, datetime('now', '+24 hours'))",
+                    (current_session_token,)
+                )
+                s_conn.commit()
+                s_conn.close()
+            except Exception as se:
+                print(f"[RESTORE SESSION NOTICE] {se}")
+
+        log_admin_audit("DATABASE_RESTORED", "Database restored successfully via SQLite online backup")
+        return {"success": True, "message": "Database restored successfully!"}
+
+    except Exception as e:
+        return {"success": False, "error": f"Failed to restore database: {str(e)}"}
+    finally:
+        if os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except Exception:
+                pass
+
 

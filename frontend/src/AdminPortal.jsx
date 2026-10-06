@@ -80,6 +80,11 @@ export default function AdminPortal() {
   const [restorePassword, setRestorePassword] = useState('');
   const [restoreLoading, setRestoreLoading] = useState(false);
 
+  // DB Restore on Initial Setup Screen
+  const [isSetupRestoreModalOpen, setIsSetupRestoreModalOpen] = useState(false);
+  const [setupRestoreFile, setSetupRestoreFile] = useState(null);
+  const [setupRestoreLoading, setSetupRestoreLoading] = useState(false);
+
   // Refs for OTP & PIN boxes
   const pinRefs = useRef([]);
   const otpRefs = useRef([]);
@@ -608,6 +613,37 @@ export default function AdminPortal() {
     }
   };
 
+  const handleSetupRestoreDatabase = async (e) => {
+    e.preventDefault();
+    if (!setupRestoreFile) {
+      showToast('Please select a .db file.', 'error');
+      return;
+    }
+    const formData = new FormData();
+    formData.append('database', setupRestoreFile);
+    formData.append('db_file', setupRestoreFile);
+
+    try {
+      setSetupRestoreLoading(true);
+      const res = await fetch(`${API_BASE}/api/admin/setup-restore`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Restore failed');
+
+      showToast(data.message || 'Database restored successfully!');
+      setIsSetupRestoreModalOpen(false);
+      setSetupRestoreFile(null);
+      await fetchAdminStatus();
+      setAuthStep('login');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setSetupRestoreLoading(false);
+    }
+  };
+
   const handlePurgeAudio = async () => {
     if (!window.confirm('Delete temporary audio files older than 7 days? Permanent scores will not be deleted.')) return;
     try {
@@ -864,9 +900,68 @@ export default function AdminPortal() {
               >
                 {authLoading ? 'Creating Account...' : 'Set Up Admin'}
               </button>
+
+              <div className="relative flex py-2 items-center">
+                <div className="flex-grow border-t border-gray-200"></div>
+                <span className="flex-shrink mx-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">or</span>
+                <div className="flex-grow border-t border-gray-200"></div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsSetupRestoreModalOpen(true)}
+                className="w-full py-3 rounded-xl font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 transition-all text-xs cursor-pointer text-center"
+              >
+                Restore from Existing Database (.db)
+              </button>
             </form>
           )}
         </div>
+
+        {/* MODAL: SETUP RESTORE DATABASE */}
+        {isSetupRestoreModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
+            <div className="bg-white border border-gray-200 rounded-2xl p-6 max-w-md w-full shadow-xl animate-in fade-in zoom-in duration-150">
+              <h3 className="text-base font-bold text-gray-900 mb-1">Restore Database from Another Device</h3>
+              <p className="text-xs text-gray-500 mb-4 leading-relaxed">
+                Upload a readfil_backup (.db) file to transfer your classes, passages, teachers, and records to this device.
+              </p>
+
+              <form onSubmit={handleSetupRestoreDatabase} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Select Database Backup File (.db)</label>
+                  <input
+                    type="file"
+                    required
+                    accept=".db,.sqlite,.sqlite3"
+                    onChange={(e) => setSetupRestoreFile(e.target.files[0])}
+                    className="w-full text-xs text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-gray-100 file:text-gray-800 hover:file:bg-gray-200 cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSetupRestoreModalOpen(false);
+                      setSetupRestoreFile(null);
+                    }}
+                    className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={setupRestoreLoading}
+                    className="flex-1 py-2.5 rounded-xl bg-[#0096FF] hover:bg-[#007acc] text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {setupRestoreLoading ? 'Restoring...' : 'Restore Database'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -2030,6 +2125,9 @@ export default function AdminPortal() {
                   placeholder="Enter your password to authorize"
                   className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-800 outline-none focus:border-[#0096FF]"
                 />
+                <p className="text-[11px] text-gray-400 mt-1">
+                  You can enter your current admin password or the admin password from the backup file.
+                </p>
               </div>
 
               <div className="flex gap-3 pt-3">

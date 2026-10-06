@@ -3806,82 +3806,58 @@ def admin_db_download():
 @app.route('/api/admin/db/restore', methods=['POST'])
 @admin_required
 def admin_db_restore():
-    """Uploads and restores a valid SQLite database backup file."""
-    # Check password confirmation if provided
+    """Uploads and restores a valid SQLite database backup file using SQLite online backup."""
     admin_pwd = request.form.get('admin_password') or request.form.get('password')
-    if admin_pwd:
-        conn = database.get_db_connection()
-        try:
-            admin = conn.execute("SELECT * FROM admin_account WHERE id = 1").fetchone()
-            if admin and not database.check_password_hash(admin['password_hash'], admin_pwd):
-                return jsonify({"success": False, "error": "Incorrect administrator password."}), 403
-        finally:
-            conn.close()
+    file = request.files.get('database') or request.files.get('db_file') or request.files.get('file')
+    if not file or not file.filename:
+        return jsonify({"success": False, "error": "No database file uploaded."}), 400
+
+    content = file.read()
+
+    # Preserve current admin session token so user is not logged out upon restore
+    auth_header = request.headers.get('Authorization', '')
+    active_token = auth_header.split(' ', 1)[1].strip() if auth_header.startswith('Bearer ') else None
+
+    result = database.restore_database_from_bytes(
+        file_content=content,
+        admin_password=admin_pwd,
+        current_session_token=active_token
+    )
+
+    if not result.get('success'):
+        status_code = 403 if "password" in result.get('error', '').lower() else 400
+        return jsonify(result), status_code
+
+    database.log_admin_audit("DATABASE_RESTORED", f"Admin restored database from file: {file.filename}")
+    return jsonify(result), 200
+
+@app.route('/api/admin/setup-restore', methods=['POST'])
+def admin_setup_restore():
+    """Allows uploading and restoring a database backup during initial setup on a new device."""
+    status = database.get_admin_status()
+    admin_pwd = request.form.get('admin_password') or request.form.get('password')
 
     file = request.files.get('database') or request.files.get('db_file') or request.files.get('file')
     if not file or not file.filename:
         return jsonify({"success": False, "error": "No database file uploaded."}), 400
 
     content = file.read()
-    if len(content) < 100 or not content.startswith(b"SQLite format 3"):
-        return jsonify({"success": False, "error": "Invalid SQLite database file. Header check failed."}), 400
 
-    # Preserve current admin session token so user is not logged out upon restore
-    auth_header = request.headers.get('Authorization', '')
-    active_token = auth_header.split(' ', 1)[1].strip() if auth_header.startswith('Bearer ') else None
+    result = database.restore_database_from_bytes(
+        file_content=content,
+        admin_password=admin_pwd if status.get('is_setup') else None,
+        current_session_token=None
+    )
 
-    # Create safety backup of current database
-    if os.path.exists(database.DB_PATH):
-        backup_path = database.DB_PATH + ".safety_backup"
-        try:
-            with open(backup_path, "wb") as bf:
-                with open(database.DB_PATH, "rb") as cur:
-                    bf.write(cur.read())
-        except Exception as be:
-            print(f"[BACKUP WARNING] Could not create safety backup: {be}")
+    if not result.get('success'):
+        status_code = 403 if "password" in result.get('error', '').lower() else 400
+        return jsonify(result), status_code
 
-    # Write new database safely
-    try:
-        temp_restore_path = database.DB_PATH + ".restoring"
-        with open(temp_restore_path, "wb") as f:
-            f.write(content)
-
-        # Remove auxiliary SQLite files if present
-        for ext in ['-wal', '-shm']:
-            aux = database.DB_PATH + ext
-            if os.path.exists(aux):
-                try:
-                    os.remove(aux)
-                except Exception:
-                    pass
-
-        # Atomic replacement
-        if os.path.exists(database.DB_PATH):
-            try:
-                os.remove(database.DB_PATH)
-            except Exception:
-                pass
-        os.replace(temp_restore_path, database.DB_PATH)
-
-        database.init_db()
-
-        # Re-attach active admin session token
-        if active_token:
-            try:
-                s_conn = database.get_db_connection()
-                s_conn.execute(
-                    "INSERT OR REPLACE INTO admin_sessions (token, expires_at) VALUES (?, datetime('now', '+24 hours'))",
-                    (active_token,)
-                )
-                s_conn.commit()
-                s_conn.close()
-            except Exception as se:
-                print(f"[RESTORE SESSION NOTICE] {se}")
-
-        database.log_admin_audit("DATABASE_RESTORED", f"Admin restored database from file: {file.filename}")
-        return jsonify({"success": True, "message": "Database restored successfully!"}), 200
-    except Exception as e:
-        return jsonify({"success": False, "error": f"Failed to restore database: {e}"}), 500
+    database.log_admin_audit("SETUP_DATABASE_RESTORED", f"Database restored during setup from file: {file.filename}")
+    return jsonify({
+        "success": True,
+        "message": "Database restored successfully! You can now log in with your administrator credentials from this backup."
+    }), 200
 
 @app.route('/api/admin/db/cleanup-audio', methods=['POST'])
 @admin_required
