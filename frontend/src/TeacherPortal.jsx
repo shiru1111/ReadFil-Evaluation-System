@@ -1722,78 +1722,79 @@ export default function TeacherPortal() {
       <SoundWaveBackground opacity={0.08} />
 
       {/* Top Navbar */}
-      <header className="relative z-20 border-b border-gray-200 bg-white/85 backdrop-blur-md px-6 sm:px-12 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-center space-x-4">
-          <Link to="/" className="text-2xl font-black text-[#0096FF] tracking-tight hover:opacity-90">
+      <header className="relative z-20 border-b border-gray-200 bg-white/85 backdrop-blur-md px-3 sm:px-8 py-3 flex items-center justify-between gap-3 shadow-xs">
+        <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
+          <Link to="/" className="text-xl sm:text-2xl font-black text-[#0096FF] tracking-tight hover:opacity-90 flex-shrink-0">
             ReadFil
           </Link>
-          <span className="text-xs uppercase font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+          <span className="hidden sm:inline-flex text-[11px] sm:text-xs uppercase font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 flex-shrink-0">
             {isEn ? "Teacher Portal" : "Portal ng Guro"}
           </span>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2 sm:space-x-3 flex-shrink-0">
           {classroomPin && (
-            <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-xs font-mono font-bold text-[#0096FF]">
+            <div className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-xs font-mono font-bold text-[#0096FF]">
               <span className="text-[10px] text-gray-500 font-sans uppercase">PIN:</span>
               <span className="tracking-wider">{classroomPin}</span>
             </div>
           )}
-          <div className="text-right hidden sm:block">
-            <div className="text-xs text-gray-500">{isEn ? "Logged in as:" : "Naka-login bilang:"}</div>
-            <div className="text-sm font-bold text-slate-800">{teacher.name}</div>
+          <div className="text-right hidden md:block">
+            <div className="text-[10px] text-gray-400 leading-tight">{isEn ? "Logged in as:" : "Naka-login bilang:"}</div>
+            <div className="text-xs font-bold text-slate-800 truncate max-w-[120px]">{teacher.name}</div>
           </div>
           <button
             onClick={handleLogout}
-            className="text-xs uppercase font-bold text-red-600 hover:text-white hover:bg-red-600 px-3.5 py-2 rounded-xl border border-red-200 transition-all shadow-sm"
+            className="flex items-center gap-1 text-[11px] sm:text-xs uppercase font-bold text-red-600 hover:text-white hover:bg-red-600 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl border border-red-200 transition-all shadow-xs cursor-pointer"
           >
-            {isEn ? "Log Out" : "Mag-Logout"}
+            <span className="hidden sm:inline">{isEn ? "Log Out" : "Mag-Logout"}</span>
+            <span className="sm:hidden">{isEn ? "Exit" : "Alis"}</span>
           </button>
         </div>
       </header>
 
       {/* Main Content Area */}
-      <main className="relative z-20 max-w-7xl mx-auto px-4 sm:px-8 py-8">
+      <main className="relative z-20 max-w-7xl mx-auto px-3 sm:px-8 py-4 sm:py-8">
         {/* Navigation Tabs */}
-        <div className="flex border-b border-gray-200 mb-8 gap-2">
+        <div className="flex border-b border-gray-200 mb-6 sm:mb-8 gap-1 sm:gap-2 overflow-x-auto no-scrollbar scrollbar-none whitespace-nowrap">
           <button
             onClick={() => setActiveTab('passages')}
-            className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${activeTab === 'passages'
+            className={`flex-shrink-0 flex items-center gap-1.5 sm:gap-2 px-3.5 sm:px-6 py-2.5 sm:py-3 font-bold text-xs sm:text-sm border-b-2 transition-all ${activeTab === 'passages'
               ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
               : 'border-transparent text-gray-500 hover:text-slate-900'
               }`}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            {isEn ? `Passage Management (${passages.length})` : `Pamamahala ng Talata (${passages.length})`}
+            <span>{isEn ? `Passages (${passages.length})` : `Talata (${passages.length})`}</span>
           </button>
 
           <button
             onClick={() => setActiveTab('students')}
-            className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${activeTab === 'students'
+            className={`flex-shrink-0 flex items-center gap-1.5 sm:gap-2 px-3.5 sm:px-6 py-2.5 sm:py-3 font-bold text-xs sm:text-sm border-b-2 transition-all ${activeTab === 'students'
               ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
               : 'border-transparent text-gray-500 hover:text-slate-900'
               }`}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
-            {isEn ? `Student Records (${records.length})` : `Talaan ng mga Mag-aaral (${records.length})`}
+            <span>{isEn ? `Records (${records.length})` : `Talaan (${records.length})`}</span>
           </button>
 
           <button
             onClick={() => setActiveTab('settings')}
-            className={`flex items-center gap-2 px-6 py-3 font-bold text-sm sm:text-base border-b-2 transition-all ${activeTab === 'settings'
+            className={`flex-shrink-0 flex items-center gap-1.5 sm:gap-2 px-3.5 sm:px-6 py-2.5 sm:py-3 font-bold text-xs sm:text-sm border-b-2 transition-all ${activeTab === 'settings'
               ? 'border-[#0096FF] text-[#0096FF] bg-blue-50/70 rounded-t-xl'
               : 'border-transparent text-gray-500 hover:text-slate-900'
               }`}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-            {isEn ? "Classroom Settings" : "Setting ng Silid-Aralan"}
+            <span>{isEn ? "Classroom Settings" : "Setting"}</span>
           </button>
         </div>
 
