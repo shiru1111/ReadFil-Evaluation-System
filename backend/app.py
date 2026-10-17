@@ -68,8 +68,17 @@ print("Loading faster-whisper (base)...")
 whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
 print("Both models loaded. Dual-pipeline ready.\n")
 
+import uuid
+from scoring_engine import (
+    select_best_model,
+    calculate_full_evaluation,
+    get_proficiency_level,
+    needleman_wunsch_alignment,
+    clean_text
+)
+
 # =================================================================
-# AUDIO PREPROCESSING
+# AUDIO PREPROCESSING (FR-004, FR-005, FR-006)
 # =================================================================
 def convert_webm_to_wav(webm_path, wav_path):
     audio = AudioSegment.from_file(webm_path, format="webm")
@@ -83,7 +92,8 @@ def preprocess_audio(input_wav_path, output_wav_path):
     normalized.export(output_wav_path, format="wav")
 
     speech, sr = librosa.load(output_wav_path, sr=16000)
-    trimmed, _ = librosa.effects.trim(speech, top_db=25)
+    # FR-006: 30dB silence trimming using Librosa
+    trimmed, _ = librosa.effects.trim(speech, top_db=30)
 
     if len(trimmed) < int(0.5 * sr):
         trimmed = speech
@@ -92,7 +102,7 @@ def preprocess_audio(input_wav_path, output_wav_path):
     return librosa.get_duration(y=trimmed, sr=sr)
 
 # =================================================================
-# TRANSCRIPTION
+# TRANSCRIPTION (FR-007, FR-008, FR-009)
 # =================================================================
 def transcribe_wav2vec(wav_path):
     speech_array, _ = librosa.load(wav_path, sr=16000)
@@ -110,62 +120,7 @@ def transcribe_whisper(wav_path):
     return " ".join(seg.text.strip() for seg in segments)
 
 # =================================================================
-# SCORING & SEGMENTATION (Sprints 4 & 5)
-# =================================================================
-def calculate_word_metrics(target, transcription):
-    target = re.sub(r'[^\w\s]', '', target.lower())
-    trans = re.sub(r'[^\w\s]', '', transcription.lower())
-    
-    target_words = target.split()
-    trans_words = trans.split()
-    
-    m, n = len(target_words), len(trans_words)
-    dp = [[0] * (n + 1) for _ in range(m + 1)]
-    
-    for i in range(m + 1): dp[i][0] = i
-    for j in range(n + 1): dp[0][j] = j
-        
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            if target_words[i - 1] == trans_words[j - 1]:
-                dp[i][j] = dp[i - 1][j - 1]
-            else:
-                dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
-                
-    errors = dp[m][n]
-    total_target_words = len(target_words)
-    correct_words = max(0, total_target_words - errors)
-    return total_target_words, correct_words, errors
-
-def segment_phrases(text, transcription):
-    segments = re.split(r'(?<=[.?!])\s+', text.strip())
-    if not segments or not segments[0]:
-        segments = [text]
-        
-    phrase_breakdown = []
-    trans_idx = 0
-    trans_words = transcription.split()
-    trans_clean = [re.sub(r'[^\w\s]', '', w.lower()) for w in trans_words]
-    
-    for segment in segments:
-        seg_clean = [re.sub(r'[^\w\s]', '', w.lower()) for w in segment.split()]
-        num_seg_words = len(seg_clean)
-        
-        # Naive windowing for phrase alignment
-        trans_chunk = trans_clean[trans_idx : trans_idx + num_seg_words + 2] 
-        trans_chunk_str = " ".join(trans_chunk)
-        
-        t_words, c_words, err = calculate_word_metrics(segment, trans_chunk_str)
-        phrase_breakdown.append({
-            "target_phrase": segment,
-            "accuracy": round((c_words / t_words * 100), 2) if t_words > 0 else 0
-        })
-        trans_idx += num_seg_words
-        
-    return phrase_breakdown
-
-# =================================================================
-# API ENDPOINT
+# API ENDPOINT (Sprints 4, 5, 6 / FR-010 to FR-016)
 # =================================================================
 @app.route('/api/evaluate', methods=['POST'])
 def evaluate_audio():
@@ -173,82 +128,88 @@ def evaluate_audio():
         return jsonify({"error": "Missing audio file or target text"}), 400
 
     audio_file  = request.files['audio']
-    target_text = request.form['target_text']
+    target_text = request.form['target_text'].strip()
 
     if audio_file.filename == '':
         return jsonify({"error": "Empty audio file received"}), 400
 
-    webm_path      = os.path.join(UPLOAD_FOLDER, "latest_recording.webm")
-    wav_raw_path   = os.path.join(UPLOAD_FOLDER, "latest_recording_raw.wav")
-    wav_clean_path = os.path.join(UPLOAD_FOLDER, "latest_recording_clean.wav")
+    # Thread-safe unique temporary files per assessment session
+    session_id     = str(uuid.uuid4())
+    webm_path      = os.path.join(UPLOAD_FOLDER, f"{session_id}.webm")
+    wav_raw_path   = os.path.join(UPLOAD_FOLDER, f"{session_id}_raw.wav")
+    wav_clean_path = os.path.join(UPLOAD_FOLDER, f"{session_id}_clean.wav")
     audio_file.save(webm_path)
 
     try:
         convert_webm_to_wav(webm_path, wav_raw_path)
         duration_seconds = preprocess_audio(wav_raw_path, wav_clean_path)
 
-        # Sprint 5: Edge case handling for extremely short audio
+        # Sprint 5: Edge case handling for extremely short audio (< 0.5s)
         if duration_seconds < 0.5:
             return jsonify({
                 "error": "Audio is too short for reliable transcription.",
                 "status": "error"
             }), 400
 
-        # Sprint 3: Parallel thread execution
+        # Sprint 3: Parallel dual-model execution via ThreadPoolExecutor
         future_w2v     = _executor.submit(transcribe_wav2vec, wav_clean_path)
         future_whisper = _executor.submit(transcribe_whisper, wav_clean_path)
 
         wav2vec_raw = future_w2v.result() 
         whisper_raw = future_whisper.result() 
 
-        # Sprint 5: Handling completely empty transcripts from noisy/silent audio
+        # Sprint 5: Handle completely empty transcripts from silent or uninterpretable audio
         if not wav2vec_raw.strip() and not whisper_raw.strip():
             return jsonify({
                 "error": "No speech could be transcribed. The audio might be too noisy or completely silent.",
                 "status": "empty"
             }), 400
 
-        # Sprint 3: Dynamic Model Selector Logic
-        # Simplistic selection: Prefer wav2vec unless it's empty, otherwise whisper
-        if wav2vec_raw.strip():
-            best_transcription = wav2vec_raw
-            winner = "WAV2VEC"
-        else:
-            best_transcription = whisper_raw
-            winner = "WHISPER"
+        # Sprint 3 & 6: Dynamic Model Selector using Needleman-Wunsch Alignment
+        best_eval, winner, best_transcription = select_best_model(
+            target_text, wav2vec_raw, whisper_raw, duration_seconds
+        )
 
-        # Sprint 4: Reading accuracy calculation and WCPM scoring logic
-        total_target_words, correct_words, errors = calculate_word_metrics(target_text, best_transcription)
-        
-        duration_minutes = duration_seconds / 60.0 if duration_seconds > 0 else 0
-        wcpm = (correct_words / duration_minutes) if duration_minutes > 0 else 0
-        accuracy = (correct_words / total_target_words * 100) if total_target_words > 0 else 0
-
-        # Sprint 5: Phrase segmentation
-        phrase_breakdown = segment_phrases(target_text, best_transcription)
+        if not best_eval:
+            return jsonify({
+                "error": "Unable to evaluate speech alignment.",
+                "status": "empty"
+            }), 400
 
         print(f"\n{'='*70}")
         print(f" TARGET         : {target_text}")
         print(f" WAV2VEC (raw)  : {wav2vec_raw}")
-        print(f" WHISPER  (raw) : {whisper_raw}")
-        print(f" SELECTED       : {best_transcription}")
+        print(f" WHISPER (raw)  : {whisper_raw}")
+        print(f" SELECTED MODEL : {winner}")
+        print(f" SELECTED TEXT  : {best_transcription}")
         print(f" DURATION       : {round(duration_seconds, 2)} seconds")
-        print(f" WCPM           : {round(wcpm, 2)}")
-        print(f" ACCURACY       : {round(accuracy, 2)}%")
-        print(f" SEGMENTS       : {len(phrase_breakdown)} phrase(s)")
+        print(f" WCPM           : {best_eval['wcpm']}")
+        print(f" ACCURACY       : {best_eval['accuracy']}%")
+        print(f" PROFICIENCY    : {best_eval['proficiency_level']}")
+        print(f" COMPOSITE SCORE: {best_eval['composite_score']}")
+        print(f" PHRASES        : {len(best_eval['phrase_breakdown'])} phrase(s)")
         print(f"{'='*70}\n")
 
         evaluation_record = {
-            "target_text":      target_text,
-            "transcription":    best_transcription,
-            "wav2vec_raw":      wav2vec_raw,
-            "whisper_raw":      whisper_raw,
-            "duration_seconds": round(duration_seconds, 3),
-            "model_used":       winner,
-            "wcpm":             round(wcpm, 2),
-            "accuracy":         round(accuracy, 2),
-            "phrase_breakdown": phrase_breakdown,
-            "status":           "success"
+            "target_text":        target_text,
+            "transcription":      best_transcription,
+            "wav2vec_raw":        wav2vec_raw,
+            "whisper_raw":        whisper_raw,
+            "duration_seconds":   round(duration_seconds, 3),
+            "model_used":         winner,
+            "wcpm":               best_eval["wcpm"],
+            "accuracy":           best_eval["accuracy"],
+            "proficiency_level":  best_eval["proficiency_level"],
+            "composite_score":    best_eval["composite_score"],
+            "total_target_words": best_eval["total_target_words"],
+            "correct_words":      best_eval["correct_words"],
+            "errors":             best_eval["errors"],
+            "substitutions":      best_eval["substitutions"],
+            "deletions":          best_eval["deletions"],
+            "insertions":         best_eval["insertions"],
+            "alignment_tokens":   best_eval["alignment_tokens"],
+            "phrase_breakdown":   best_eval["phrase_breakdown"],
+            "status":             "success"
         }
 
         return jsonify(evaluation_record), 200
@@ -261,6 +222,14 @@ def evaluate_audio():
         traceback.print_exc()
         print(f"Error during processing: {e}")
         return jsonify({"error": str(e)}), 500
+    finally:
+        # Cleanup temporary files to prevent disk accumulation
+        for fpath in (webm_path, wav_raw_path, wav_clean_path):
+            try:
+                if os.path.exists(fpath):
+                    os.remove(fpath)
+            except Exception:
+                pass
 
 if __name__ == '__main__':
     app.run(debug=True, use_reloader=False, port=5000)

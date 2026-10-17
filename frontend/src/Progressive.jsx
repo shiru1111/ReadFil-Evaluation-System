@@ -303,20 +303,27 @@ export default function Progressive() {
       setIsRecording(false);
       setHasRecorded(false);
       setIsSilence(false);
-      // If it is the Expert Phase, bypass the modal completely and go straight to Results!
+    } else {
+      // Completed all passages in current difficulty tier!
+      const totalAccuracy = phaseScores.reduce((sum, item) => sum + (Number(item.accuracy) || 0), 0);
+      const avgAccuracy = phaseScores.length > 0 ? (totalAccuracy / phaseScores.length) : 0;
+      const roundedAvg = Math.round(avgAccuracy);
+      setPhaseScore(roundedAvg);
+
+      // BR-007: Passing score (>= 75%) required to proceed to next level
+      const passed = roundedAvg >= 75;
+      setIsPhasePassed(passed);
+
+      // If it is the Expert Phase, bypass modal and navigate straight to Results
       if (currentLevel === 'Expert') {
         localStorage.setItem('evaluated_level', 'Progressive');
-
-        // === CRITICAL FIX: COMBINE ALL 75 LOGS (Beginner + Moderate + Expert) ===
         const allLogs = [...cumulativeLogs, ...phaseScores];
         localStorage.setItem('reading_logs', JSON.stringify(allLogs));
-
         navigate('/results');
         return;
       }
 
-      // Otherwise, it is Beginner or Moderate, so show the Pass/Fail Modal
-      setIsPhasePassed(true);
+      // Show Pass / Retry modal for Beginner or Moderate
       setShowLevelUpModal(true);
     }
   };
